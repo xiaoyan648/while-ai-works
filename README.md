@@ -60,7 +60,7 @@ Agent 还没开工，渔业部先把竿架好。
 
 ## 下载开玩
 
-[下载 Mac 测试版](https://github.com/xiaoyan648/while-ai-works/releases/tag/v0.14.0-beta.1)
+[下载 Mac 测试版](https://github.com/xiaoyan648/while-ai-works/releases/tag/v0.14.1-beta.1)
 
 适用于 **M 系列芯片的 Mac，macOS 14 或更新版本**。暂不支持 Intel Mac 和 Windows。
 
@@ -72,11 +72,11 @@ Agent 还没开工，渔业部先把竿架好。
 
 ## 和你的 AI 一起上班
 
-在「什么时候」里选择 **Codex、Qoder 或 WorkBuddy**。
+在「什么时候」里勾选 **Codex、Qoder、WorkBuddy**，支持多选，默认全选。
 
-Codex 可直接跟随。Qoder / WorkBuddy 首次使用需要点击「安装监听」，再重启对应客户端；如果客户端弹出配置确认，按提示启用即可。
+Codex 可直接跟随。Qoder / WorkBuddy 首次使用需要打开「连接管理」，点击对应客户端的「安装监听」，再重启对应客户端；如果客户端弹出配置确认，按提示启用即可。
 
-每次跟随一个客户端。它工作时，桌面玩法跟着热闹起来；它结束后，剩下的可以继续玩。
+可以同时跟随多个客户端。只要还有一个会话在工作，玩法就会跟着变化；最后一个结束后，剩下的可以继续玩。木鱼扣减不会因多个客户端同时工作而翻倍。
 
 [连接与使用说明](INTEGRATIONS.md)
 
