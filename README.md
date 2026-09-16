@@ -62,7 +62,12 @@ Agent 还没开工，渔业部先把竿架好。
 
 [下载 Mac 测试版](https://github.com/xiaoyan648/while-ai-works/releases/tag/v0.14.1-beta.1)
 
-适用于 **M 系列芯片的 Mac，macOS 14 或更新版本**。暂不支持 Intel Mac 和 Windows。
+适用于 **macOS 14 或更新版本**，请按芯片选择安装包：
+
+- **M 系列 Mac**：下载文件名带 `arm64` 的 ZIP。
+- **Intel Mac**：下载文件名带 `x86_64` 的 ZIP。
+
+Intel 包已通过 Rosetta 下的运行与资源检查，尚未完成 Intel 真机验收。暂不支持 Windows。
 
 1. 下载页面里的 `.zip` 文件，解压后将 **While AI Works.app** 拖入「应用程序」。
 2. 打开应用，点击「开始玩」，选一种玩法。
