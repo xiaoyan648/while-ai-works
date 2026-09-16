@@ -19,6 +19,32 @@
 - 跟随 Codex、Qoder 或 WorkBuddy，也可以随时自己玩。
 - 选择效果所在的显示器，调整音量和自动轮换，随时收起回去工作。
 
+## 人类这边的工作现场
+
+**配置页面 · 给自己安排一个岗位**
+
+玩法、声音、快捷键，以及今天的渔业成果，都在这里。
+
+<img src="https://raw.githubusercontent.com/xiaoyan648/while-ai-works/main/images/settings.png" alt="配置页面 · 给自己安排一个岗位" width="720">
+
+**钓鱼 · 等 AI 开工，也等鱼上钩**
+
+Agent 还没开工，渔业部先把竿架好。
+
+<img src="https://raw.githubusercontent.com/xiaoyan648/while-ai-works/main/images/fishing.png" alt="钓鱼 · 等 AI 开工，也等鱼上钩" width="960">
+
+**擦污渍 · 从程序员转岗桌面保洁**
+
+它埋头写代码，我顺手擦桌面。谁也没闲着。
+
+<img src="https://raw.githubusercontent.com/xiaoyan648/while-ai-works/main/images/wipe.png" alt="擦污渍 · 从程序员转岗桌面保洁" width="960">
+
+**敲木鱼 · 代码它来写，功德你来补**
+
+代码那边还在跑，人类这边也有自己的进度条。
+
+<img src="https://raw.githubusercontent.com/xiaoyan648/while-ai-works/main/images/woodfish.png" alt="敲木鱼 · 代码它来写，功德你来补" width="520">
+
 ## 怎么开始
 
 适用于 **M 系列芯片的 Mac，macOS 14 或更新版本**。
