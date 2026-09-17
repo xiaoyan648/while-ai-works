@@ -60,7 +60,7 @@ Agent 还没开工，渔业部先把竿架好。
 
 ## 下载开玩
 
-[下载 Mac 测试版](https://github.com/xiaoyan648/while-ai-works/releases/tag/v0.14.1-beta.1)
+[下载 Mac 版 · 0.14.2](https://github.com/xiaoyan648/while-ai-works/releases/tag/v0.14.2)
 
 适用于 **macOS 14 或更新版本**，请按芯片选择安装包：
 
@@ -93,7 +93,7 @@ Codex 可直接跟随。Qoder / WorkBuddy 首次使用需要打开「连接管�
 
 ## 一起养这个小玩具
 
-现在是测试版。Qoder / WorkBuddy 的连接还需要更多真实使用反馈；如果状态没跟上，可以先切回「随时开启」。
+Qoder / WorkBuddy 的连接还需要更多真实使用反馈；如果状态没跟上，可以先切回「随时开启」。
 
 遇到问题或想到好玩的新玩法，欢迎 [来聊聊](https://github.com/xiaoyan648/while-ai-works/issues)。描述一下你用的 Mac、AI 客户端，以及发生了什么就好，不用贴私人对话或代码。
 
