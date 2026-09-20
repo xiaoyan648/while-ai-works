@@ -1,0 +1,18 @@
+# Local build products
+.build/
+dist/
+.swiftpm/
+.DS_Store
+__pycache__/
+*.py[cod]
+
+# Credentials and local settings
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Local generation inputs, provider responses, and review artifacts
+/art/
+/output/

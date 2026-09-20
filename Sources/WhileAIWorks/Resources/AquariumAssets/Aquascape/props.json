@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "parts": [
+    {
+      "id": "driftwood",
+      "mesh": "driftwood/prop.json",
+      "lowMesh": "driftwood/prop-low.json"
+    },
+    {
+      "id": "rocks",
+      "mesh": "rocks/prop.json",
+      "lowMesh": "rocks/prop-low.json"
+    }
+  ]
+}

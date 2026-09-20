@@ -97,4 +97,31 @@ Qoder / WorkBuddy 的连接还需要更多真实使用反馈；如果状态没�
 
 遇到问题或想到好玩的新玩法，欢迎 [来聊聊](https://github.com/xiaoyan648/while-ai-works/issues)。描述一下你用的 Mac、AI 客户端，以及发生了什么就好，不用贴私人对话或代码。
 
-本仓库提供应用下载和使用说明，暂不公开源码。
+## 源码与构建
+
+代码现已采用 [MIT License](LICENSE) 开源。欢迎阅读、修改和贡献。
+图片、纹理、三维模型和品牌素材的来源与许可范围见 [资源说明](ASSETS.md)，这些素材不属于代码的 MIT 授权范围。
+
+需要 macOS 14+、Apple Command Line Tools（Swift 5.10+）和 Python 3。应用没有第三方 Swift 依赖；构建使用仓库内的资源，不需要生成服务 API Key 或 Blender。
+
+```sh
+git clone https://github.com/xiaoyan648/while-ai-works.git
+cd while-ai-works
+bash scripts/build.sh
+open "dist/While AI Works.app"
+```
+
+构建脚本生成完整应用和 Hooks 辅助程序，并使用本地 ad-hoc 签名。构建结果没有 Developer ID 签名或公证。
+
+```sh
+# 核心玩法、音效、交互、鱼模型和图鉴检查
+bash scripts/check.sh
+# Hooks 协议、配置安装/移除与监听集成检查
+bash scripts/check-hooks.sh
+# 检查已构建的真实 Hooks 辅助程序
+python3 Tests/HookExecutableChecks.py
+# 生成工具的离线请求测试，不调用生成服务
+python3 Tests/test_volcengine_asset.py
+```
+
+更多目录说明、Intel 构建与打包方法见 [开发说明](CONTRIBUTING.md)。
