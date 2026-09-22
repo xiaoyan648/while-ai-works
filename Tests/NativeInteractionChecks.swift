@@ -13,6 +13,69 @@ func verify(_ condition: @autoclosure () -> Bool, _ message: String) throws {
         let suite = "WhileAIWorks.NativeChecks.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
+        let rodSuite = suite + ".rods"
+        let rodDefaults = UserDefaults(suiteName: rodSuite)!
+        defer { rodDefaults.removePersistentDomain(forName: rodSuite) }
+        var rodBook = FishingBook()
+        for species in CatchSpecies.catalog.filter(\.isFish).prefix(10) { rodBook.record(.init(species: species, sizeCM: species.maxCM)) }
+        for _ in 10..<100 { rodBook.record(.init(species: CatchSpecies.catalog[0], sizeCM: 10)) }
+        rodBook.save(defaults: rodDefaults)
+        let rodState = AppState(defaults: rodDefaults)
+        rodState.soundEnabled = false
+        try verify(rodState.fishing.rod == .ocean && rodState.fishingReward == nil, "legacy equipment migrates without reward spam")
+        rodState.equipRod(.rain)
+        try verify(rodState.fishing.rod == .rain && AppState(defaults: rodDefaults).fishing.rod == .rain, "UI equipment choice reaches game and survives restart")
+        rodState.mode = .fishing; rodState.desktopEnabled = true; rodState.followAI = false
+        rodState.fishingPress()
+        rodState.equipRod(.ocean)
+        try verify(rodState.fishing.rod == .rain && !rodState.canEquipRod, "UI cannot swap equipment during an active cast")
+        rodState.mode = .woodfish; rodState.mode = .fishing
+        try verify(rodState.fishing.rod == .rain && rodState.canEquipRod, "mode switches preserve equipment and release cast lock")
+        rodState.desktopEnabled = false
+        try verify(rodState.fishing.rod == .rain, "desktop toggle preserves equipment")
+        let unlockSuite = suite + ".unlock"
+        let unlockDefaults = UserDefaults(suiteName: unlockSuite)!
+        defer { unlockDefaults.removePersistentDomain(forName: unlockSuite) }
+        var unlockBook = FishingBook()
+        for _ in 0..<9 { unlockBook.record(.init(species: CatchSpecies.catalog[0], sizeCM: 8)) }
+        unlockBook.save(defaults: unlockDefaults)
+        let unlockState = AppState(defaults: unlockDefaults)
+        unlockState.soundEnabled = false; unlockState.mode = .fishing
+        unlockState.desktopEnabled = true; unlockState.followAI = false
+        unlockState.fishingPress()
+        var unlockRolls = [0.0, 0.0, 0.9999]
+        for _ in 0..<21 {
+            unlockState.advanceFishing(delta: 0.1, random: { unlockRolls.isEmpty ? 0.5 : unlockRolls.removeFirst() })
+            if unlockState.fishing.phase == .bite { break }
+        }
+        unlockState.fishingPress(); unlockState.fishingRelease()
+        var unlockPreviousBar = unlockState.fishing.bar
+        for _ in 0..<1950 {
+            let velocity = (unlockState.fishing.bar - unlockPreviousBar) * 30
+            unlockPreviousBar = unlockState.fishing.bar
+            if unlockState.fishing.bar + velocity * 0.24 < unlockState.fishing.fish {
+                if !unlockState.fishing.pressed { unlockState.fishingPress() }
+            } else { unlockState.fishingRelease() }
+            unlockState.advanceFishing(delta: 1.0 / 30, random: { 0.5 })
+            if unlockState.fishing.phase == .landed || unlockState.fishing.phase == .escaped { break }
+        }
+        try verify(unlockState.fishing.phase == .landed && unlockState.fishingBook.total == 10, "a real catch transition crosses the ten-catch unlock boundary")
+        try verify(unlockState.fishingReward?.catchResult.medal == .gold, "catch reward uses the current catch size for its medal")
+        try verify(unlockState.fishingReward?.unlockNotices == ["钓竿解锁 · 听雨竿", "成就达成 · 河畔新手", "成就达成 · 第一尾金牌"], "same catch presents new equipment and all new achievements exactly once")
+        try verify(unlockState.fishing.rod == .bamboo, "unlock never silently replaces the equipped rod")
+        let reopenedUnlock = AppState(defaults: unlockDefaults)
+        try verify(reopenedUnlock.fishingReward == nil && reopenedUnlock.fishingProgression.earned.contains(FishingAchievement.firstGold.id), "achievements persist without replaying notifications on launch")
+        let unlockView = PlayView(state: unlockState)
+        unlockView.frame = CGRect(x: 0, y: 0, width: 700, height: 500)
+        unlockView.layout(); unlockView.sync()
+        let unlockCapture = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 1400, pixelsHigh: 1000, bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: unlockCapture)
+        NSGraphicsContext.current!.cgContext.scaleBy(x: 2, y: 2)
+        unlockView.drawFishing(at: unlockState.fishingReward!.caughtAt + 0.5, context: NSGraphicsContext.current!.cgContext)
+        NSGraphicsContext.restoreGraphicsState()
+        try unlockCapture.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: ".build/fishing-unlock.png"))
+        unlockState.desktopEnabled = false
         let state = AppState(defaults: defaults)
         state.soundEnabled = false
         try verify(!state.interactionEnabled, "launch must leave ordinary desktop input available")

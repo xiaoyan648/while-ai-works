@@ -135,8 +135,19 @@ final class AppState: ObservableObject {
     @Published var workIntensity = 0.0
     @Published private(set) var aquarium: Aquarium
     @Published private(set) var fishingBook: FishingBook
+    @Published private(set) var fishingProgression: FishingProgression
+    var canEquipRod: Bool { castStartedAt == nil && (fishing.phase == .ready || fishing.phase == .landed || fishing.phase == .escaped) }
+    func equipRod(_ rod: FishingRod) {
+        guard canEquipRod, rod.isUnlocked(in: fishingBook), fishing.equip(rod) else { return }
+        fishingProgression.equip(rod, book: fishingBook)
+        fishingProgression.save(defaults: defaults)
+    }
     @Published private(set) var sessionCatches = 0
-    private(set) var fishing = FishingGame()
+    private(set) var fishing = FishingGame() {
+        didSet {
+            if oldValue.phase != fishing.phase || oldValue.rod != fishing.rod { objectWillChange.send() }
+        }
+    }
     private(set) var fishingNewRecord = false
     struct FishingReward {
         let catchResult: FishingCatch
@@ -144,6 +155,7 @@ final class AppState: ObservableObject {
         let newRecord: Bool
         let caughtAt: TimeInterval
         var perfect = false
+        var unlockNotices: [String] = []
         static let duration: TimeInterval = 3.8
         static let dismissalDelay: TimeInterval = 1
         func canDismiss(at time: TimeInterval) -> Bool {
@@ -204,6 +216,10 @@ final class AppState: ObservableObject {
         shortcutModifiers = (0...2).contains(savedModifiers) ? savedModifiers : 0
         let book = FishingBook.load(defaults: defaults)
         fishingBook = book
+        let progression = FishingProgression(defaults: defaults, book: book)
+        fishingProgression = progression
+        fishing = FishingGame(rod: progression.selectedRod)
+        progression.save(defaults: defaults)
         let tank = Aquarium.load(defaults: defaults, book: book)
         aquarium = tank
         tank.save(defaults: defaults)
@@ -320,9 +336,14 @@ final class AppState: ObservableObject {
         if let result = fishing.advance(delta: delta, working: isWorking, intensity: fishingIntensity,
                                         interacting: interactionHeld, random: random) {
             let firstDiscovery = fishingBook.records[result.species.id] == nil
+            let previouslyUnlocked = Set(FishingRod.allCases.filter { $0.isUnlocked(in: fishingBook) })
             fishingNewRecord = fishingBook.record(result)
+            let newRods = FishingRod.allCases.filter { !previouslyUnlocked.contains($0) && $0.isUnlocked(in: fishingBook) }
+            let achievements = fishingProgression.reconcile(book: fishingBook)
+            fishingProgression.save(defaults: defaults)
             fishingReward = FishingReward(catchResult: result, firstDiscovery: firstDiscovery,
-                                          newRecord: fishingNewRecord, caughtAt: ProcessInfo.processInfo.systemUptime, perfect: fishing.perfect)
+                                          newRecord: fishingNewRecord, caughtAt: ProcessInfo.processInfo.systemUptime, perfect: fishing.perfect,
+                                          unlockNotices: newRods.map { "钓竿解锁 · " + $0.title } + achievements.map { "成就达成 · " + $0.title })
             fishingBook.save(defaults: defaults)
             aquarium.discover(in: fishingBook)
             aquarium.save(defaults: defaults)
