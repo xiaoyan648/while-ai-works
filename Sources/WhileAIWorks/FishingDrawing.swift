@@ -286,14 +286,7 @@ extension PlayView {
             fishingLabel("力度 \(Int(state.castPower(at: time) * 100))%", centerX: x, y: 66, size: 10, color: ink, context: c)
         }
         if game.phase != .landed {
-            let rod = NSBezierPath()
-            rod.move(to: CGPoint(x: rect.width - 14, y: 18))
-            rod.curve(to: tip, controlPoint1: CGPoint(x: rect.width * 0.94 - bend * 9, y: 46),
-                      controlPoint2: CGPoint(x: rect.width * 0.81 - bend * 12, y: 90 + bend * 13))
-            NSColor(srgbRed: 0.43, green: 0.32, blue: 0.20, alpha: 0.95).setStroke()
-            rod.lineWidth = 3; rod.lineCapStyle = .round; rod.stroke()
-            let grip=NSBezierPath();grip.move(to:CGPoint(x:rect.width-14,y:18));grip.line(to:CGPoint(x:rect.width-31,y:39))
-            NSColor(srgbRed:0.17,green:0.22,blue:0.20,alpha:1).setStroke();grip.lineWidth=6;grip.lineCapStyle = .round;grip.stroke()
+            FishingRodArtwork.draw(game.rod, start: CGPoint(x: rect.width - 14, y: 18), tip: tip, bend: bend)
             if live {
                 let line = NSBezierPath()
                 line.move(to: tip)
@@ -377,7 +370,7 @@ extension PlayView {
                 }
             }
             fishingLabel(result.species.name, centerX: x, y: 112, size: 17, color: ink, context: c)
-            fishingLabel(String(format: "%.1f cm", result.sizeCM) + (state.fishingNewRecord ? " · 新纪录" : ""), centerX: x, y: 93, size: 12, color: accent, context: c)
+            fishingLabel(String(format: "%.1f cm", result.sizeCM) + (result.medal.map { " · " + $0.title } ?? "") + (state.fishingNewRecord ? " · 新纪录" : ""), centerX: x, y: 93, size: 12, color: accent, context: c)
         }
         let title: String
         switch game.phase {
@@ -395,7 +388,7 @@ extension PlayView {
         NSColor(srgbRed:0.10,green:0.19,blue:0.17,alpha:0.94).setFill()
         NSBezierPath(roundedRect:footer,xRadius:9,yRadius:9).fill()
         fishingLabel(title, centerX: footer.midX, y: 28, size: min(10,footer.width/max(1,CGFloat(title.count))), color: ink, context: c)
-        fishingLabel("总鱼获 \(state.fishingBook.total)", centerX: footer.midX, y: 13, size: 9, color: ink.withAlphaComponent(0.86), context: c)
+        fishingLabel("\(game.rod.title) · 总鱼获 \(state.fishingBook.total)", centerX: footer.midX, y: 13, size: 9, color: ink.withAlphaComponent(0.86), context: c)
         }
         if showingReward, let reward = state.fishingReward {
             drawFishingReward(reward, at: time, centerX: x, context: c)
@@ -423,18 +416,25 @@ extension PlayView {
                             size: 13, color: gold, weight: .semibold)
         if reward.catchResult.species.isSecret {
             FishingArtwork.text(reward.catchResult.species.name,x:card.minX+15,y:card.minY+12,size:14,color:.white,weight:.semibold)
-            FishingArtwork.text(String(format:"%.2f 米",reward.catchResult.sizeCM/100),x:card.maxX-80,y:card.minY+12,size:14,color:gold,weight:.medium)
+            FishingArtwork.text(String(format:"%.2f 米",reward.catchResult.sizeCM/100) + (reward.catchResult.medal.map { " · " + $0.title } ?? ""),x:card.maxX-128,y:card.minY+12,size:11,color:gold,weight:.medium)
             FishingArtwork.specimen(reward.catchResult.species,in:CGRect(x:card.minX+12,y:card.minY+35,width:card.width-24,height:card.height-66))
         } else {
         FishingArtwork.specimen(reward.catchResult.species,
                                 in: CGRect(x: card.minX + 12, y: card.minY + 25, width: 87, height: 58))
         FishingArtwork.text(reward.catchResult.species.name, x: card.minX + 109, y: card.minY + 62,
                             size: 17, color: .white, weight: .semibold)
-        FishingArtwork.text(String(format: "%.1f cm", reward.catchResult.sizeCM),
-                            x: card.minX + 109, y: card.minY + 39, size: 18, color: gold, weight: .medium)
+        FishingArtwork.text(String(format: "%.1f cm", reward.catchResult.sizeCM) + (reward.catchResult.medal.map { " · " + $0.title } ?? ""),
+                            x: card.minX + 109, y: card.minY + 39, size: 13, color: gold, weight: .medium)
         let footer = reward.perfect ? "完美收竿 · 全程稳稳接住" : reward.firstDiscovery ? "第一次相遇 · 已收入图鉴" : reward.newRecord ? "突破个人最佳 · 已收入图鉴" : "收获 +1 · 已收入图鉴"
         FishingArtwork.text(footer, x: card.minX + 15, y: card.minY + 10, size: 10,
                             color: NSColor.white.withAlphaComponent(0.65))
+        }
+        if let notice = reward.unlockNotices.first {
+            let extra = reward.unlockNotices.count > 1 ? " · 另 \(reward.unlockNotices.count - 1) 项" : ""
+            let banner = CGRect(x: card.minX, y: card.maxY + 8, width: card.width, height: 27)
+            NSColor(srgbRed: 0.075, green: 0.22, blue: 0.23, alpha: 0.98).setFill()
+            NSBezierPath(roundedRect: banner, xRadius: 8, yRadius: 8).fill()
+            FishingArtwork.text(notice + extra, x: banner.minX + 10, y: banner.minY + 8, size: 10, color: gold)
         }
         if !reduceMotion && age < 0.9 {
             gold.withAlphaComponent((1 - age / 0.9) * 0.9).setFill()
@@ -573,6 +573,45 @@ enum RiverScenery {
             let x=width-CGFloat(40+i*6),y=CGFloat(8+i%2*3)
             let grass=NSBezierPath();grass.move(to:CGPoint(x:x,y:y));grass.curve(to:CGPoint(x:x-3,y:y+10+CGFloat(i%2)*4),controlPoint1:CGPoint(x:x-1,y:y+6),controlPoint2:CGPoint(x:x-4,y:y+9))
             color((0.36,0.45,0.28),(0.12,0.24,0.23)).setStroke();grass.lineWidth=1.2;grass.stroke()
+        }
+    }
+}
+
+/// Shared by the actual river and the equipment preview.
+enum FishingRodArtwork {
+    static func draw(_ rod: FishingRod, start: CGPoint, tip: CGPoint, bend: CGFloat) {
+        let colors: [FishingRod: NSColor] = [
+            .bamboo: NSColor(srgbRed: 0.43, green: 0.49, blue: 0.25, alpha: 1),
+            .rain: NSColor(srgbRed: 0.49, green: 0.29, blue: 0.15, alpha: 1),
+            .wave: NSColor(srgbRed: 0.18, green: 0.24, blue: 0.27, alpha: 1),
+            .ocean: NSColor(srgbRed: 0.16, green: 0.34, blue: 0.51, alpha: 1)
+        ]
+        let dx = tip.x - start.x, dy = tip.y - start.y
+        let c1 = CGPoint(x: start.x + dx * 0.25 - bend * 4, y: start.y + dy * 0.32)
+        let c2 = CGPoint(x: start.x + dx * 0.78 - bend * 6, y: start.y + dy * 0.80 + bend * 8)
+        func point(_ t: CGFloat) -> CGPoint {
+            let u = 1 - t
+            return CGPoint(x: u*u*u*start.x + 3*u*u*t*c1.x + 3*u*t*t*c2.x + t*t*t*tip.x,
+                           y: u*u*u*start.y + 3*u*u*t*c1.y + 3*u*t*t*c2.y + t*t*t*tip.y)
+        }
+        let path = NSBezierPath(); path.move(to: start); path.curve(to: tip, controlPoint1: c1, controlPoint2: c2)
+        colors[rod]!.setStroke(); path.lineWidth = rod == .ocean ? 4 : 3; path.lineCapStyle = .round; path.stroke()
+        let grip = NSBezierPath(); grip.move(to: start); grip.line(to: point(0.22))
+        NSColor(srgbRed: 0.17, green: 0.22, blue: 0.20, alpha: 1).setStroke()
+        grip.lineWidth = 6; grip.lineCapStyle = .round; grip.stroke()
+        let trim = rod == .bamboo ? NSColor(srgbRed: 0.66, green: 0.65, blue: 0.35, alpha: 1) : rod == .rain ? NSColor(srgbRed: 0.82, green: 0.69, blue: 0.45, alpha: 1) : NSColor(srgbRed: 0.78, green: 0.86, blue: 0.88, alpha: 1)
+        trim.setStroke()
+        for t: CGFloat in [0.25, 0.44, 0.63, 0.82] {
+            let p = point(t)
+            let ring = NSBezierPath(); ring.move(to: CGPoint(x: p.x - 2.5, y: p.y - 1)); ring.line(to: CGPoint(x: p.x + 2.5, y: p.y + 1))
+            ring.lineWidth = rod == .rain ? 3 : 1.5; ring.stroke()
+            if rod == .wave || rod == .ocean {
+                NSBezierPath(ovalIn: CGRect(x: p.x - 5, y: p.y - 3, width: 4, height: 5)).stroke()
+            }
+        }
+        if rod == .ocean {
+            trim.setFill()
+            NSBezierPath(ovalIn: CGRect(x: point(0.17).x - 5, y: point(0.17).y - 5, width: 10, height: 10)).fill()
         }
     }
 }

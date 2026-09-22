@@ -7,6 +7,92 @@ import WhileCore
         func check(_ condition: @autoclosure () -> Bool, _ label: String) {
             precondition(condition(), label); checked += 1
         }
+        // Progression boundaries, old-save migration, and medal precision.
+        let progressionSuite = "WhileAIWorks.ProgressionChecks.\(UUID().uuidString)"
+        let progressionDefaults = UserDefaults(suiteName: progressionSuite)!
+        defer { progressionDefaults.removePersistentDomain(forName: progressionSuite) }
+        var progressionBook = FishingBook()
+        let common = CatchSpecies.catalog[0]
+        let junk = CatchSpecies.catalog.first { !$0.isFish }!
+        var progression = FishingProgression(defaults: progressionDefaults, book: progressionBook)
+        check(progression.selectedRod == .bamboo && progression.earned.isEmpty, "new players start with bamboo and no achievements")
+        check(!progression.equip(.ocean, book: progressionBook), "locked rods cannot be equipped")
+        for _ in 0..<9 { progressionBook.record(.init(species: junk, sizeCM: junk.maxCM)) }
+        check(!FishingRod.rain.isUnlocked(in: progressionBook), "nine catches cannot unlock tier two")
+        progressionBook.record(.init(species: common, sizeCM: common.minCM))
+        check(FishingRod.rain.isUnlocked(in: progressionBook), "ten catches including items unlock tier two")
+        let firstAwards = progression.reconcile(book: progressionBook)
+        check(Set(firstAwards) == [.firstFish, .catches10], "catch event awards exactly the newly reached milestones")
+        check(progression.reconcile(book: progressionBook).isEmpty, "awards never repeat")
+        for _ in 10..<49 { progressionBook.record(.init(species: common, sizeCM: common.minCM)) }
+        check(!FishingRod.wave.isUnlocked(in: progressionBook), "49 catches cannot unlock tier three")
+        progressionBook.record(.init(species: common, sizeCM: common.minCM))
+        check(FishingRod.wave.isUnlocked(in: progressionBook), "50 catches unlock tier three")
+        for _ in 50..<100 { progressionBook.record(.init(species: common, sizeCM: common.minCM)) }
+        check(!FishingRod.ocean.isUnlocked(in: progressionBook), "100 catches alone cannot unlock tier four")
+        for species in CatchSpecies.catalog.filter(\.isFish).dropFirst().prefix(8) {
+            progressionBook.record(.init(species: species, sizeCM: species.minCM))
+        }
+        check(progressionBook.discoveredFish == 9 && !FishingRod.ocean.isUnlocked(in: progressionBook), "nine species still locks tier four")
+        progressionBook.record(.init(species: CatchSpecies.catalog.filter(\.isFish)[9], sizeCM: 20))
+        check(FishingRod.ocean.isUnlocked(in: progressionBook), "ten species and at least 100 catches unlock tier four")
+        var diverse = FishingBook()
+        for species in CatchSpecies.catalog.filter(\.isFish).prefix(10) { diverse.record(.init(species: species, sizeCM: species.minCM)) }
+        for _ in 10..<99 { diverse.record(.init(species: common, sizeCM: common.minCM)) }
+        check(!FishingRod.ocean.isUnlocked(in: diverse), "ten species with 99 catches still locks tier four")
+        diverse.record(.init(species: common, sizeCM: common.minCM))
+        check(FishingRod.ocean.isUnlocked(in: diverse), "exact 100 and 10 boundary unlocks tier four")
+        progressionBook.save(defaults: progressionDefaults)
+        let legacyBook = FishingBook.load(defaults: progressionDefaults)
+        var migrated = FishingProgression(defaults: progressionDefaults, book: legacyBook)
+        check(migrated.selectedRod == .ocean && migrated.earned.contains(FishingAchievement.catches100.id), "legacy save silently receives its best unlocked rod and achievements")
+        check(migrated.equip(.rain, book: legacyBook), "player can choose an earlier appearance")
+        migrated.save(defaults: progressionDefaults)
+        let reloaded = FishingProgression(defaults: progressionDefaults, book: legacyBook)
+        check(reloaded.selectedRod == .rain && reloaded.earned == migrated.earned, "selected rod and earned achievements survive restart")
+        progressionDefaults.set("future-rod", forKey: "fishing.rod.v1")
+        check(FishingProgression(defaults: progressionDefaults, book: legacyBook).selectedRod == .ocean, "unknown rod IDs fall back safely")
+        progressionDefaults.set(FishingRod.ocean.rawValue, forKey: "fishing.rod.v1")
+        check(FishingProgression(defaults: progressionDefaults, book: FishingBook()).selectedRod == .bamboo, "a saved but locked rod is rejected")
+        var goldBook = FishingBook()
+        for species in CatchSpecies.catalog {
+            if !species.isFish {
+                check(species.medal(for: species.maxCM) == nil, "items never receive fish medals")
+                continue
+            }
+            let silver = species.medalThreshold(.silver), gold = species.medalThreshold(.gold)
+            check(species.medal(for: species.minCM) == .normal, "minimum size is ordinary")
+            check(species.medal(for: silver - 0.1) == .normal && species.medal(for: silver) == .silver, "inclusive silver boundary matches one-decimal displayed sizes")
+            check(species.medal(for: gold - 0.1) == .silver && species.medal(for: gold) == .gold, "inclusive gold boundary matches one-decimal displayed sizes")
+            check(species.medal(for: species.maxCM) == .gold, "maximum size is always gold")
+            goldBook.record(.init(species: species, sizeCM: gold))
+            goldBook.record(.init(species: species, sizeCM: species.minCM))
+            check(species.medal(for: goldBook.records[species.id]!.largestCM) == .gold, "smaller subsequent catch does not erase historical medal")
+        }
+        let goldProgress = FishingProgression(defaults: progressionDefaults, book: goldBook)
+        check(goldBook.goldSpeciesCount == 15 && goldProgress.earned.contains(FishingAchievement.allGold.id), "all gold includes every fish and the secret giant")
+        var noSecret = FishingBook()
+        for species in CatchSpecies.catalog where species.isFish && !species.isSecret { noSecret.record(.init(species: species, sizeCM: species.maxCM)) }
+        let noSecretSuite = UserDefaults(suiteName: progressionSuite + ".secret")!
+        defer { noSecretSuite.removePersistentDomain(forName: progressionSuite + ".secret") }
+        check(!FishingProgression(defaults: noSecretSuite, book: noSecret).earned.contains(FishingAchievement.allGold.id), "all gold cannot skip the hidden fish")
+        goldProgress.save(defaults: progressionDefaults)
+        check(FishingProgression(defaults: progressionDefaults, book: FishingBook()).earned.contains(FishingAchievement.allGold.id), "earned achievements remain even if catalogue progress later changes")
+        let expectedBonuses = [0.0, 0.05, 0.10, 0.20]
+        for (index, rod) in FishingRod.allCases.enumerated() {
+            var game = FishingGame(rod: rod)
+            check(abs(game.barHeight - (0.34 + expectedBonuses[index])) < 1e-9, "rod adds percentage points, not a multiplier or cumulative tiers")
+            game.cast(into: .deep, period: .night)
+            check(game.rod == rod && !game.equip(.bamboo), "cast locks rod and preserves its equipped bonus")
+            for _ in 0..<285 { _ = game.advance(delta: 0.1, working: true, intensity: 0, interacting: true, random: { 0.9999 }) }
+            check(game.phase == .bite && !game.equip(.bamboo), "cannot switch rod on bite")
+            game.press()
+            check(!game.equip(.bamboo), "cannot switch rod during fight")
+            _ = game.advance(delta: 0.1, working: false, intensity: 0, interacting: true, random: { 0.5 })
+            check(game.bar >= game.barHeight / 2 && game.bar <= 1 - game.barHeight / 2, "enlarged bar remains inside the track")
+            game.reset()
+            check(game.rod == rod && game.phase == .ready, "reset preserves equipment")
+        }
         check(FishingEnvironment(hour: 5.999).period == .night, "night continues until 06:00")
         check(FishingEnvironment(hour: 6).period == .day && FishingEnvironment(hour: 17.999).period == .day, "day boundary is inclusive at 06:00")
         check(FishingEnvironment(hour: 18).period == .night, "night starts at 18:00")

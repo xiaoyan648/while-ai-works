@@ -119,6 +119,19 @@ import WhileCore
         precondition(view.bounds.width == 798 && view.bounds.height == 688)
         precondition(state.fishingBook.total == 13 && state.fishingBook.discoveredFish == 6)
         print("NativeFishingGuideChecks: settings and populated catalogue rendered at 798 × 688 using an isolated test store.")
+        for section in [FishingGuide.Section.rods, .achievements] {
+            let pane = NSHostingView(rootView: FishingGuide(state: state, section: section))
+            let paneWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 360, height: 688), styleMask: [.borderless], backing: .buffered, defer: false)
+            paneWindow.contentView = pane
+            pane.frame = NSRect(x: 0, y: 0, width: 360, height: 688)
+            pane.layoutSubtreeIfNeeded()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.15))
+            let capture = pane.bitmapImageRepForCachingDisplay(in: pane.bounds)!
+            pane.cacheDisplay(in: pane.bounds, to: capture)
+            let name = section == .rods ? "fishing-rods" : "fishing-achievements"
+            try capture.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: ".build/" + name + ".png"))
+        }
+        print("NativeFishingGuideChecks: equipment and achievements panes rendered using isolated fixture data.")
         state.mode = .woodfish
         state.followAI = true; state.selectedSources = [.workbuddy]
         state.hookSetupMessage = "已安装，请重启 WorkBuddy；如有 Hooks 审核提示，请在客户端启用。"

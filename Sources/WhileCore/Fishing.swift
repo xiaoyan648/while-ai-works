@@ -150,7 +150,8 @@ public struct FishingGame {
     public private(set) var water: FishingWater?
     public private(set) var period: FishingPeriod?
     public private(set) var perfect = true
-    public init() {}
+    public private(set) var rod: FishingRod
+    public init(rod: FishingRod = .bamboo) { self.rod = rod }
     public var engaged: Bool { phase == .bite || phase == .fighting }
     public var challenge: Double {
         guard let result = catchResult else { return 0 }
@@ -158,12 +159,17 @@ public struct FishingGame {
         let size = (result.sizeCM - species.minCM) / (species.maxCM - species.minCM)
         return min(1, species.difficulty + size * 0.08)
     }
-    public var barHeight: Double { 0.34 - challenge * 0.15 }
+    public var barHeight: Double { 0.34 - challenge * 0.15 + rod.bonus }
     public var inRange: Bool { abs(fish - bar) <= barHeight / 2 }
     public static func biteProbability(delta: Double, intensity: Double) -> Double {
         1 - exp(-(0.045 + 0.19 * min(1, max(0, intensity))) * max(0, delta))
     }
-    public mutating func reset() { self = Self() }
+    public mutating func reset() { self = Self(rod: rod) }
+    @discardableResult public mutating func equip(_ rod: FishingRod) -> Bool {
+        guard phase == .ready || phase == .landed || phase == .escaped else { return false }
+        self.rod = rod
+        return true
+    }
     public mutating func press() {
         pressed = true
         switch phase {
