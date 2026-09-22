@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import WhileCore
+import Darwin
 
 /// Reads Codex lifecycle logs and sanitized Qoder/WorkBuddy hook snapshots locally.
 final class CodexMonitor {
@@ -14,6 +15,9 @@ final class CodexMonitor {
     private var subscription: AnyCancellable?
     private var enabled = false
     private var sources: Set<WorkSource> = []
+    private var desktopSources: Set<WorkSource> = []
+    private var displayTracker = CodexDisplayTracker()
+    private var displaySnapshot = CodexDisplay()
     // Main-thread revision rejects a queued result even if selection changes away and back.
     private var configurationRevision = 0
     private var revision = 0
@@ -26,7 +30,9 @@ final class CodexMonitor {
     private var cursors: [String: Cursor] = [:]
     private var activity = WorkActivity()
     private var pace = WorkPace()
-    private var ticks = 0
+    private var lastDiscovery = Date.distantPast
+    private var fileWatches: [String: DispatchSourceFileSystemObject] = [:]
+    private var eventPoll: DispatchWorkItem?
     private var candidates: [URL] = []
     private let root: URL
     private let hookDirectory: URL
@@ -38,18 +44,23 @@ final class CodexMonitor {
             .map { URL(fileURLWithPath: $0) }
             ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex")
         root = codexRoot ?? home.appendingPathComponent("sessions")
-        subscription = Publishers.CombineLatest3(state.$followAI, state.$selectedSources, state.$desktopEnabled)
-            .sink { [weak self] followAI, selected, desktopEnabled in
+        subscription = Publishers.CombineLatest4(state.$followAI, state.$selectedSources, state.$desktopEnabled, state.$miniTooCodexEnabled)
+            .sink { [weak self] followAI, selected, desktopEnabled, miniTooCodexEnabled in
             guard let self else { return }
             self.configurationRevision += 1
             let revision = self.configurationRevision
             self.queue.async { [weak self] in
                 guard let self else { return }
                 self.revision = revision
-                let next = followAI && desktopEnabled ? selected : []
+                self.desktopSources = followAI && desktopEnabled ? selected : []
+                var next = self.desktopSources
+                if miniTooCodexEnabled { next.insert(.codex) }
                 // Keep unchanged clients' cursors and pace; toggling Qoder must not replay Codex.
                 if !next.contains(.codex) || !self.sources.contains(.codex) {
-                    self.ticks = 0
+                    self.lastDiscovery = .distantPast
+                    self.eventPoll?.cancel(); self.eventPoll = nil
+                    for watch in self.fileWatches.values { watch.cancel() }
+                    self.fileWatches.removeAll()
                     self.activity = WorkActivity()
                     self.pace = WorkPace()
                     self.cursors.removeAll()
@@ -57,7 +68,7 @@ final class CodexMonitor {
                 }
                 self.hookPaces = self.hookPaces.filter { next.contains(WorkSource(rawValue: $0.key.rawValue)!) }
                 self.sources = next
-                self.enabled = followAI && desktopEnabled
+                self.enabled = !next.isEmpty
                 self.poll()
             }
         }
@@ -67,7 +78,10 @@ final class CodexMonitor {
         timer.resume()
         self.timer = timer
     }
-    deinit { timer?.cancel() }
+    deinit {
+        timer?.cancel(); eventPoll?.cancel()
+        for watch in fileWatches.values { watch.cancel() }
+    }
 
     private func poll() {
         var counts: [WorkSource: Int] = [:]
@@ -78,9 +92,11 @@ final class CodexMonitor {
                 let result: (count: Int, intensity: Double, detail: String)
                 if let provider = source.hookProvider { result = pollHooks(provider) }
                 else { result = pollCodex() }
-                counts[source] = result.count
-                intensity += result.intensity
-                if !result.detail.isEmpty { details.append(result.detail) }
+                if desktopSources.contains(source) {
+                    counts[source] = result.count
+                    intensity += result.intensity
+                    if !result.detail.isEmpty { details.append(result.detail) }
+                }
             }
         }
         let working = counts.values.contains { $0 > 0 }
@@ -88,8 +104,10 @@ final class CodexMonitor {
         let detail = sources.isEmpty ? "请选择要跟随的 AI" :
             (details.isEmpty ? "等待 AI 开始工作" : details.joined(separator: " · "))
         let revision = self.revision
+        let snapshot = displaySnapshot
         DispatchQueue.main.async { [weak self] in
             guard let self, self.configurationRevision == revision else { return }
+            if self.state.codexDisplay != snapshot { self.state.codexDisplay = snapshot }
             self.state.activeSessionCounts = counts
             self.state.detectedWorking = working
             self.state.workIntensity = level
@@ -99,8 +117,9 @@ final class CodexMonitor {
 
     private func pollCodex() -> (count: Int, intensity: Double, detail: String) {
         let exists = FileManager.default.fileExists(atPath: root.path)
-        if ticks % 4 == 0 { discover() }
-        ticks += 1
+        if Date().timeIntervalSince(lastDiscovery) >= 6 {
+            discover(); lastDiscovery = Date()
+        }
         var readAny = false
         for url in candidates {
             let id = url.path
@@ -109,7 +128,7 @@ final class CodexMonitor {
             guard let end = try? handle.seekToEnd() else { continue }
             let fresh = cursors[id] != nil
             var cursor = cursors[id] ?? Cursor()
-            if end < cursor.offset { cursor = Cursor(); activity.remove(sessionID: id) }
+            if end < cursor.offset { cursor = Cursor(); activity.remove(sessionID: id); displayTracker.remove(sessionID: id) }
             // The initial tail is bounded. Ongoing reads are chunked, preserving partial lines.
             if cursors[id] == nil && end > 2_097_152 {
                 cursor.offset = end - 2_097_152
@@ -124,6 +143,7 @@ final class CodexMonitor {
                 cursor.offset += UInt64(data.count)
                 for line in cursor.buffer.append(data) {
                     activity.consume(line: line, sessionID: id)
+                    displayTracker.consume(line: line, sessionID: id)
                     pace.consume(line: line, fresh: fresh, now: Date())
                 }
             }
@@ -138,6 +158,8 @@ final class CodexMonitor {
         let count = activity.active.values.filter { now.timeIntervalSince($0.updatedAt) < HookBridge.inactivityTimeout }.count
         let intensity = pace.intensity(now: now)
         let detail = !exists ? "未找到 Codex 本地会话" : (!readAny && !candidates.isEmpty ? "无法读取 Codex 工作状态" : "")
+        displaySnapshot = displayTracker.snapshot(now: now)
+        displaySnapshot.detail = detail.isEmpty ? "等待 Codex 本地会话" : detail
         return (count, count > 0 ? max(0.12, intensity) : 0, detail)
     }
 
@@ -184,8 +206,60 @@ final class CodexMonitor {
             return (url, date)
         }.sorted { $0.1 > $1.1 }.prefix(24).map(\.0)
         // Retain active older session paths, including sessions that cross midnight.
-        candidates = Array(Set(recent + activity.active.keys.map { URL(fileURLWithPath: $0) }))
+        candidates = Array(Set(recent + activity.active.keys.map { URL(fileURLWithPath: $0) })).sorted { $0.path < $1.path }
         let valid = Set(candidates.map(\.path))
         cursors = cursors.filter { valid.contains($0.key) }
+        updateFileWatches()
+    }
+
+    /// Watch only bounded metadata candidates, not every historical log. Directory
+    /// events discover new sessions; a 1.5s timer remains the permission/race fallback.
+    private func updateFileWatches() {
+        var directories = Set([root.path])
+        let formatter = DateFormatter(); formatter.dateFormat = "yyyy/MM/dd"
+        for zone in [TimeZone.current, TimeZone(secondsFromGMT: 0)!] {
+            formatter.timeZone = zone
+            for day in [Date(), Date().addingTimeInterval(-86400)] {
+                var folder = root
+                for component in formatter.string(from: day).split(separator: "/") {
+                    folder.appendPathComponent(String(component)); directories.insert(folder.path)
+                }
+            }
+        }
+        // The folders of old, resumed sessions also receive new sibling sessions.
+        for url in candidates.suffix(24) where directories.count < 24 { directories.insert(url.deletingLastPathComponent().path) }
+        let paths = Set(candidates.suffix(48).map(\.path)).union(directories)
+        for path in Array(fileWatches.keys) where !paths.contains(path) {
+            fileWatches.removeValue(forKey: path)?.cancel()
+        }
+        for path in paths where fileWatches[path] == nil {
+            let descriptor = Darwin.open(path, O_EVTONLY)
+            guard descriptor >= 0 else { continue }
+            let directory = directories.contains(path)
+            let watch = DispatchSource.makeFileSystemObjectSource(fileDescriptor: descriptor,
+                eventMask: [.write, .extend, .delete, .rename], queue: queue)
+            watch.setEventHandler { [weak self] in
+                guard let self else { return }
+                if let events = self.fileWatches[path]?.data, !events.intersection([.delete, .rename]).isEmpty {
+                    self.fileWatches.removeValue(forKey: path)?.cancel()
+                    self.lastDiscovery = .distantPast
+                }
+                if directory { self.lastDiscovery = .distantPast }
+                self.scheduleEventPoll()
+            }
+            watch.setCancelHandler { Darwin.close(descriptor) }
+            fileWatches[path] = watch; watch.resume()
+        }
+    }
+    private func scheduleEventPoll() {
+        guard eventPoll == nil else { return }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.eventPoll = nil
+            guard self.enabled, self.sources.contains(.codex) else { return }
+            self.poll()
+        }
+        eventPoll = work
+        queue.asyncAfter(deadline: .now() + 0.1, execute: work)
     }
 }

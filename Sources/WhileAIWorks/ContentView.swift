@@ -11,15 +11,46 @@ struct ContentView: View {
     var body: some View {
         HStack(spacing: 0) {
             controls
-            if state.mode == .fishing { FishingGuide(state: state) }
+            if state.settingsSection == .desktop && state.mode == .fishing { FishingGuide(state: state) }
         }.preferredColorScheme(.light)
     }
     private var controls: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("WHILE AI WORKS").font(.system(size: 9, weight: .semibold, design: .monospaced))
-                .tracking(2.7).foregroundStyle(mint).padding(.bottom, 9)
-            Text("AI 干活时我们干什么")
-                .font(.system(size: 23, weight: .semibold)).tracking(-0.8).padding(.bottom, 7)
+            VStack(alignment: .leading, spacing: 0) {
+                Text("WHILE AI WORKS").font(.system(size: 9, weight: .semibold, design: .monospaced))
+                    .tracking(2.7).foregroundStyle(mint).padding(.bottom, 9)
+                Text("AI 干活时我们干什么")
+                    .font(.system(size: 23, weight: .semibold)).tracking(-0.8).padding(.bottom, 18)
+                HStack(spacing: 8) {
+                    ForEach(SettingsSection.allCases, id: \.self) { section in
+                        Button { state.settingsSection = section } label: {
+                            Label(section.title, systemImage: section == .desktop ? "gamecontroller" : "display")
+                                .font(.system(size: 12, weight: .medium))
+                                .frame(maxWidth: .infinity).padding(.vertical, 10)
+                                .foregroundStyle(state.settingsSection == section ? mint : ink.opacity(0.5))
+                                .background(state.settingsSection == section ? mint.opacity(0.10) : ink.opacity(0.025),
+                                            in: RoundedRectangle(cornerRadius: 8))
+                                .contentShape(Rectangle())
+                        }.buttonStyle(.plain).accessibilityIdentifier("settings-\(section.rawValue)")
+                            .accessibilityAddTraits(state.settingsSection == section ? .isSelected : [])
+                    }
+                }
+            }.padding(.horizontal, 28).padding(.top, 32).padding(.bottom, 20)
+            ScrollView(.vertical) {
+                VStack(alignment: .leading, spacing: 0) {
+                    if state.settingsSection == .desktop {
+                        gameControls
+                    } else {
+                        MiniTooSettingsView()
+                    }
+                }.padding(.horizontal, 28).padding(.bottom, 20).frame(maxWidth: .infinity, alignment: .topLeading)
+            }.id(state.settingsSection)
+        }
+        .frame(width: 438, height: 688)
+        .foregroundStyle(ink).background(paper).preferredColorScheme(.light)
+    }
+    private var gameControls: some View {
+        VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 6) {
                 Circle().fill(state.desktopEnabled ? mint : ink.opacity(0.22)).frame(width: 5, height: 5)
                 Text(state.status).font(.system(size: 11)).foregroundStyle(ink.opacity(0.55))
@@ -165,9 +196,6 @@ struct ContentView: View {
             }
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 28).padding(.top, 32).padding(.bottom, 16)
-        .frame(width: 438, height: 688)
-        .foregroundStyle(ink).background(paper).preferredColorScheme(.light)
     }
     private var connections: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -197,5 +225,93 @@ struct ContentView: View {
             Spacer()
             content()
         }
+    }
+}
+
+@MainActor private struct MiniTooSettingsView: View {
+    @ObservedObject private var display = MiniTooAquarium.shared
+    @ObservedObject private var agent = MiniTooAgent.shared
+    @ObservedObject private var voiceShortcut = MiniTooVoiceShortcut.shared
+    @State private var showingAgent = false
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("MiniToo 展示").font(.system(size: 18, weight: .semibold))
+                    Text("选择设备屏幕上显示的内容")
+                        .font(.system(size: 11)).foregroundStyle(ink.opacity(0.5))
+                }
+                Spacer()
+                Toggle("启用 MiniToo", isOn: Binding(get: { display.enabled }, set: { display.setEnabled($0) }))
+                    .labelsHidden().toggleStyle(.switch).tint(mint)
+                    .accessibilityIdentifier("minitoo-aquarium-toggle")
+            }
+            Picker("显示内容", selection: Binding(get: { display.mode }, set: { display.setMode($0) })) {
+                ForEach(MiniTooAquarium.Mode.allCases, id: \.self) { mode in Text(mode.title).tag(mode) }
+            }
+            .pickerStyle(.segmented).accessibilityIdentifier("minitoo-mode")
+            VStack(alignment: .leading, spacing: 14) {
+                preview
+                if display.mode == .work {
+                    Picker("说话快捷键", selection: $voiceShortcut.selection) {
+                        ForEach(0..<MiniTooVoiceShortcut.labels.count, id: \.self) { Text(MiniTooVoiceShortcut.labels[$0]).tag($0) }
+                    }.accessibilityIdentifier("voice-shortcut")
+                    Text(voiceShortcut.error ?? "按一次开始说话，再按发送；处理或播报时再按可停止。无需打开工作台。")
+                        .font(.system(size: 10)).foregroundStyle(.secondary)
+                    Button("打开 Agent 工作台") { showingAgent = true }
+                        .accessibilityIdentifier("minitoo-agent-open")
+                        .sheet(isPresented: $showingAgent) { MiniTooAgentView() }
+                    DisclosureGroup("预览角色动作") {
+                        Picker("预览角色动作", selection: Binding(get: { display.companionPreviewState }, set: { display.setCompanionPreview($0) })) {
+                            ForEach(MiniTooCompanionArtwork.State.allCases, id: \.self) { state in
+                                Text(state.title).tag(state)
+                            }
+                        }.labelsHidden().pickerStyle(.segmented).accessibilityIdentifier("minitoo-companion-preview")
+                            .disabled(agent.running)
+                    }.font(.system(size: 11))
+                }
+                if display.mode == .chat { MiniTooRealtimeView() }
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(display.contentDetail).font(.system(size: 10)).foregroundStyle(ink.opacity(0.6))
+                        .fixedSize(horizontal: false, vertical: true)
+                    if display.mode == .codex && display.pageCount > 1 {
+                        HStack(spacing: 8) {
+                            Button("上一页") { display.changePage(-1) }.disabled(display.page == 0)
+                            Text("\(display.page + 1)/\(display.pageCount)").monospacedDigit()
+                            Button("下一页") { display.changePage(1) }.disabled(display.page + 1 >= display.pageCount)
+                        }.buttonStyle(.plain).font(.system(size: 10)).foregroundStyle(mint)
+                    }
+                    Text(display.status).font(.system(size: 10))
+                        .foregroundStyle(display.phase == .failed ? Color.orange : ink.opacity(0.55))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("minitoo-status")
+                    if display.canRetry {
+                        Button(display.phase == .displaying ? "重新发送" : "重试连接") { display.retry() }
+                            .buttonStyle(.plain).font(.system(size: 10)).foregroundStyle(mint)
+                            .accessibilityIdentifier("minitoo-retry")
+                    }
+                }
+            }
+            Text("手动选择展示内容，关闭时熄屏。独立于桌面游戏开关。\n预览随数据更新，设备收到后生效。")
+                .font(.system(size: 9)).foregroundStyle(ink.opacity(0.4))
+
+        }
+    }
+    @ViewBuilder private var preview: some View {
+        if display.mode == .work {
+            // Only this small view ticks; frames are cached and never re-uploaded per tick.
+            TimelineView(.animation(minimumInterval: Double(MiniTooCompanionArtwork.milliseconds) / 1000)) { context in
+                let index = Int(context.date.timeIntervalSinceReferenceDate * 1000 / Double(MiniTooCompanionArtwork.milliseconds))
+                previewImage(MiniTooCompanionArtwork.frame(display.companionPreviewState, index: index))
+            }
+        } else {
+            previewImage(display.preview)
+        }
+    }
+    private func previewImage(_ image: CGImage) -> some View {
+        Image(decorative: image, scale: 1).resizable().interpolation(.high)
+            .frame(width: 240, height: 192).clipShape(RoundedRectangle(cornerRadius: 8))
+            .frame(maxWidth: .infinity).padding(.vertical, 4)
+            .accessibilityLabel("MiniToo 待显示内容预览")
     }
 }

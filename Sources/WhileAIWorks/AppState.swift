@@ -2,6 +2,11 @@ import AppKit
 import Combine
 import WhileCore
 
+enum SettingsSection: String, CaseIterable {
+    case desktop, miniToo
+    var title: String { self == .desktop ? "桌面游戏" : "MiniToo" }
+}
+
 enum PlayMode: String, CaseIterable, Identifiable {
     case wipe, bubbles, woodfish, fishing
     var id: String { rawValue }
@@ -61,6 +66,7 @@ final class AppState: ObservableObject {
     private var lastFishingTick = ProcessInfo.processInfo.systemUptime
     private var rotation = RotationClock()
     private var lastTick = ProcessInfo.processInfo.systemUptime
+    @Published var settingsSection: SettingsSection = .desktop
     @Published var mode: PlayMode { didSet { defaults.set(mode.rawValue, forKey: "mode"); rotation.reset(); castStartedAt = nil; fishing.reset() } }
     @Published var targetScreenID:String { didSet { defaults.set(targetScreenID,forKey:"desktop.targetScreen") } }
     @Published private(set) var availableScreens:[DesktopScreenChoice] = []
@@ -85,6 +91,8 @@ final class AppState: ObservableObject {
         defaults.set(selectedSources.map(\.rawValue).sorted(), forKey: "work.sources")
         clearWorkState()
     } }
+    @Published var miniTooCodexEnabled = false
+    @Published var codexDisplay = CodexDisplay()
     @Published var activeSessionCounts: [WorkSource: Int] = [:]
     var activeSessionCount: Int { activeSessionCounts.values.reduce(0, +) }
     var selectedClientsLabel: String {

@@ -24,6 +24,12 @@
 	<true/>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>连接已配对的 Divoom MiniToo，发送鱼缸、Codex 和工作角色动画。</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>在你按说话快捷键、点击开始说话或开启闲聊时，从所选麦克风收音并发送到你配置的豆包语音服务；结束闲聊后停止收音，本地麦克风测试不上传。</string>
+	<key>NSBluetoothPeripheralUsageDescription</key>
+	<string>连接已配对的 Divoom MiniToo，发送并展示鱼缸动画。</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>AI 干活时我们干什么</string>
 </dict>

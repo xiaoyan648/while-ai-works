@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import Combine
+import WhileCore
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDelegate {
     let state = AppState()
@@ -23,6 +24,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         interactionShortcut = InteractionShortcut(state: state)
         overlay = DesktopOverlay(state: state)
         monitor = CodexMonitor(state: state)
+        let miniToo = MiniTooAquarium.shared
+        let agent = MiniTooAgent.shared
+        func json(_ value: [String: Any]) -> String {
+            guard let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]),
+                  let text = String(data: data, encoding: .utf8) else { return "状态编码失败" }
+            return text
+        }
+        agent.attach(appStatus: { [weak state] in
+            guard let state else { return "应用已退出" }
+            return json(["desktopEnabled": state.desktopEnabled, "game": state.mode.title,
+                "status": state.status, "aquariumResidents": state.aquarium.residents,
+                "miniToo": ["enabled": miniToo.enabled, "mode": miniToo.mode.title, "deviceStatus": miniToo.status]])
+        }, codexStatus: { [weak state] in
+            guard let state else { return "应用已退出" }
+            let snapshot = state.codexDisplay
+            let now = Date()
+            return json(["source": "本地 Codex 日志快照，并非云端实时查询", "detail": snapshot.detail,
+                "observedAt": ISO8601DateFormatter().string(from: now),
+                "totalSessions": snapshot.sessions.count,
+                "runningSessions": snapshot.sessions.filter { $0.status == .working }.count,
+                "listedSessionsLimit": 12,
+                "sessions": snapshot.sessions.prefix(12).map { ["number": String($0.number), "status": $0.status.rawValue] },
+                "quotaUpdatedAt": snapshot.quotaUpdatedAt.map { ISO8601DateFormatter().string(from: $0) } ?? "未知",
+                "quotaSnapshotStale": snapshot.quotaUpdatedAt.map { now.timeIntervalSince($0) > 300 } ?? true,
+                "quotas": snapshot.quotas.map { quota -> [String: Any] in
+                    let expired = quota.resetsAt.map { $0 <= now } ?? false
+                    return ["period": quota.label,
+                        "remainingPercent": expired ? NSNull() : quota.remaining as Any,
+                        "status": expired ? "已过重置时间，等待新快照，不能推断当前额度" : "本地快照",
+                        "resetsAt": quota.resetsAt.map { ISO8601DateFormatter().string(from: $0) } ?? "未知"]
+                }])
+        }, desktop: { [weak state] enabled in
+            guard let state else { return "未执行：应用已退出" }
+            state.desktopEnabled = enabled
+            return enabled ? "已开启桌面游戏" : "已收起桌面游戏"
+        })
+        state.$aquarium.map(\.residents).removeDuplicates().sink { miniToo.updateFish($0) }.store(in: &subscriptions)
+        state.$codexDisplay.sink { miniToo.updateCodex($0) }.store(in: &subscriptions)
+        miniToo.$enabled.combineLatest(miniToo.$mode).sink { [weak self] enabled, mode in
+            self?.state.miniTooCodexEnabled = (enabled && mode == .codex) || mode == .work
+            MainActor.assumeIsolated {
+                MiniTooVoiceShortcut.shared.setEnabled(enabled && mode == .work)
+                if !enabled || mode != .work { if MiniTooVoice.shared.busy { MiniTooVoice.shared.cancel() } }
+                if !enabled || mode != .chat { MiniTooRealtime.shared.stop() }
+            }
+        }.store(in: &subscriptions)
+        miniToo.start()
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 438, height: 688),
                           styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
                           backing: .buffered, defer: false)
@@ -36,10 +84,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         window.delegate = self
         window.contentView = NSHostingView(rootView: ContentView(state: state))
         window.center()
-        state.$mode.removeDuplicates().sink { [weak self] mode in
+        state.$settingsSection.combineLatest(state.$mode)
+            .map { section, mode in section == .desktop && mode == .fishing ? 798.0 : 438.0 }
+            .removeDuplicates().sink { [weak self] width in
             DispatchQueue.main.async {
                 guard let self, let window = self.window else { return }
-                window.setContentSize(NSSize(width: mode == .fishing ? 798 : 438, height: 688))
+                window.setContentSize(NSSize(width: width, height: 688))
                 if let screen = window.screen, window.frame.maxX > screen.visibleFrame.maxX {
                     var frame = window.frame; frame.origin.x = screen.visibleFrame.maxX - frame.width
                     window.setFrame(frame, display: true)
@@ -58,6 +108,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         let appMenu = NSMenu()
         appMenu.addItem(withTitle: "关于 AI 干活时我们干什么", action: #selector(about), keyEquivalent: "")
         add(appMenu, "打开设置", #selector(showWindow), key: ",")
+        add(appMenu, "MiniToo 展示", #selector(showMiniToo))
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "关闭窗口", action: #selector(closeWindow), keyEquivalent: "w")
         appMenu.addItem(withTitle: "退出", action: #selector(quit), keyEquivalent: "q")
@@ -79,6 +130,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         menu.addItem(title)
         menu.addItem(.separator())
         add(menu, "打开设置", #selector(showWindow))
+        add(menu, "MiniToo 展示", #selector(showMiniToo))
         let desktop = add(menu, state.desktopEnabled ? "回去工作 · " + state.shortcutLabel : "开始玩 · " + state.shortcutLabel, #selector(toggleDesktop))
         desktop.state = state.desktopEnabled ? .on : .off
         menu.addItem(.separator())
@@ -121,6 +173,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
+    @objc private func showMiniToo() {
+        state.settingsSection = .miniToo
+        showWindow()
+    }
     @objc private func closeWindow() { (NSApp.keyWindow ?? window)?.close() }
     @objc private func toggleInteraction() { state.interactionEnabled.toggle() }
     @objc private func toggleDesktop() { state.desktopEnabled.toggle() }
@@ -146,8 +202,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             .credits: NSAttributedString(string: "擦污渍、捏气泡、敲木鱼、钓鱼。\n原生 macOS 小玩具。")
         ])
     }
-    func applicationWillTerminate(_ notification: Notification) { PlayAudio.shared.stopAll() }
-    func windowWillClose(_ notification: Notification) { NSApp.setActivationPolicy(.accessory) }
+    func applicationWillTerminate(_ notification: Notification) {
+        MiniTooVoice.shared.cancel()
+        MiniTooRealtime.shared.stop()
+        MiniTooAquarium.shared.shutdown()
+        PlayAudio.shared.stopAll()
+    }
+    func windowWillClose(_ notification: Notification) {
+        if MiniTooVoice.shared.busy { MiniTooVoice.shared.cancel() }
+        MiniTooRealtime.shared.stop()
+        NSApp.setActivationPolicy(.accessory)
+    }
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool { showWindow(); return true }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 }

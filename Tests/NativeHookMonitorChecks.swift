@@ -130,6 +130,32 @@ import WhileCore
         state.followAI = true; try hook("UserPromptSubmit", .qoder); tick()
         state.desktopEnabled = false; tick()
         precondition(!state.detectedWorking && state.activeSessionCount == 0 && state.workIntensity == 0)
+        state.followAI = false; state.selectedSources = []
+        state.miniTooCodexEnabled = true
+        try Data(start.utf8).write(to: file); tick()
+        precondition(state.codexDisplay.sessions.contains { $0.status == .working }, "MiniToo monitors while desktop/manual/source switches are off")
+        precondition(!state.detectedWorking && state.activeSessionCount == 0, "device demand must not drive desktop game")
+        try Data((start + end).utf8).write(to: file); tick()
+        precondition(!state.codexDisplay.sessions.contains { $0.status == .working }, "device observes completion independently")
+        var eventLatencies: [Int] = []
+        func appendAndWait(_ line: String, working: Bool) throws {
+            let begin = Date()
+            let handle = try FileHandle(forWritingTo: file)
+            try handle.seekToEnd(); try handle.write(contentsOf: Data(line.utf8)); try handle.close()
+            while Date().timeIntervalSince(begin) < 0.9 {
+                RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+                if state.codexDisplay.sessions.contains(where: { $0.status == .working }) == working {
+                    eventLatencies.append(Int(Date().timeIntervalSince(begin) * 1000)); return
+                }
+            }
+            preconditionFailure("filesystem event did not update MiniToo within 900ms")
+        }
+        for i in 0..<3 {
+            try appendAndWait(start.replacingOccurrences(of: "one", with: "watch-\(i)"), working: true)
+            try appendAndWait(end.replacingOccurrences(of: "one", with: "watch-\(i)"), working: false)
+        }
+        print("MiniToo filesystem event detection ms: \(eventLatencies)")
+        state.miniTooCodexEnabled = false; tick()
         withExtendedLifetime(monitor) {}
         print("NativeHookMonitorChecks: defaults/migration/persistence, per-client isolation, 3→2→1→0, duplicate lifecycle, both Codex+Qoder completion orders, deselection, empty/manual/off and timeout passed")
     }

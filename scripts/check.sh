@@ -33,5 +33,5 @@ xcrun swiftc "${swift_flags[@]}" -parse-as-library -I .build/native -L .build/na
     Sources/WhileAIWorks/AppState.swift Sources/WhileAIWorks/Audio.swift Sources/WhileAIWorks/PlaySurface.swift \
     Sources/WhileAIWorks/BubbleDrawing.swift Sources/WhileAIWorks/WoodfishDrawing.swift Sources/WhileAIWorks/InteractionDrawing.swift \
     Sources/WhileAIWorks/FishingDrawing.swift Sources/WhileAIWorks/FishingGuide.swift Sources/WhileAIWorks/AquariumGlass.swift Sources/WhileAIWorks/AquariumNavigation.swift Sources/WhileAIWorks/PackedMesh.swift Sources/WhileAIWorks/GeneratedFish.swift Sources/WhileAIWorks/GeneratedPuffer.swift Sources/WhileAIWorks/GeneratedAquascape.swift Sources/WhileAIWorks/Aquarium3D.swift Sources/WhileAIWorks/AquariumPresentation.swift Sources/WhileAIWorks/AquariumView.swift Sources/WhileAIWorks/ContentView.swift \
-    Tests/NativeFishingGuideChecks.swift -o .build/native/NativeFishingGuideChecks
+    Sources/WhileAIWorks/MiniToo*.swift Tests/NativeFishingGuideChecks.swift -o .build/native/NativeFishingGuideChecks
 .build/native/NativeFishingGuideChecks
