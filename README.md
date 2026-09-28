@@ -22,6 +22,18 @@
 
 **主打一个：人和 AI 都有事做。**
 
+v0.16.0 还给人类这边添了一位同事：小猫住在桌面，帮你留意 AI 的工作状态，也陪你擦污渍、捏气泡、敲木鱼。钓到鱼，它会举起来一起庆祝。
+
+## 45 秒，看小猫陪你上班
+
+新版 UI、桌面小猫、AI 运行监控，以及猫爪小游戏和举鱼庆祝，都在这支 v0.16.0 宣传片里。
+
+[![v0.16.0 宣传片：小猫举鱼庆祝，点击查看完整视频](images/promo-0.16.0.png)](https://github.com/xiaoyan648/while-ai-works/releases/download/v0.16.0/While-AI-Works-0.16.0-Promo.mp4)
+
+[查看 / 下载完整宣传片 · 45 秒 · 1080p · 含配乐与音效](https://github.com/xiaoyan648/while-ai-works/releases/download/v0.16.0/While-AI-Works-0.16.0-Promo.mp4)
+
+视频中的工作状态使用演示会话，不包含真实任务内容。
+
 ## 人类这边的工作现场
 
 **配置页面 · 给自己安排一个岗位**
