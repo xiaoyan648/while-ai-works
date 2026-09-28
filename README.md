@@ -18,7 +18,7 @@
 
 毕竟这边刚上鱼。
 
-如今也能跟随 Qoder 和 WorkBuddy。无论哪个 Agent 在埋头工作，人类这边总有点事忙。
+如今也能跟随 Claude Code、Qoder 和 WorkBuddy。无论哪个 Agent 在埋头工作，人类这边总有点事忙。
 
 **主打一个：人和 AI 都有事做。**
 
@@ -57,12 +57,14 @@ Agent 还没开工，渔业部先把竿架好。
 - **钓竿成长**：累计钓获解锁青竹、听雨、逐浪、沧澜四阶钓竿，更大的判定块带来更多容错。
 - **奖牌与成就**：按鱼种尺寸收集银牌、金牌，挑战首次金牌和全金牌图鉴；历史鱼获自动继承。
 - **下班观赏**：钓到的鱼有自己的图鉴和纪录，也能放进水下世界，慢慢看它们游。
+- **桌面小猫**：在菜单栏右上角开启「桌面猫」，小猫会独立常驻，显示 Codex、Claude Code、Qoder、WorkBuddy 各自的工作状态。拖动可移动，点击可摸摸，右键可收起状态卡或小猫；位置与开关会记住。收起小游戏不影响小猫关注 AI。工作详情默认收起为会话数字气泡，点击展开；设置里可选小、中、大三种尺寸。
+- **小猫陪玩**：猫爪压布擦污渍、肉垫捏气泡、握槌敲木鱼；钓到鱼后，小猫在钓鱼区域上方举起卡通小鱼庆祝，并播放轻柔的收获音效。
 
 想自己安静玩一会儿，也可以选「随时开启」。不必等 AI 上班。
 
 ## 下载开玩
 
-[下载 Mac 版 · 0.15.0](https://github.com/xiaoyan648/while-ai-works/releases/tag/v0.15.0)
+[下载 Mac 版 · 0.16.0](https://github.com/xiaoyan648/while-ai-works/releases/tag/v0.16.0)
 
 适用于 **macOS 14 或更新版本**，请按芯片选择安装包：
 
@@ -72,16 +74,16 @@ Agent 还没开工，渔业部先把竿架好。
 Intel 包已通过 Rosetta 下的运行与资源检查，尚未完成 Intel 真机验收。暂不支持 Windows。
 
 1. 下载页面里的 `.zip` 文件，解压后将 **While AI Works.app** 拖入「应用程序」。
-2. 打开应用，点击「开始玩」，选一种玩法。
+2. 打开应用，点菜单栏里的小猫，打开「开始玩」，选一种玩法。
 3. 按 **⌘⇧空格** 随时收起桌面效果，回去看看 AI 干得怎么样。
 
 如果首次打开被系统拦住，确认是从本仓库下载后，在「系统设置 → 隐私与安全性」中选择「仍要打开」。也可参照 [Apple 的操作说明](https://support.apple.com/zh-cn/102445)。
 
 ## 和你的 AI 一起上班
 
-在「什么时候」里勾选 **Codex、Qoder、WorkBuddy**，支持多选，默认全选。
+在「设置 → 跟随 AI」的「什么时候」里选择「跟随 AI 工作」，勾选 **Codex、Claude Code、Qoder、WorkBuddy**，支持多选，默认全选。
 
-Codex 可直接跟随。Qoder / WorkBuddy 首次使用需要打开「连接管理」，点击对应客户端的「安装监听」，再重启对应客户端；如果客户端弹出配置确认，按提示启用即可。
+Codex 可直接跟随。Claude Code / Qoder / WorkBuddy 首次使用需要在同一处点击对应客户端的「安装监听」，再重启对应客户端；如果客户端弹出配置确认，按提示启用即可。
 
 可以同时跟随多个客户端。只要还有一个会话在工作，玩法就会跟着变化；最后一个结束后，剩下的可以继续玩。木鱼扣减不会因多个客户端同时工作而翻倍。
 
@@ -91,7 +93,7 @@ Codex 可直接跟随。Qoder / WorkBuddy 首次使用需要打开「连接管�
 
 不需要注册账号，不读取桌面画面，也不会上传你的对话或代码。鱼获、图鉴和累计记录都留在自己的 Mac 上。
 
-关闭设置窗口后，应用仍留在菜单栏。显示屏幕、音量、自动轮换和快捷键都可以自己调整。
+应用住在菜单栏里：点小猫打开面板，右键打开快捷菜单。它在等你、陪你玩、盯着浮漂，AI 没开工时会打个盹；钓到鱼会跳起来，点它会蹭蹭你。显示屏幕、音量、自动轮换、快捷键和小猫毛色（墨 / 雪）都在「设置」里，支持深色模式。
 
 ## 一起养这个小玩具
 
@@ -104,7 +106,7 @@ Qoder / WorkBuddy 的连接还需要更多真实使用反馈；如果状态没�
 代码现已采用 [MIT License](LICENSE) 开源。欢迎阅读、修改和贡献。
 图片、纹理、三维模型和品牌素材的来源与许可范围见 [资源说明](ASSETS.md)，这些素材不属于代码的 MIT 授权范围。
 
-需要 macOS 14+、Apple Command Line Tools（Swift 5.10+）和 Python 3。应用没有第三方 Swift 依赖；构建使用仓库内的资源，不需要生成服务 API Key 或 Blender。
+需要 macOS 14+、Apple Command Line Tools（Swift 5.10+）和 Python 3。唯一的第三方依赖是 [Rive](https://github.com/rive-app/rive-ios) 运行时（MIT），用于菜单栏小猫的动画：首次构建时脚本下载官方发布包并校验 SHA-256，之后可离线构建。其余资源都在仓库内，不需要生成服务 API Key 或 Blender。
 
 ```sh
 git clone https://github.com/xiaoyan648/while-ai-works.git
@@ -124,6 +126,10 @@ bash scripts/check-hooks.sh
 python3 Tests/HookExecutableChecks.py
 # 生成工具的离线请求测试，不调用生成服务
 python3 Tests/test_volcengine_asset.py
+# 菜单栏面板、设置和收藏窗口的离屏渲染（浅色 / 深色），输出到 .build/ui-review
+bash scripts/check-ui.sh
 ```
+
+小猫的 Rive 源文件在 `design/mascot`，制作与修改方法见 [小猫说明](design/mascot/README.md)。
 
 更多目录说明、Intel 构建与打包方法见 [开发说明](CONTRIBUTING.md)。

@@ -74,13 +74,13 @@ public struct StainProgress {
     private var remaining: [CGPoint]
     private let initialCount: Int
     public private(set) var completed = false
-    public init(center: CGPoint, radius: CGFloat, bounds: CGRect? = nil) {
+    public init(center: CGPoint, radius: CGFloat, bounds: CGRect? = nil, coverage: ((CGPoint) -> Bool)? = nil) {
         let count = 80
         remaining = (0..<count).map { index in
             let angle = CGFloat(index) * 2.399963229728653
             let distance = radius * sqrt((CGFloat(index) + 0.5) / CGFloat(count))
             return CGPoint(x: center.x + cos(angle) * distance, y: center.y + sin(angle) * distance)
-        }.filter { bounds?.contains($0) ?? true }
+        }.filter { (bounds?.contains($0) ?? true) && (coverage?($0) ?? true) }
         initialCount = remaining.count
         completed = remaining.isEmpty
     }
@@ -89,10 +89,15 @@ public struct StainProgress {
         let dx = end.x - start.x, dy = end.y - start.y
         let squaredLength = dx * dx + dy * dy
         guard squaredLength > 0.25 else { return false }
-        remaining.removeAll { point in
+        return erase { point in
             let t = min(1, max(0, ((point.x - start.x) * dx + (point.y - start.y) * dy) / squaredLength))
             return hypot(point.x - start.x - t * dx, point.y - start.y - t * dy) <= radius
         }
+    }
+    /// The renderer and coverage counter can share the very same swept contact shape.
+    public mutating func erase(where touches: (CGPoint) -> Bool) -> Bool {
+        guard !completed else { return false }
+        remaining.removeAll(where: touches)
         if remaining.count <= Int(Double(initialCount) * 0.15) {
             completed = true
             return true

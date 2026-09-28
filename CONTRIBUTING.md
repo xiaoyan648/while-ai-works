@@ -11,6 +11,7 @@
 - `scripts/toolchain.sh`：工具链和架构配置；兼容文件仅写入 `.build`。
 - `scripts/art`：美术加工与生成工具源码，不参与普通应用构建。
 - `assets`：应用 Info.plist 和图标。
+- `design/mascot`：菜单栏小猫的 Rive 源文件与生成脚本，见 [小猫说明](design/mascot/README.md)。
 
 `Package.swift` 提供 SwiftPM 入口：标准工具链可执行 `swift build` 和 `swift run CoreChecks`。完整 `.app`、Hooks 辅助程序、图标和资源处理以 `bash scripts/build.sh` 为准。
 
@@ -28,6 +29,8 @@ Apple Silicon 上交叉编译的 Intel 应用位于 `dist/x86_64`。运行 x86_6
 ## 检查边界
 
 `check.sh` 和 `check-hooks.sh` 应顺序执行，它们共用 `.build/native`。原生渲染检查需要可用的 macOS 图形环境。测试使用隔离偏好域和临时 Hooks 目录；自动化协议测试不能代替每个 AI 客户端版本的真实任务验收。
+
+桌面小猫相关改动在构建后运行 `bash scripts/check-desktop-pet.sh`，检查独立开关、状态展示、位置恢复与不抢焦点的窗口。`check-hooks.sh` 同时覆盖关闭游戏后的小猫独立监听，`check-ui.sh` 输出浅/深色及精简模式的界面图。
 
 专项脚本覆盖鱼缸运动、碰撞、显示屏与水下观赏。`check-release-resources.sh` 需要先编译参数指定的检查程序，再让它读取实际应用包的资源。例如：
 

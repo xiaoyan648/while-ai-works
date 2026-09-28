@@ -91,7 +91,8 @@ func verify(_ condition: @autoclosure () -> Bool, _ message: String) throws {
         try verify(defaults.integer(forKey: "interaction.shortcutKey") == 40 && defaults.integer(forKey: "interaction.shortcutModifiers") == 1,
                    "custom shortcut persists independently of counters")
         state.area = .fullScreen
-        let view = PlayView(state: state)
+        var animationTime: TimeInterval = 0
+        let view = PlayView(state: state, clock: { animationTime }, reduceMotion: { false })
         view.frame = CGRect(x: 0, y: 0, width: 700, height: 500)
         view.layout()
         view.sync()
@@ -107,7 +108,8 @@ func verify(_ condition: @autoclosure () -> Bool, _ message: String) throws {
             return bytes[(bitmap.height - 1 - y * scale) * bitmap.bytesPerRow + x * scale * 4 + 3]
         }
         func event(_ type: NSEvent.EventType, _ x: CGFloat, _ y: CGFloat, _ time: Double) -> NSEvent {
-            NSEvent.mouseEvent(with: type, location: CGPoint(x: x, y: y), modifierFlags: [.option], timestamp: time,
+            animationTime = time
+            return NSEvent.mouseEvent(with: type, location: CGPoint(x: x, y: y), modifierFlags: [.option], timestamp: time,
                                windowNumber: 0, context: nil, eventNumber: 1, clickCount: 1, pressure: 1)!
         }
         view.mouseDown(with: event(.leftMouseDown, 110, 120, 1))
@@ -135,7 +137,9 @@ func verify(_ condition: @autoclosure () -> Bool, _ message: String) throws {
         view.mouseDown(with: event(.leftMouseDown, point.x, point.y, 2))
         try verify(view.bubbles[0].pressedAt != nil && view.bubbles[0].poppedAt == nil, "bubble must depress before rupturing")
         view.mouseUp(with: event(.leftMouseUp, point.x, point.y, 2.05))
-        try verify(view.bubbles[0].poppedAt != nil, "releasing the pressed bubble must rupture it")
+        try verify(view.bubbles[0].poppedAt == nil, "quick release must retain a visible press rather than jump to a broken membrane")
+        view.advanceInteractionAnimation(at: 2.10)
+        try verify(view.bubbles[0].poppedAt != nil, "the released bubble must rupture on its contact deadline")
         let popped = view.bubbles[0].poppedAt
         view.mouseDown(with: event(.leftMouseDown, point.x, point.y, 2.1))
         view.mouseUp(with: event(.leftMouseUp, point.x, point.y, 2.2))
@@ -149,9 +153,11 @@ func verify(_ condition: @autoclosure () -> Bool, _ message: String) throws {
         view.mouseDragged(with: event(.leftMouseDragged, wood.x + 2, wood.y + 2, 3.1))
         view.mouseDragged(with: event(.leftMouseDragged, wood.x + 3, wood.y + 3, 3.2))
         view.mouseUp(with: event(.leftMouseUp, wood.x, wood.y, 3.3))
+        view.advanceInteractionAnimation(at: 3.3)
         try verify(state.totalStrikes == 1 && state.sessionStrikes == 1, "dragging while held must not multiply woodfish strikes")
         view.mouseDown(with: event(.leftMouseDown, wood.x, wood.y, 4))
         view.mouseUp(with: event(.leftMouseUp, wood.x, wood.y, 4.1))
+        view.advanceInteractionAnimation(at: 4.1)
         state.reset(); view.sync()
         try verify(state.totalStrikes == 2, "resetting the play surface must preserve the total count")
         view.setInteractionEnabled(false)
@@ -272,6 +278,12 @@ func verify(_ condition: @autoclosure () -> Bool, _ message: String) throws {
         }
         try verify(state.fishing.phase == .landed && state.fishingBook.total == 1, "landed fish records one catch in AppState")
         let reward = state.fishingReward!
+        try verify(state.companionCatch(at: reward.caughtAt + 0.5)?.catchResult.species.id == reward.catchResult.species.id,
+                   "companion holds the actual landed species")
+        try verify(state.companionMood(at: reward.caughtAt + 0.5) == .proud, "landed fish uses proud pose")
+        try verify(state.companionCatch(at: reward.caughtAt + 3.9) == nil, "catch show ends without replay")
+        state.desktopPetEnabled = false
+        try verify(state.companionCatch(at: reward.caughtAt + 0.5) != nil, "one temporary cat can present with resident pet off")
         try verify(!reward.canDismiss(at: reward.caughtAt + 0.999) && reward.canDismiss(at: reward.caughtAt + 1),
                    "catch protection lasts exactly one second")
         for offset in [0.1, 0.2] {

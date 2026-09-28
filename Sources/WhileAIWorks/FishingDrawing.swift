@@ -1,66 +1,6 @@
 import AppKit
 import WhileCore
 
-/// Decoded once, shared by the guide and catch reveal; originals stay untouched.
-enum FishingSprites {
-    struct Sprite {
-        let image: NSImage
-        let silhouette: NSImage
-    }
-    static let catalog: [String: Sprite] = {
-        var result: [String: Sprite] = [:]
-        for species in CatchSpecies.catalog {
-            #if SWIFT_PACKAGE
-            let root = Bundle.module.resourceURL
-            #else
-            let root = Bundle.main.resourceURL
-            #endif
-            guard let url = root?.appendingPathComponent("FishAssets/\(species.id).png"),
-                  let source = NSImage(contentsOf: url),
-                  let cg = source.cgImage(forProposedRect: nil, context: nil, hints: nil),
-                  let bitmap = CGContext(data: nil, width: cg.width, height: cg.height,
-                                         bitsPerComponent: 8, bytesPerRow: cg.width * 4,
-                                         space: CGColorSpaceCreateDeviceRGB(),
-                                         bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue),
-                  let data = bitmap.data else { continue }
-            bitmap.draw(cg, in: CGRect(x: 0, y: 0, width: cg.width, height: cg.height))
-            let bytes = data.assumingMemoryBound(to: UInt8.self)
-            var minX = cg.width, minY = cg.height, maxX = -1, maxY = -1
-            for y in 0..<cg.height {
-                for x in 0..<cg.width where bytes[y * bitmap.bytesPerRow + x * 4 + 3] > 0 {
-                    minX = min(minX, x); maxX = max(maxX, x)
-                    minY = min(minY, y); maxY = max(maxY, y)
-                }
-            }
-            guard maxX >= minX, maxY >= minY else { continue }
-            let crop = CGRect(x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1)
-            guard let image = bitmap.makeImage()?.cropping(to: crop) else { continue }
-            // Source-in retains only the real fish alpha, with no visible markings.
-            bitmap.setBlendMode(.sourceIn)
-            bitmap.setFillColor(CGColor(gray: 0.48, alpha: 0.3))
-            bitmap.fill(CGRect(x: 0, y: 0, width: cg.width, height: cg.height))
-            guard let mask = bitmap.makeImage()?.cropping(to: crop) else { continue }
-            result[species.id] = Sprite(image: NSImage(cgImage: image, size: crop.size),
-                                       silhouette: NSImage(cgImage: mask, size: crop.size))
-        }
-        return result
-    }()
-
-    static func draw(_ species: CatchSpecies, in rect: CGRect, discovered: Bool) -> Bool {
-        guard let sprite = catalog[species.id], rect.width > 0, rect.height > 0 else { return false }
-        let image = discovered ? sprite.image : sprite.silhouette
-        let scale = min(rect.width / image.size.width, rect.height / image.size.height)
-        let size = CGSize(width: image.size.width * scale, height: image.size.height * scale)
-        let target = CGRect(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2,
-                            width: size.width, height: size.height)
-        NSGraphicsContext.saveGraphicsState()
-        NSGraphicsContext.current?.imageInterpolation = .high
-        image.draw(in: target, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
-        NSGraphicsContext.restoreGraphicsState()
-        return true
-    }
-}
-
 /// Shared illustrations used both on the desktop and in the field guide.
 enum FishingArtwork {
     static func specimen(_ species: CatchSpecies, in rect: CGRect, discovered: Bool = true) {
@@ -168,7 +108,8 @@ extension PlayView {
                            y: origin.y + (landing.y - origin.y) * flight + sin(flight * .pi) * 65)
         }
         let motion = reduceMotion ? 0 : time
-        let dip = state.fishing.phase == .bite ? (reduceMotion ? 7 : 7 + 2 * sin(state.fishing.elapsed * 14)) : 0
+        let biteAge = max(0, time-fishingVisualStartedAt)
+        let dip = state.fishing.phase == .bite ? (reduceMotion ? 7 : 7*(1-exp(-biteAge*22))) : 0
         return CGPoint(x: landing.x, y: landing.y + sin(motion * 2) - dip)
     }
     /// A dorsal silhouette: broad shoulders, paired fins and a flexible narrow tail.
@@ -246,8 +187,10 @@ extension PlayView {
         c.translateBy(x: rect.minX, y: 0)
         RiverScenery.outline(width:rect.width).addClip()
         defer { c.restoreGState() }
-        let accent = NSColor(srgbRed: 0.73, green: 0.91, blue: 0.75, alpha: 1)
-        let ink = NSColor(srgbRed: 0.96, green: 0.97, blue: 0.92, alpha: 1)
+        let accent = PlayChrome.accent
+        let ink = PlayChrome.ink
+        let waterInk = NSColor(srgbRed: 0.96, green: 0.98, blue: 0.95, alpha: 1)
+        let waterAccent = NSColor(srgbRed: 0.73, green: 0.91, blue: 0.79, alpha: 1)
         drawRiver(width: rect.width, time: motion, context: c)
 
         // Small fish-shaped silhouettes drift with the current. Work cadence changes their count.
@@ -271,6 +214,7 @@ extension PlayView {
         let tip = fishingRodTip(at: time)
         let bend = fishingRodBend(at: time)
         let bob = fishingBobber(at: time)
+        let biteDip = game.phase == .bite ? (reduceMotion ? 1 : CGFloat(1-exp(-age*22))) : 0
         let flight = reduceMotion ? 1 : min(1, max(0, (time - state.castReleasedAt) / 0.55))
         if state.castStartedAt != nil {
             let target = castTarget(at: time)
@@ -278,19 +222,19 @@ extension PlayView {
             let guide = NSBezierPath(); guide.move(to: tip); guide.line(to: target)
             guide.setLineDash([3, 5], count: 2, phase: 0); guide.lineWidth = 0.8; guide.stroke()
             NSBezierPath(ovalIn: CGRect(x: target.x - 9, y: target.y - 9, width: 18, height: 18)).stroke()
-            fishingLabel(castWater(at: target).title, centerX: target.x, y: target.y + 14, size: 10, color: ink, context: c)
+            fishingLabel(castWater(at: target).title, centerX: target.x, y: target.y + 14, size: 10, color: waterInk, onWater: true, context: c)
             NSColor.black.withAlphaComponent(0.35).setFill()
             NSBezierPath(roundedRect: CGRect(x: x - 62, y: 52, width: 124, height: 9), xRadius: 4.5, yRadius: 4.5).fill()
             accent.setFill()
             NSBezierPath(roundedRect: CGRect(x: x - 60, y: 54, width: 120 * state.castPower(at: time), height: 5), xRadius: 2.5, yRadius: 2.5).fill()
-            fishingLabel("力度 \(Int(state.castPower(at: time) * 100))%", centerX: x, y: 66, size: 10, color: ink, context: c)
+            fishingLabel("力度 \(Int(state.castPower(at: time) * 100))%", centerX: x, y: 66, size: 10, color: waterInk, onWater: true, context: c)
         }
         if game.phase != .landed {
             FishingRodArtwork.draw(game.rod, start: CGPoint(x: rect.width - 14, y: 18), tip: tip, bend: bend)
             if live {
                 let line = NSBezierPath()
                 line.move(to: tip)
-                let slack = 4 + (1 - flight) * 28
+                let slack = (game.engaged ? 1.5 : 4) + (1 - flight) * 28
                 line.curve(to: bob, controlPoint1: CGPoint(x: tip.x + (bob.x - tip.x) * 0.30, y: tip.y + (bob.y - tip.y) * 0.30 - slack),
                            controlPoint2: CGPoint(x: tip.x + (bob.x - tip.x) * 0.75, y: tip.y + (bob.y - tip.y) * 0.75 - slack))
                 NSColor.white.withAlphaComponent(0.7).setStroke(); line.lineWidth = 0.8; line.stroke()
@@ -301,7 +245,7 @@ extension PlayView {
                     NSBezierPath(ovalIn: CGRect(x: bob.x - radius, y: bob.y - radius * 0.65, width: radius * 2, height: radius * 1.3)).stroke()
                 }
                 c.saveGState(); c.translateBy(x: bob.x, y: bob.y)
-                if game.phase == .bite { c.scaleBy(x: 1.05, y: 0.48) }
+                if game.phase == .bite { c.scaleBy(x: 1+0.025*biteDip, y: 1-0.35*biteDip) }
                 c.rotate(by: CGFloat(sin(motion * 1.8)) * 0.08)
                 NSColor(srgbRed: 0.89, green: 0.36, blue: 0.22, alpha: 1).setFill()
                 NSBezierPath(roundedRect: CGRect(x: -3.5, y: -4, width: 7, height: 16), xRadius: 3.5, yRadius: 3.5).fill()
@@ -311,15 +255,14 @@ extension PlayView {
             }
         }
         if game.phase == .bite {
-            let pulse = reduceMotion ? 0.5 : (sin(game.elapsed * 7) + 1) / 2
-            accent.withAlphaComponent(0.40 + pulse * 0.35).setStroke()
+            let pulse = reduceMotion ? 0.3 : exp(-age*4)*abs(sin(age*8))
+            waterAccent.withAlphaComponent(0.40 + pulse * 0.35).setStroke()
             let radius = 13 + pulse * 4
             let ring = NSBezierPath(ovalIn: CGRect(x: bob.x - radius, y: bob.y - radius * 0.6, width: radius * 2, height: radius * 1.2))
             ring.lineWidth = 1.6; ring.stroke()
-            fishingLabel("!", centerX: bob.x, y: bob.y + 17, size: 21, color: accent, context: c)
+            fishingLabel("!", centerX: bob.x, y: bob.y + 17, size: 21, color: waterAccent, onWater: true, context: c)
             let notice = CGRect(x:rect.width-198,y:141,width:164,height:38)
-            NSColor(srgbRed:0.10,green:0.22,blue:0.20,alpha:0.96).setFill()
-            NSBezierPath(roundedRect:notice,xRadius:8,yRadius:8).fill()
+            PlayChrome.panel(notice, context: c)
             fishingLabel("咬钩了 · 点击提竿", centerX: notice.midX, y: notice.minY + 17, size: 12, color: ink, context: c)
             fishingLabel("还有 \(max(0, Int(ceil(8 - game.elapsed)))) 秒", centerX: notice.midX, y: notice.minY + 4, size: 10, color: accent, context: c)
         }
@@ -327,24 +270,23 @@ extension PlayView {
             let track = fishingTrack.offsetBy(dx: -rect.minX, dy: 0)
             c.saveGState()
             c.setShadow(offset: CGSize(width: 0, height: -2), blur: 8, color: NSColor.black.withAlphaComponent(0.2).cgColor)
-            NSColor(srgbRed: 0.055, green: 0.17, blue: 0.18, alpha: 0.94).setFill()
-            NSBezierPath(roundedRect: track.insetBy(dx: -5, dy: -6), xRadius: 13, yRadius: 13).fill()
+            PlayChrome.panel(track.insetBy(dx: -5, dy: -6), radius: 13, context: c)
             c.restoreGState()
             let bar = CGRect(x: track.minX + 2, y: track.minY + CGFloat(game.bar - game.barHeight / 2) * track.height,
                              width: track.width - 4, height: CGFloat(game.barHeight) * track.height)
             (game.inRange ? accent : accent.withAlphaComponent(0.45)).setFill()
             NSBezierPath(roundedRect: bar, xRadius: 5, yRadius: 5).fill()
             let fishY = track.minY + CGFloat(game.fish) * track.height
-            if let icon = NSImage(systemSymbolName: "fish.fill", accessibilityDescription: nil)?.withSymbolConfiguration(.init(paletteColors: [game.inRange ? .playInk : .white])) {
+            if let icon = NSImage(systemSymbolName: "fish.fill", accessibilityDescription: nil)?.withSymbolConfiguration(.init(paletteColors: [game.inRange ? PlayChrome.surface : PlayChrome.ink])) {
                 icon.draw(in: CGRect(x: track.minX + 6, y: fishY - 7, width: 22, height: 14))
             }
-            NSColor(srgbRed:0.08,green:0.18,blue:0.18,alpha:0.94).setFill()
+            PlayChrome.surface.setFill()
             NSBezierPath(roundedRect:CGRect(x:track.maxX+8,y:track.minY-3,width:10,height:track.height+6),xRadius:5,yRadius:5).fill()
             NSColor.white.withAlphaComponent(0.18).setFill()
             NSBezierPath(roundedRect: CGRect(x: track.maxX + 11, y: track.minY, width: 4, height: track.height), xRadius: 2, yRadius: 2).fill()
             accent.setFill()
             NSBezierPath(roundedRect: CGRect(x: track.maxX + 11, y: track.minY, width: 4, height: track.height * game.progress), xRadius: 2, yRadius: 2).fill()
-            NSColor(srgbRed:0.08,green:0.18,blue:0.18,alpha:0.94).setFill()
+            PlayChrome.surface.setFill()
             NSBezierPath(roundedRect:CGRect(x:track.midX-24,y:track.maxY+3,width:48,height:18),xRadius:5,yRadius:5).fill()
             NSBezierPath(roundedRect:CGRect(x:track.midX-26,y:track.minY-25,width:52,height:18),xRadius:5,yRadius:5).fill()
             fishingLabel("\(Int(game.progress * 100))%", centerX: track.midX, y: track.maxY + 6, size: 11, color: ink, context: c)
@@ -369,8 +311,8 @@ extension PlayView {
                     NSBezierPath(ovalIn: CGRect(x: x + cos(direction) * distance - 2, y: 88 + sin(direction) * distance * 0.65, width: 3, height: 5)).fill()
                 }
             }
-            fishingLabel(result.species.name, centerX: x, y: 112, size: 17, color: ink, context: c)
-            fishingLabel(String(format: "%.1f cm", result.sizeCM) + (result.medal.map { " · " + $0.title } ?? "") + (state.fishingNewRecord ? " · 新纪录" : ""), centerX: x, y: 93, size: 12, color: accent, context: c)
+            fishingLabel(result.species.name, centerX: x, y: 112, size: 17, color: waterInk, onWater: true, context: c)
+            fishingLabel(String(format: "%.1f cm", result.sizeCM) + (result.medal.map { " · " + $0.title } ?? "") + (state.fishingNewRecord ? " · 新纪录" : ""), centerX: x, y: 93, size: 12, color: waterAccent, onWater: true, context: c)
         }
         let title: String
         switch game.phase {
@@ -385,8 +327,7 @@ extension PlayView {
         }
         if !showingReward {
         let footer = CGRect(x:rect.width*0.28,y:8,width:rect.width*0.42,height:38)
-        NSColor(srgbRed:0.10,green:0.19,blue:0.17,alpha:0.94).setFill()
-        NSBezierPath(roundedRect:footer,xRadius:9,yRadius:9).fill()
+        PlayChrome.panel(footer, context: c)
         fishingLabel(title, centerX: footer.midX, y: 28, size: min(10,footer.width/max(1,CGFloat(title.count))), color: ink, context: c)
         fishingLabel("\(game.rod.title) · 总鱼获 \(state.fishingBook.total)", centerX: footer.midX, y: 13, size: 9, color: ink.withAlphaComponent(0.86), context: c)
         }
@@ -400,46 +341,44 @@ extension PlayView {
         let age = time - reward.caughtAt
         let entry = min(1, age / 0.32)
         let fade = min(1, (AppState.FishingReward.duration - age) / 0.45)
-        let scale = reduceMotion ? 1 : 1 - 0.12 * pow(1 - entry, 3) + 0.035 * sin(entry * .pi)
+        let scale = reduceMotion ? 1 : 1 - 0.035 * pow(1 - entry, 3)
         let card = fishingRewardRect
-        let gold = NSColor(srgbRed: 1, green: 0.82, blue: 0.43, alpha: 1)
+        let special = reward.firstDiscovery || reward.newRecord || !reward.unlockNotices.isEmpty
+        let gold = special ? PlayChrome.gold : PlayChrome.accent
         c.saveGState()
         defer { c.restoreGState() }
         c.setAlpha(CGFloat(fade * (reduceMotion ? 1 : min(1, age / 0.12))))
         c.translateBy(x: card.midX, y: card.midY + (reduceMotion ? 0 : 10 * (1 - entry)))
         c.scaleBy(x: scale, y: scale)
         c.translateBy(x: -card.midX, y: -card.midY)
-        let shape = NSBezierPath(roundedRect: card, xRadius: 17, yRadius: 17)
-        NSColor(srgbRed: 0.075, green: 0.22, blue: 0.23, alpha: 1).setFill(); shape.fill()
-        gold.withAlphaComponent(0.65).setStroke(); shape.lineWidth = 1; shape.stroke()
-        FishingArtwork.text("✦  " + reward.title, x: card.minX + 15, y: card.maxY - 27,
+        PlayChrome.panel(card, radius: 17, context: c)
+        FishingArtwork.text((special ? "✦  " : "") + reward.title, x: card.minX + 15, y: card.maxY - 27,
                             size: 13, color: gold, weight: .semibold)
         if reward.catchResult.species.isSecret {
-            FishingArtwork.text(reward.catchResult.species.name,x:card.minX+15,y:card.minY+12,size:14,color:.white,weight:.semibold)
+            FishingArtwork.text(reward.catchResult.species.name,x:card.minX+15,y:card.minY+12,size:14,color:PlayChrome.ink,weight:.semibold)
             FishingArtwork.text(String(format:"%.2f 米",reward.catchResult.sizeCM/100) + (reward.catchResult.medal.map { " · " + $0.title } ?? ""),x:card.maxX-128,y:card.minY+12,size:11,color:gold,weight:.medium)
             FishingArtwork.specimen(reward.catchResult.species,in:CGRect(x:card.minX+12,y:card.minY+35,width:card.width-24,height:card.height-66))
         } else {
         FishingArtwork.specimen(reward.catchResult.species,
                                 in: CGRect(x: card.minX + 12, y: card.minY + 25, width: 87, height: 58))
         FishingArtwork.text(reward.catchResult.species.name, x: card.minX + 109, y: card.minY + 62,
-                            size: 17, color: .white, weight: .semibold)
+                            size: 17, color: PlayChrome.ink, weight: .semibold)
         FishingArtwork.text(String(format: "%.1f cm", reward.catchResult.sizeCM) + (reward.catchResult.medal.map { " · " + $0.title } ?? ""),
                             x: card.minX + 109, y: card.minY + 39, size: 13, color: gold, weight: .medium)
         let footer = reward.perfect ? "完美收竿 · 全程稳稳接住" : reward.firstDiscovery ? "第一次相遇 · 已收入图鉴" : reward.newRecord ? "突破个人最佳 · 已收入图鉴" : "收获 +1 · 已收入图鉴"
         FishingArtwork.text(footer, x: card.minX + 15, y: card.minY + 10, size: 10,
-                            color: NSColor.white.withAlphaComponent(0.65))
+                            color: PlayChrome.secondary)
         }
         if let notice = reward.unlockNotices.first {
             let extra = reward.unlockNotices.count > 1 ? " · 另 \(reward.unlockNotices.count - 1) 项" : ""
             let banner = CGRect(x: card.minX, y: card.maxY + 8, width: card.width, height: 27)
-            NSColor(srgbRed: 0.075, green: 0.22, blue: 0.23, alpha: 0.98).setFill()
-            NSBezierPath(roundedRect: banner, xRadius: 8, yRadius: 8).fill()
+            PlayChrome.panel(banner, radius: 8, context: c)
             FishingArtwork.text(notice + extra, x: banner.minX + 10, y: banner.minY + 8, size: 10, color: gold)
         }
-        if !reduceMotion && age < 0.9 {
-            gold.withAlphaComponent((1 - age / 0.9) * 0.9).setFill()
-            for index in 0..<7 {
-                let angle = CGFloat(index) * .pi / 3.5
+        if special && !reduceMotion && age < 0.55 {
+            gold.withAlphaComponent((1 - age / 0.55) * 0.4).setFill()
+            for index in 0..<3 {
+                let angle = CGFloat(index) * .pi / 1.5
                 let radius = 6 + CGFloat(age) * 16
                 let x = card.midX + cos(angle) * (card.width / 2 + radius)
                 let y = card.midY + sin(angle) * (card.height / 2 + radius)
@@ -448,11 +387,12 @@ extension PlayView {
         }
     }
 
-    private func fishingLabel(_ text: String, centerX: CGFloat, y: CGFloat, size: CGFloat, color: NSColor, context c: CGContext) {
+    private func fishingLabel(_ text: String, centerX: CGFloat, y: CGFloat, size: CGFloat, color: NSColor, onWater: Bool = false, context c: CGContext) {
         let font = NSFont.systemFont(ofSize: size, weight: .medium)
         let width = (text as NSString).size(withAttributes: [.font: font]).width
         c.saveGState()
-        c.setShadow(offset: CGSize(width: 0, height: -1), blur: 4, color: NSColor(srgbRed: 0.02, green: 0.10, blue: 0.12, alpha: 0.95).cgColor)
+        if onWater { c.setShadow(offset: CGSize(width: 0,height: -1), blur: 3, color: NSColor.black.withAlphaComponent(0.35).cgColor) }
+        else { c.setShadow(offset: .zero, blur: 0, color: nil) }
         FishingArtwork.text(text, x: centerX - width / 2, y: y, size: size, color: color, weight: .medium)
         c.restoreGState()
     }

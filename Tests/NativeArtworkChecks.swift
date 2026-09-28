@@ -33,7 +33,7 @@ import ImageIO
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
         let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 14, weight: .medium), .foregroundColor: NSColor.darkGray]
-        for (text, x, y): (String, CGFloat, CGFloat) in [("帕子 · 悬停", 115, 335), ("帕子 · 擦动", 415, 335), ("手指 · 悬停", 115, 185), ("手指 · 按压", 415, 185)] {
+        for (text, x, y): (String, CGFloat, CGFloat) in [("帕子 · 悬停", 115, 335), ("帕子 · 擦动", 415, 335), ("猫爪 · 悬停", 115, 185), ("肉垫 · 按压", 415, 185)] {
             (text as NSString).draw(at: CGPoint(x: x, y: y), withAttributes: attrs)
         }
         NSGraphicsContext.restoreGraphicsState()

@@ -2,7 +2,7 @@ import Foundation
 import Combine
 import WhileCore
 
-/// Reads Codex lifecycle logs and sanitized Qoder/WorkBuddy hook snapshots locally.
+/// Reads Codex lifecycle logs and sanitized Claude Code/Qoder/WorkBuddy hook snapshots locally.
 final class CodexMonitor {
     private struct Cursor {
         var offset: UInt64 = 0
@@ -28,6 +28,7 @@ final class CodexMonitor {
     private var pace = WorkPace()
     private var ticks = 0
     private var candidates: [URL] = []
+    private var displaySessions: [DesktopWorkSession] = []
     private let root: URL
     private let hookDirectory: URL
 
@@ -38,15 +39,16 @@ final class CodexMonitor {
             .map { URL(fileURLWithPath: $0) }
             ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex")
         root = codexRoot ?? home.appendingPathComponent("sessions")
-        subscription = Publishers.CombineLatest3(state.$followAI, state.$selectedSources, state.$desktopEnabled)
-            .sink { [weak self] followAI, selected, desktopEnabled in
+        subscription = Publishers.CombineLatest4(state.$followAI, state.$selectedSources, state.$desktopEnabled, state.$desktopPetEnabled)
+            .sink { [weak self] followAI, selected, desktopEnabled, petEnabled in
             guard let self else { return }
             self.configurationRevision += 1
             let revision = self.configurationRevision
             self.queue.async { [weak self] in
                 guard let self else { return }
                 self.revision = revision
-                let next = followAI && desktopEnabled ? selected : []
+                let monitoring = (followAI && desktopEnabled) || petEnabled
+                let next = monitoring ? selected : []
                 // Keep unchanged clients' cursors and pace; toggling Qoder must not replay Codex.
                 if !next.contains(.codex) || !self.sources.contains(.codex) {
                     self.ticks = 0
@@ -57,7 +59,7 @@ final class CodexMonitor {
                 }
                 self.hookPaces = self.hookPaces.filter { next.contains(WorkSource(rawValue: $0.key.rawValue)!) }
                 self.sources = next
-                self.enabled = followAI && desktopEnabled
+                self.enabled = monitoring
                 self.poll()
             }
         }
@@ -70,15 +72,18 @@ final class CodexMonitor {
     deinit { timer?.cancel() }
 
     private func poll() {
+        displaySessions = []
         var counts: [WorkSource: Int] = [:]
         var intensity = 0.0
         var details: [String] = []
+        var sourceDetails: [WorkSource: String] = [:]
         if enabled {
             for source in WorkSource.allCases where sources.contains(source) {
                 let result: (count: Int, intensity: Double, detail: String)
                 if let provider = source.hookProvider { result = pollHooks(provider) }
                 else { result = pollCodex() }
                 counts[source] = result.count
+                sourceDetails[source] = result.detail
                 intensity += result.intensity
                 if !result.detail.isEmpty { details.append(result.detail) }
             }
@@ -87,10 +92,13 @@ final class CodexMonitor {
         let level = working ? min(1, max(0.12, intensity)) : 0
         let detail = sources.isEmpty ? "请选择要跟随的 AI" :
             (details.isEmpty ? "等待 AI 开始工作" : details.joined(separator: " · "))
+        let sessions = displaySessions
         let revision = self.revision
         DispatchQueue.main.async { [weak self] in
             guard let self, self.configurationRevision == revision else { return }
             self.state.activeSessionCounts = counts
+            self.state.workSourceDetails = sourceDetails
+            self.state.desktopWorkSessions = sessions
             self.state.detectedWorking = working
             self.state.workIntensity = level
             self.state.monitorDetail = detail
@@ -135,7 +143,11 @@ final class CodexMonitor {
         // Keep recently silent lifecycle records so fresh progress can wake them again.
         // Five minutes governs the displayed count; one day only bounds retained metadata.
         activity.expire(before: now.addingTimeInterval(-86400))
-        let count = activity.active.values.filter { now.timeIntervalSince($0.updatedAt) < HookBridge.inactivityTimeout }.count
+        let active = activity.active.filter { now.timeIntervalSince($0.value.updatedAt) < HookBridge.inactivityTimeout }
+        displaySessions += active.sorted { $0.key < $1.key }.map {
+            DesktopWorkSession(id: "codex:" + $0.key, source: .codex, phase: $0.value.phase)
+        }
+        let count = active.count
         let intensity = pace.intensity(now: now)
         let detail = !exists ? "未找到 Codex 本地会话" : (!readAny && !candidates.isEmpty ? "无法读取 Codex 工作状态" : "")
         return (count, count > 0 ? max(0.12, intensity) : 0, detail)
@@ -156,11 +168,16 @@ final class CodexMonitor {
         pace.pulses.removeAll { now.timeIntervalSince($0) > 15 }
         if pace.pulses.count > 240 { pace.pulses = Array(pace.pulses.suffix(240)) }
         hookPaces[provider] = pace
-        let count = sessions.values.filter { $0.working }.count
+        let active = sessions.filter { $0.value.working }
+        let source = WorkSource(rawValue: provider.rawValue)!
+        displaySessions += active.sorted { $0.key < $1.key }.map {
+            DesktopWorkSession(id: provider.rawValue + ":" + $0.key, source: source, phase: $0.value.phase ?? .running)
+        }
+        let count = active.count
         let intensity = count > 0 ? max(0.12, min(1, pace.pulses.reduce(0.0) {
             $0 + exp(-max(0, now.timeIntervalSince($1)) / 5)
         } / 12)) : 0
-        return (count, intensity, "")
+        return (count, intensity, sessions.isEmpty ? "等待 \(provider.title) 监听状态" : "")
     }
 
     private func discover() {

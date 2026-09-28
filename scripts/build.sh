@@ -5,7 +5,8 @@ xcrun swiftc "${swift_flags[@]}" -O -parse-as-library -emit-module -emit-library
     -module-name WhileCore Sources/WhileCore/*.swift \
     -emit-module-path "$build_dir/WhileCore.swiftmodule" -o "$build_dir/libWhileCore.a"
 xcrun swiftc "${swift_flags[@]}" -O -parse-as-library -I "$build_dir" -L "$build_dir" \
-    -lWhileCore Sources/WhileAIWorks/*.swift -o "$build_dir/WhileAIWorks"
+    -lWhileCore -F "$rive_frameworks" -framework RiveRuntime -Xlinker -rpath -Xlinker @executable_path/../Frameworks \
+    Sources/WhileAIWorks/*.swift -o "$build_dir/WhileAIWorks"
 app_path="$task_root/dist/While AI Works.app"
 if [[ "$target_arch" != "$(uname -m)" ]]; then app_path="$task_root/dist/$target_arch/While AI Works.app"; fi
 mkdir -p "$app_path/Contents/MacOS" "$app_path/Contents/Resources"
@@ -16,6 +17,11 @@ codesign --force --sign - "$app_path/Contents/Resources/while-ai-works-hook"
 cp assets/Info.plist "$app_path/Contents/Info.plist"
 cp -R Sources/WhileAIWorks/Resources/FishAssets "$app_path/Contents/Resources/"
 cp -R Sources/WhileAIWorks/Resources/AquariumAssets "$app_path/Contents/Resources/"
+cp -R Sources/WhileAIWorks/Resources/Rive "$app_path/Contents/Resources/"
+cp -R Sources/WhileAIWorks/Resources/Licenses "$app_path/Contents/Resources/"
+mkdir -p "$app_path/Contents/Frameworks"
+rm -rf "$app_path/Contents/Frameworks/RiveRuntime.framework"
+ditto "$rive_frameworks/RiveRuntime.framework" "$app_path/Contents/Frameworks/RiveRuntime.framework"
 # Keep editable JSON in the project; the app uses the validated binary streams.
 python3 - "$app_path/Contents/Resources/AquariumAssets" <<'PYASSETS'
 import hashlib, json, sys, shutil

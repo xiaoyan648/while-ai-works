@@ -9,7 +9,10 @@ enum PlayMode: String, CaseIterable, Identifiable {
         switch self { case .wipe: return "擦污渍"; case .bubbles: return "捏气泡"; case .woodfish: return "敲木鱼"; case .fishing: return "钓鱼" }
     }
     var symbol: String {
-        switch self { case .wipe: return "sparkles"; case .bubbles: return "circle.grid.3x3"; case .woodfish: return "music.note"; case .fishing: return "fish" }
+        switch self { case .wipe: return "hands.and.sparkles"; case .bubbles: return "bubbles.and.sparkles"; case .woodfish: return "music.note"; case .fishing: return "fish" }
+    }
+    var unit: String {
+        switch self { case .wipe: return "处"; case .bubbles: return "颗"; case .woodfish: return "次"; case .fishing: return "件" }
     }
     var hint: String {
         switch self {
@@ -28,12 +31,45 @@ enum PlayArea: String, CaseIterable, Identifiable {
 }
 
 enum WorkSource: String, CaseIterable, Identifiable {
-    case codex, qoder, workbuddy
+    case codex, qoder, workbuddy, claude
     var id: String { rawValue }
     var clientName: String {
-        switch self { case .codex: return "Codex"; case .qoder: return "Qoder"; case .workbuddy: return "WorkBuddy" }
+        switch self { case .codex: return "Codex"; case .qoder: return "Qoder"; case .workbuddy: return "WorkBuddy"; case .claude: return "Claude Code" }
     }
     var hookProvider: HookProvider? { HookProvider(rawValue: rawValue) }
+}
+
+/// What the menu bar cat is doing; see `AppState.mascotMood`.
+enum MascotMood: String { case idle, sleep, watch, play, proud, curious, effort, focus }
+
+/// 墨 is a black cat with glowing eyes, 雪 a white one; older saved coats fall back to 墨.
+enum MascotCoat: String, CaseIterable, Identifiable {
+    case ink, snow
+    var id: String { rawValue }
+    var title: String { self == .ink ? "墨" : "雪" }
+}
+
+struct DesktopWorkSession: Identifiable, Equatable {
+    let id: String
+    let source: WorkSource
+    let phase: WorkPhase
+}
+
+enum DesktopPetSize: String, CaseIterable, Identifiable {
+    case small, medium, large
+    var id: String { rawValue }
+    var title: String {
+        switch self { case .small: return "小"; case .medium: return "中"; case .large: return "大" }
+    }
+    var scale: CGFloat {
+        switch self { case .small: return 0.78; case .medium: return 1; case .large: return 1.25 }
+    }
+}
+
+struct DesktopPetPosition: Codable, Equatable {
+    var screenID: String
+    var x: Double
+    var y: Double
 }
 
 struct DesktopScreenChoice: Identifiable, Equatable {
@@ -57,8 +93,6 @@ final class AppState: ObservableObject {
     private let bubbleCounter: ActivityCounter
     private var decay = WorkDecayClock()
     private var timer: Timer?
-    private var fishingTimer: Timer?
-    private var lastFishingTick = ProcessInfo.processInfo.systemUptime
     private var rotation = RotationClock()
     private var lastTick = ProcessInfo.processInfo.systemUptime
     @Published var mode: PlayMode { didSet { defaults.set(mode.rawValue, forKey: "mode"); rotation.reset(); castStartedAt = nil; fishing.reset() } }
@@ -86,6 +120,8 @@ final class AppState: ObservableObject {
         clearWorkState()
     } }
     @Published var activeSessionCounts: [WorkSource: Int] = [:]
+    @Published var desktopWorkSessions: [DesktopWorkSession] = []
+    @Published var workSourceDetails: [WorkSource: String] = [:]
     var activeSessionCount: Int { activeSessionCounts.values.reduce(0, +) }
     var selectedClientsLabel: String {
         selectedSources.count == WorkSource.allCases.count ? "全部 AI" :
@@ -98,7 +134,7 @@ final class AppState: ObservableObject {
         if selected { selectedSources.insert(source) } else { selectedSources.remove(source) }
     }
     func clearWorkState() {
-        activeSessionCounts = [:]; detectedWorking = false; workIntensity = 0
+        activeSessionCounts = [:]; desktopWorkSessions = []; workSourceDetails = [:]; detectedWorking = false; workIntensity = 0
         monitorDetail = selectedSources.isEmpty ? "请选择要跟随的 AI" : "等待 AI 开始工作"
     }
     @Published var hookSetupMessage: String?
@@ -125,6 +161,63 @@ final class AppState: ObservableObject {
     }
     @Published var detectedWorking = false
     @Published var workIntensity = 0.0
+    @Published var mascotCoat: MascotCoat { didSet { defaults.set(mascotCoat.rawValue, forKey: "mascot.coat") } }
+    @Published var desktopPetSize: DesktopPetSize {
+        didSet { defaults.set(desktopPetSize.rawValue, forKey: "mascot.desktop.size") }
+    }
+    @Published var desktopPetEnabled: Bool { didSet {
+        defaults.set(desktopPetEnabled, forKey: "mascot.desktop.enabled")
+        if !desktopPetEnabled && !(desktopEnabled && followAI) { clearWorkState() }
+    } }
+    // Expansion is transient: every launch starts with the quiet thought bubble.
+    @Published var desktopPetShowsStatus = false
+    @Published private(set) var desktopPetResetID = UUID()
+    var desktopPetPosition: DesktopPetPosition? {
+        get { defaults.data(forKey: "mascot.desktop.position").flatMap { try? JSONDecoder().decode(DesktopPetPosition.self, from: $0) } }
+        set { defaults.set(newValue.flatMap { try? JSONEncoder().encode($0) }, forKey: "mascot.desktop.position") }
+    }
+    func resetDesktopPetPosition() { desktopPetPosition = nil; desktopPetResetID = UUID() }
+    func companionCatch(at time: TimeInterval) -> FishingReward? {
+        guard desktopEnabled, mode == .fishing, castStartedAt == nil,
+              let reward = fishingReward, reward.isVisible(at: time) else { return nil }
+        return reward
+    }
+    func companionMood(at time: TimeInterval) -> MascotMood {
+        if let reward = companionCatch(at: time) { return reward.catchResult.species.isFish ? .proud : .curious }
+        if desktopEnabled && mode == .fishing {
+            if fishing.phase == .bite || fishing.phase == .fighting { return .effort }
+            if fishing.phase == .escaped { return .curious }
+            if fishing.phase == .waiting { return .watch }
+        }
+        if desktopEnabled && (!followAI || detectedWorking) {
+            return mode == .fishing ? .watch : mode == .woodfish ? .focus : .play
+        }
+        if detectedWorking { return .watch }
+        return activeSessionCounts.isEmpty ? .idle : .sleep
+    }
+    var desktopPetMood: MascotMood { companionMood(at: ProcessInfo.processInfo.systemUptime) }
+    var desktopPetHeadline: String {
+        if selectedSources.isEmpty { return "选择要关注的 AI" }
+        let working = activeSessionCounts.filter { $0.value > 0 }
+        if working.count > 1 { return "\(working.count) 个工具工作中" }
+        if let source = WorkSource.allCases.first(where: { (activeSessionCounts[$0] ?? 0) > 0 }) { return source.clientName + " 在工作" }
+        return "陪你等开工"
+    }
+    func desktopPetStatus(for source: WorkSource) -> String {
+        guard selectedSources.contains(source) else { return "未关注" }
+        guard let count = activeSessionCounts[source] else { return "正在读取" }
+        if count > 0 { return "\(count) 个会话" }
+        if !(workSourceDetails[source] ?? "").isEmpty { return source == .codex ? "状态不可用" : "等待连接" }
+        return "未检测到工作"
+    }
+    /// Bumped for every landed catch, so the cat can celebrate.
+    @Published private(set) var celebrationSerial = 0
+    /// Off: sits and waits. Following an idle AI: dozes. Fishing: watches the float. Otherwise plays.
+    var mascotMood: MascotMood {
+        if !desktopEnabled { return .idle }
+        if followAI && !detectedWorking { return .sleep }
+        return mode == .fishing ? .watch : .play
+    }
     @Published private(set) var aquarium: Aquarium
     @Published private(set) var fishingBook: FishingBook
     @Published private(set) var fishingProgression: FishingProgression
@@ -233,6 +326,9 @@ final class AppState: ObservableObject {
         let savedInterval = defaults.double(forKey: "switchInterval")
         switchInterval = [30.0, 60, 120, 300].contains(savedInterval) ? savedInterval : 120
         soundEnabled = defaults.object(forKey: "sound") as? Bool ?? true
+        mascotCoat = MascotCoat(rawValue: defaults.string(forKey: "mascot.coat") ?? "") ?? .ink
+        desktopPetSize = DesktopPetSize(rawValue: defaults.string(forKey: "mascot.desktop.size") ?? "") ?? .medium
+        desktopPetEnabled = defaults.bool(forKey: "mascot.desktop.enabled")
         volume = min(1, max(0, defaults.object(forKey: "volume") as? Double ?? 0.55))
         PlayAudio.shared.masterVolume = Float(volume)
         refreshScreens()
@@ -240,16 +336,9 @@ final class AppState: ObservableObject {
         let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in self?.tick() }
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
-        let fishingTimer = Timer(timeInterval: 1.0 / 30, repeats: true) { [weak self] _ in
-            guard let self else { return }
-            let now = ProcessInfo.processInfo.systemUptime
-            self.advanceFishing(delta: now - self.lastFishingTick)
-            self.lastFishingTick = now
-        }
-        RunLoop.main.add(fishingTimer, forMode: .common)
-        self.fishingTimer = fishingTimer
+
     }
-    deinit { timer?.invalidate(); fishingTimer?.invalidate(); if let screenObserver {NotificationCenter.default.removeObserver(screenObserver)} }
+    deinit { timer?.invalidate(); if let screenObserver {NotificationCenter.default.removeObserver(screenObserver)} }
     var isWorking: Bool { !followAI || detectedWorking }
     var status: String {
         guard desktopEnabled else { return "桌面解压已关闭" }
@@ -340,7 +429,8 @@ final class AppState: ObservableObject {
             aquarium.discover(in: fishingBook)
             aquarium.save(defaults: defaults)
             sessionCatches += 1
-            if soundEnabled { PlayAudio.shared.pop(position: 0) }
+            celebrationSerial &+= 1
+            if soundEnabled { PlayAudio.shared.catchReveal() }
         }
         if before != fishing.phase, fishing.phase == .bite, soundEnabled {
             PlayAudio.shared.bite(position: Double(castLanding.x) * 2 - 1)
@@ -368,6 +458,19 @@ final class AppState: ObservableObject {
     }
     func session(for mode: PlayMode) -> Int {
         switch mode { case .wipe: return sessionWipes; case .bubbles: return sessionBubbles; case .woodfish: return sessionStrikes; case .fishing: return sessionCatches }
+    }
+    func shortCount(for mode: PlayMode) -> String { total(for: mode).formatted() + " " + mode.unit }
+    var primaryStatTitle: String {
+        switch mode { case .wipe: return "累计擦净"; case .bubbles: return "累计捏破"; case .woodfish: return "木鱼当前值"; case .fishing: return "总鱼获" }
+    }
+    var primaryStatValue: Int { mode == .woodfish ? woodBalance : total(for: mode) }
+    var primaryStatUnit: String { mode == .woodfish ? "" : mode.unit }
+    var modeHint: String? {
+        switch mode {
+        case .fishing: return "当前钓竿 · " + fishingProgression.selectedRod.title
+        case .woodfish: return followAI ? "AI 工作时每 5 秒 −1，敲击 +1" : "开启时每 5 秒 −1，敲击 +1"
+        case .wipe, .bubbles: return nil
+        }
     }
     func countLabel(for mode: PlayMode) -> String {
         switch mode {

@@ -15,10 +15,10 @@ import WhileCore
         let directory=URL(fileURLWithPath:"docs/beach-mystery-0.13.0")
         try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:true)
         func entry(_ name:String) throws {
-            let host=NSHostingView(rootView:FishingGuide(state:state).row(secret).padding(16).background(Color(red:0.947,green:0.945,blue:0.916)))
-            let window=NSWindow(contentRect:NSRect(x:0,y:0,width:360,height:190),styleMask:[.borderless],backing:.buffered,defer:false)
+            let host=NSHostingView(rootView:SpeciesCard(state:state,species:secret).frame(width:190).padding(16).background(Color(nsColor:.windowBackgroundColor)))
+            let window=NSWindow(contentRect:NSRect(x:0,y:0,width:222,height:190),styleMask:[.borderless],backing:.buffered,defer:false)
             window.isReleasedWhenClosed=false;window.contentView=host
-            host.frame=NSRect(x:0,y:0,width:360,height:190);host.layoutSubtreeIfNeeded()
+            host.frame=NSRect(x:0,y:0,width:222,height:190);host.layoutSubtreeIfNeeded()
             RunLoop.main.run(until:Date().addingTimeInterval(0.03))
             let rep=host.bitmapImageRepForCachingDisplay(in:host.bounds)!
             host.cacheDisplay(in:host.bounds,to:rep)

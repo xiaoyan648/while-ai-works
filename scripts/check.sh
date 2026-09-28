@@ -14,11 +14,13 @@ xcrun swiftc "${swift_flags[@]}" -parse-as-library -I .build/native -L .build/na
 xcrun swiftc "${swift_flags[@]}" -parse-as-library -I .build/native -L .build/native \
     -lWhileCore Sources/WhileAIWorks/Audio.swift Tests/NativeAudioChecks.swift -o .build/native/NativeAudioChecks
 .build/native/NativeAudioChecks
+for interaction_check in NativeInteractionChecks NativeMotionChecks; do
 xcrun swiftc "${swift_flags[@]}" -parse-as-library -I .build/native -L .build/native -lWhileCore \
     Sources/WhileAIWorks/AppState.swift Sources/WhileAIWorks/Audio.swift Sources/WhileAIWorks/PlaySurface.swift \
     Sources/WhileAIWorks/BubbleDrawing.swift Sources/WhileAIWorks/WoodfishDrawing.swift Sources/WhileAIWorks/InteractionDrawing.swift \
-    Sources/WhileAIWorks/FishingDrawing.swift Sources/WhileAIWorks/InteractionShortcut.swift Tests/NativeInteractionChecks.swift -o .build/native/NativeInteractionChecks
-.build/native/NativeInteractionChecks
+    Sources/WhileAIWorks/FishingSprites.swift Sources/WhileAIWorks/FishingDrawing.swift Sources/WhileAIWorks/InteractionShortcut.swift "Tests/${interaction_check}.swift" -o ".build/native/${interaction_check}"
+".build/native/${interaction_check}"
+done
 xcrun swiftc "${swift_flags[@]}" -parse-as-library Sources/WhileAIWorks/InteractionDrawing.swift \
     Tests/NativeArtworkChecks.swift -o .build/native/NativeArtworkChecks
 .build/native/NativeArtworkChecks
@@ -29,9 +31,10 @@ xcrun swiftc "${swift_flags[@]}" -parse-as-library -I .build/native -L .build/na
     Sources/WhileAIWorks/AquariumGlass.swift Sources/WhileAIWorks/AquariumNavigation.swift Sources/WhileAIWorks/PackedMesh.swift Sources/WhileAIWorks/GeneratedFish.swift Sources/WhileAIWorks/GeneratedPuffer.swift Sources/WhileAIWorks/GeneratedAquascape.swift Sources/WhileAIWorks/Aquarium3D.swift Tests/NativeGeneratedPufferChecks.swift \
     -o .build/native/NativeGeneratedPufferChecks
 .build/native/NativeGeneratedPufferChecks
-xcrun swiftc "${swift_flags[@]}" -parse-as-library -I .build/native -L .build/native -lWhileCore \
-    Sources/WhileAIWorks/AppState.swift Sources/WhileAIWorks/Audio.swift Sources/WhileAIWorks/PlaySurface.swift \
-    Sources/WhileAIWorks/BubbleDrawing.swift Sources/WhileAIWorks/WoodfishDrawing.swift Sources/WhileAIWorks/InteractionDrawing.swift \
-    Sources/WhileAIWorks/FishingDrawing.swift Sources/WhileAIWorks/FishingGuide.swift Sources/WhileAIWorks/AquariumGlass.swift Sources/WhileAIWorks/AquariumNavigation.swift Sources/WhileAIWorks/PackedMesh.swift Sources/WhileAIWorks/GeneratedFish.swift Sources/WhileAIWorks/GeneratedPuffer.swift Sources/WhileAIWorks/GeneratedAquascape.swift Sources/WhileAIWorks/Aquarium3D.swift Sources/WhileAIWorks/AquariumPresentation.swift Sources/WhileAIWorks/AquariumView.swift Sources/WhileAIWorks/ContentView.swift \
-    Tests/NativeFishingGuideChecks.swift -o .build/native/NativeFishingGuideChecks
+app_sources=()
+for file in Sources/WhileAIWorks/*.swift; do
+    [[ "$file" == */Main.swift ]] || app_sources+=("$file")
+done
+xcrun swiftc "${swift_flags[@]}" -parse-as-library -I .build/native -L .build/native -lWhileCore "${rive_flags[@]}" \
+    "${app_sources[@]}" Tests/NativeFishingGuideChecks.swift -o .build/native/NativeFishingGuideChecks
 .build/native/NativeFishingGuideChecks

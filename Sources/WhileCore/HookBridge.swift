@@ -3,10 +3,17 @@ import CryptoKit
 import Darwin
 
 public enum HookProvider: String, CaseIterable {
-    case qoder, workbuddy
-    public var title: String { self == .qoder ? "Qoder" : "WorkBuddy" }
+    case qoder, workbuddy, claude
+    public var title: String {
+        switch self {
+        case .qoder: return "Qoder"
+        case .workbuddy: return "WorkBuddy"
+        case .claude: return "Claude Code"
+        }
+    }
     public var events: [String] {
         ["UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "SessionEnd"]
+            + (self == .claude ? ["PostToolUseFailure", "StopFailure"] : [])
     }
 }
 
@@ -16,6 +23,7 @@ public struct HookSession: Codable {
     public var updatedAt: Date
     public var generation: String?
     public var count: Int
+    public var phase: WorkPhase?
 }
 
 public enum HookBridge {
@@ -46,14 +54,16 @@ public enum HookBridge {
         let previous = (try? Data(contentsOf: path)).flatMap { try? JSONDecoder().decode(HookSession.self, from: $0) }
         // WorkBuddy's generation_id is session.messageId: it changes after tool calls
         // within one user turn. Its lifecycle is tracked by the stable session_id.
-        let generation = provider == .workbuddy ? nil
+        // Claude Code also tracks turns by session_id; no generation field is required.
+        let generation = provider != .qoder ? nil
             : (json["generation_id"] as? String ?? json["turn_id"] as? String).map(digest)
         if event != "UserPromptSubmit", event != "SessionEnd",
            let old = previous?.generation, let generation, old != generation { return }
-        let working = !["Stop", "SessionEnd"].contains(event)
+        let working = !["Stop", "StopFailure", "SessionEnd"].contains(event)
         let state = HookSession(working: working, updatedAt: now,
-                                generation: provider == .workbuddy ? nil : generation ?? previous?.generation,
-                                count: min(previous?.count ?? 0, 1_000_000_000) + 1)
+                                generation: provider != .qoder ? nil : generation ?? previous?.generation,
+                                count: min(previous?.count ?? 0, 1_000_000_000) + 1,
+                                phase: event == "PreToolUse" ? .tool : .running)
         try JSONEncoder().encode(state).write(to: path, options: .atomic)
         try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path.path)
         // Keep no history beyond one day, and avoid an ever-growing event log.

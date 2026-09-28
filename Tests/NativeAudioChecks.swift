@@ -9,6 +9,7 @@ enum AudioFailure: Error { case invalid(String) }
             ("wipe", PlayAudio.frictionWAV(), 1.9...2.1),
             ("splash", PlayAudio.splashWAV(), 0.34...0.36),
             ("bite", PlayAudio.biteWAV(), 0.27...0.29),
+            ("catch", PlayAudio.catchRevealWAV(), 0.67...0.69),
             ("bubble", PlayAudio.impactWAV(wood: false, variant: 0), 0.10...0.13),
             ("woodfish", PlayAudio.impactWAV(wood: true, variant: 0), 0.44...0.46)
         ]

@@ -21,6 +21,12 @@ enum CheckFailure: Error { case failed(String) }
         }
         try record("UserPromptSubmit")
         try check(HookBridge.sessions(provider: .qoder, directory: root).values.contains { $0.working }, "start")
+        try check(HookBridge.sessions(provider: .qoder, directory: root).values.first?.phase == .running, "request phase")
+        try record("PreToolUse")
+        try check(HookBridge.sessions(provider: .qoder, directory: root).values.first?.phase == .tool, "tool phase")
+        let legacySnapshot = Data(#"{"working":true,"updatedAt":0,"count":1}"#.utf8)
+        let decodedLegacy = try JSONDecoder().decode(HookSession.self, from: legacySnapshot)
+        try check(decodedLegacy.phase == nil, "old hook snapshots remain readable")
         try record("Stop", generation: "old")
         try check(HookBridge.sessions(provider: .qoder, directory: root).values.contains { $0.working }, "old generation must not stop new work")
         try record("UserPromptSubmit", "b")
@@ -70,6 +76,26 @@ enum CheckFailure: Error { case failed(String) }
         try record("Stop", "legacy", generation: "final-response", provider: .workbuddy)
         let migrated = try JSONDecoder().decode(HookSession.self, from: Data(contentsOf: legacy))
         try check(!migrated.working && migrated.generation == nil && migrated.count == 4, "new helper ends existing legacy snapshot")
+        func claude(_ event: String, _ id: String = "claude-a") throws {
+            let data = try JSONSerialization.data(withJSONObject: ["hook_event_name": event, "session_id": id,
+                "prompt": "PRIVATE-PROMPT", "tool_input": ["command": "PRIVATE-CODE"], "last_assistant_message": "PRIVATE-REPLY"])
+            try HookBridge.record(data, provider: .claude, directory: root)
+        }
+        func claudeCount() -> Int { HookBridge.sessions(provider: .claude, directory: root).values.filter { $0.working }.count }
+        try claude("SessionStart")
+        try check(claudeCount() == 0, "opening Claude is not work")
+        try claude("UserPromptSubmit"); try claude("UserPromptSubmit"); try claude("UserPromptSubmit", "claude-b")
+        try check(claudeCount() == 2, "Claude parallel sessions and duplicate starts")
+        try claude("PreToolUse")
+        try check(HookBridge.sessions(provider: .claude, directory: root).values.contains { $0.phase == .tool }, "Claude tool phase")
+        try claude("PostToolUseFailure"); try claude("SubagentStop")
+        try check(claudeCount() == 2, "failed tool and child stop do not end parent")
+        try claude("Stop"); try claude("Stop")
+        try check(claudeCount() == 1, "Claude completion leaves other session working")
+        try claude("StopFailure", "claude-b")
+        try check(claudeCount() == 0, "Claude API failure ends turn")
+        try claude("UserPromptSubmit"); try claude("SessionEnd")
+        try check(claudeCount() == 0, "Claude next turn and session end")
         let timeoutRoot = root.appendingPathComponent("timeout-checks")
         for provider in HookProvider.allCases {
             let data = Data(#"{"hook_event_name":"PreToolUse","session_id":"timeout"}"#.utf8)
@@ -122,6 +148,20 @@ enum CheckFailure: Error { case failed(String) }
         try check(rejected, "malformed hooks rejected")
         let unchanged = try Data(contentsOf: config)
         try check(unchanged == invalid, "malformed config left untouched")
+        let claudeConfig = home.appendingPathComponent(".claude/settings.json")
+        try fm.createDirectory(at: claudeConfig.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try original.write(to: claudeConfig)
+        try HookInstallation.install(provider: .claude, helper: helper, home: home)
+        try HookInstallation.install(provider: .claude, helper: helper, home: home)
+        let claudeSettings = try JSONSerialization.jsonObject(with: Data(contentsOf: claudeConfig)) as! [String: Any]
+        let claudeHooks = claudeSettings["hooks"] as! [String: [[String: Any]]]
+        for event in HookProvider.claude.events {
+            let entries = claudeHooks[event]!.flatMap { $0["hooks"] as! [[String: Any]] }
+            try check(entries.filter { ($0["command"] as? String)?.hasSuffix(" claude") == true }.count == 1, "Claude hook installed once: " + event)
+        }
+        try HookInstallation.install(provider: .claude, helper: helper, home: home, remove: true)
+        let claudeRemoved = try JSONSerialization.jsonObject(with: Data(contentsOf: claudeConfig)) as! [String: Any]
+        try check(NSDictionary(dictionary: claudeRemoved).isEqual(to: originalObject), "Claude removal preserves existing config")
         print("HookChecks: \(count) passed")
     }
 }

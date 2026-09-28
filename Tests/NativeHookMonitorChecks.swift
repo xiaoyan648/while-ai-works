@@ -26,6 +26,7 @@ import WhileCore
         try hook("UserPromptSubmit", .qoder); tick()
         precondition(state.detectedWorking && state.workIntensity >= 0.12)
         precondition(state.status.contains("Qoder"))
+        precondition(state.desktopWorkSessions.count == 1 && state.desktopWorkSessions[0].phase == .running)
         state.followAI = true; state.selectedSources = [.workbuddy]
         precondition(!state.detectedWorking && state.workIntensity == 0)
         tick(); precondition(!state.detectedWorking, "old provider must not reactivate new selection")
@@ -65,6 +66,7 @@ import WhileCore
         try hook("UserPromptSubmit", .qoder)
         try hook("UserPromptSubmit", .workbuddy); tick()
         precondition(state.activeSessionCount == 3 && state.activeSessionCounts[.codex] == 1)
+        precondition(state.desktopWorkSessions.count == 3 && Set(state.desktopWorkSessions.map(\.id)).count == 3)
         precondition(state.status.contains("Codex") && state.status.contains("Qoder") && state.status.contains("WorkBuddy"))
         precondition(state.workIntensity >= 0.36 && state.workIntensity <= 1)
         try hook("UserPromptSubmit", .qoder); tick()
@@ -130,6 +132,31 @@ import WhileCore
         state.followAI = true; try hook("UserPromptSubmit", .qoder); tick()
         state.desktopEnabled = false; tick()
         precondition(!state.detectedWorking && state.activeSessionCount == 0 && state.workIntensity == 0)
+        // A desktop companion observes work independently from the game and its follow switch.
+        state.followAI = false; state.desktopPetEnabled = true; tick()
+        precondition(!state.desktopEnabled && state.activeSessionCounts[.qoder] == 1,
+                     "pet must monitor clients while games are off, even in manual play mode")
+        precondition(state.desktopPetMood == .watch && state.desktopPetStatus(for: .qoder) == "1 个会话")
+        try hook("Stop", .qoder); tick()
+        precondition(!state.detectedWorking && state.desktopPetMood == .sleep)
+        state.selectedSources = [.workbuddy]; try hook("UserPromptSubmit", .workbuddy); tick()
+        precondition(state.activeSessionCounts[.workbuddy] == 1 && state.desktopPetStatus(for: .qoder) == "未关注")
+        state.desktopPetEnabled = false; tick()
+        precondition(state.activeSessionCounts.isEmpty && !state.detectedWorking,
+                     "all monitoring stops when both games and companion are off")
+        precondition(state.desktopWorkSessions.isEmpty, "stopping monitoring clears details")
+        state.desktopPetEnabled = true; state.selectedSources = [.claude, .qoder]
+        try hook("UserPromptSubmit", .claude); try hook("UserPromptSubmit", .qoder); tick()
+        precondition(state.activeSessionCount == 2 && state.desktopPetStatus(for: .claude) == "1 个会话")
+        precondition(state.desktopWorkSessions.contains { $0.source == .claude })
+        try hook("PreToolUse", .claude); tick()
+        precondition(state.desktopWorkSessions.contains { $0.source == .claude && $0.phase == .tool })
+        try hook("StopFailure", .claude); tick()
+        precondition(state.activeSessionCount == 1 && state.activeSessionCounts[.qoder] == 1)
+        try hook("Stop", .qoder); tick()
+        precondition(!state.detectedWorking)
+        state.selectedSources = [.claude]
+        precondition(AppState(defaults: defaults).selectedSources == [.claude])
         withExtendedLifetime(monitor) {}
         print("NativeHookMonitorChecks: defaults/migration/persistence, per-client isolation, 3→2→1→0, duplicate lifecycle, both Codex+Qoder completion orders, deselection, empty/manual/off and timeout passed")
     }

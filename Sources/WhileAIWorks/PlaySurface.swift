@@ -1,4 +1,5 @@
 import AppKit
+import QuartzCore
 import WhileCore
 
 final class PlayView: NSView {
@@ -7,6 +8,7 @@ final class PlayView: NSView {
         var radius: CGFloat
         var seed: CGFloat
         var poppedAt: TimeInterval?
+        var popPressure: CGFloat = 0
         var pressedAt: TimeInterval?
         var deadline: TimeInterval?
         var contact = CGPoint.zero
@@ -18,11 +20,26 @@ final class PlayView: NSView {
     var bitmap: CGContext?
     var bitmapSize = CGSize.zero
     var bubbles: [Bubble] = []
+    struct BubbleImageKey: Hashable { var radius: CGFloat; var seed: CGFloat; var flat: Bool; var scale: CGFloat }
+    var bubbleImages: [BubbleImageKey: CGImage] = [:]
+    var bubbleImageOrder: [BubbleImageKey] = []
     var stains: [StainProgress] = []
     var hoverPoint: CGPoint?
     var woodHitAt: TimeInterval = -100
     var floatingStrikes: [FloatingStrike] = []
-    private var ticker: Timer?
+    private var ticker: CADisplayLink?
+    private let frameTarget = PlayFrameTarget()
+    private let clock: () -> TimeInterval
+    private let motionPreference: () -> Bool
+    private(set) var handOrientation = HandOrientation()
+    private(set) var clothDrag = CGPoint.zero
+    private var targetClothDrag = CGPoint.zero
+    private var lastClothMove: TimeInterval = -100
+    struct CleanGleam { var point: CGPoint; var time: TimeInterval }
+    var cleanGleams: [CleanGleam] = []
+    var woodSwingAt: TimeInterval = -100
+    var woodSwingFrom: CGFloat = -0.42
+    private var pendingWoodContacts: [TimeInterval] = []
     private var lastMode: PlayMode?
     private var lastArea: PlayArea?
     private var lastReset: UUID?
@@ -47,11 +64,12 @@ final class PlayView: NSView {
     private var lastFishingPhase = FishingGame.Phase.ready
     var fishingVisualStartedAt: TimeInterval = 0
     private var lastFishingFrame: TimeInterval = 0
+    private var lastFishingTick: TimeInterval?
     private var lastTotal = -1
     private var lastDecaySerial = 0
     private var lastWoodBalance = 0
-    var now: TimeInterval { ProcessInfo.processInfo.systemUptime }
-    var reduceMotion: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
+    var now: TimeInterval { clock() }
+    var reduceMotion: Bool { motionPreference() }
     var woodCenter: CGPoint {
         state.area == .edges ? CGPoint(x: bounds.maxX - 121, y: 103) : CGPoint(x: bounds.midX, y: bounds.midY - 12)
     }
@@ -60,8 +78,11 @@ final class PlayView: NSView {
     override var acceptsFirstResponder: Bool { false }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
-    init(state: AppState) {
+    init(state: AppState, clock: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+         reduceMotion: @escaping () -> Bool = { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }) {
         self.state = state
+        self.clock = clock
+        self.motionPreference = reduceMotion
         super.init(frame: .zero)
         lastDecaySerial = state.woodDecaySerial
         lastWoodBalance = state.woodBalance
@@ -70,13 +91,24 @@ final class PlayView: NSView {
         setAccessibilityElement(true)
         setAccessibilityRole(.group)
         setAccessibilityLabel("桌面解压")
-        let timer = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] _ in self?.tick() }
-        RunLoop.main.add(timer, forMode: .common)
-        ticker = timer
+        frameTarget.view = self
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     deinit { ticker?.invalidate() }
-    override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); if window != nil { sync() } }
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        ticker?.invalidate(); ticker = nil
+        lastFishingTick = nil
+        if window != nil {
+            let link = displayLink(target: frameTarget, selector: #selector(PlayFrameTarget.step(_:)))
+            link.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: 60, preferred: 60)
+            link.add(to: .main, forMode: .common)
+            ticker = link
+            sync()
+        } else {
+            cancelInteraction()
+        }
+    }
     override func layout() {
         super.layout()
         if bounds.width > 0, bounds.height > 0, bitmapSize != bounds.size { configureCanvas() }
@@ -90,6 +122,7 @@ final class PlayView: NSView {
     func sync() {
         if state.mode != lastMode || state.area != lastArea || lastReset != state.resetID {
             lastMode = state.mode; lastArea = state.area; lastReset = state.resetID
+            lastFishingTick = nil
             cancelInteraction()
             configureCanvas()
         }
@@ -118,6 +151,9 @@ final class PlayView: NSView {
         mouseIsDown = false
         state.fishingRelease()
         toolPressure = 0; toolReboundAt = -100
+        clothDrag = .zero; targetClothDrag = .zero
+        pendingWoodContacts.removeAll()
+        woodSwingAt = -100
         targetToolTilt = -0.12
         if window != nil, wasHeld { NSCursor.arrow.set() }
         strikeGate.release()
@@ -130,9 +166,11 @@ final class PlayView: NSView {
         bitmapSize = bounds.size
         bitmap = nil
         bubbles.removeAll()
+        bubbleImages.removeAll(); bubbleImageOrder.removeAll()
         stains.removeAll()
         lastDecaySerial = state.woodDecaySerial
         floatingStrikes.removeAll()
+        cleanGleams.removeAll()
         dirtBudget = 0
         if state.mode == .wipe {
             let scale = min(window?.backingScaleFactor ?? 2, 2)
@@ -180,37 +218,73 @@ final class PlayView: NSView {
                             y: CGFloat.random(in: 45...max(46, bounds.height - 45)))
         }
         let radius = CGFloat.random(in: 24...49)
-        context.saveGState()
-        let tone = CGFloat.random(in: 0.31...0.43)
-        for _ in 0..<6 {
-            let center = CGPoint(x: point.x + CGFloat.random(in: -radius * 0.4...radius * 0.4),
-                                 y: point.y + CGFloat.random(in: -radius * 0.4...radius * 0.4))
-            let colors = [NSColor(srgbRed: tone + 0.09, green: tone + 0.025, blue: tone - 0.035, alpha: 0.22).cgColor,
-                          NSColor(srgbRed: tone + 0.09, green: tone + 0.025, blue: tone - 0.035, alpha: 0).cgColor]
-            if let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors as CFArray, locations: [0, 1]) {
-                context.drawRadialGradient(gradient, startCenter: center, startRadius: 0,
-                                           endCenter: center, endRadius: radius * CGFloat.random(in: 0.6...1.2), options: [])
-            }
+        if Int(dirtBudget).isMultiple(of: 3) {
+            let mark = InteractionArtwork.pawPrintPath(center: point, radius: radius, angle: CGFloat.random(in: -0.6...0.6))
+            context.saveGState()
+            context.setFillColor(NSColor(srgbRed: 0.29, green: 0.34, blue: 0.29, alpha: 0.23).cgColor)
+            context.addPath(mark); context.fillPath(); context.restoreGState()
+            stains.append(StainProgress(center: point, radius: radius, bounds: bounds, coverage: { mark.contains($0) }))
+            dirtBudget += 1
+            setNeedsDisplay(CGRect(x: point.x-radius-2, y: point.y-radius-2, width: radius*2+4, height: radius*2+4))
+            return
         }
-        for _ in 0..<230 {
-            let angle = CGFloat.random(in: 0...(2 * .pi))
-            let distance = radius * sqrt(CGFloat.random(in: 0...1))
-            let size = CGFloat.random(in: 0.4...1.9)
-            let p = CGPoint(x: point.x + cos(angle) * distance, y: point.y + sin(angle) * distance * 0.8)
-            context.setFillColor(NSColor(srgbRed: tone, green: tone - 0.02, blue: tone - 0.06,
-                                        alpha: CGFloat.random(in: 0.08...0.3) * (1 - distance / radius)).cgColor)
-            context.fillEllipse(in: CGRect(x: p.x, y: p.y, width: size, height: size))
+        context.saveGState()
+        context.clip(to: CGRect(x: point.x-radius, y: point.y-radius, width: radius*2, height: radius*2))
+        context.addEllipse(in: CGRect(x: point.x-radius, y: point.y-radius, width: radius*2, height: radius*2)); context.clip()
+        context.translateBy(x: point.x, y: point.y)
+        context.rotate(by: CGFloat.random(in: -0.5...0.5))
+        let tone = NSColor(srgbRed: 0.32, green: 0.35, blue: 0.30, alpha: 0.13)
+        context.setLineCap(.round)
+        switch Int.random(in: 0...2) {
+        case 0:
+            // Fine fingerprint ridges inside a soft oval, never four identical painted strokes.
+            context.saveGState(); context.scaleBy(x: 0.72, y: 1)
+            let colors = [tone.withAlphaComponent(0.11).cgColor, tone.withAlphaComponent(0).cgColor]
+            if let g = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors as CFArray, locations: [0,1]) {
+                context.drawRadialGradient(g, startCenter: .zero, startRadius: 0, endCenter: .zero, endRadius: radius*0.92, options: [])
+            }
+            context.setLineWidth(0.6); context.setStrokeColor(tone.withAlphaComponent(0.18).cgColor)
+            for index in 0..<9 {
+                let r = radius*(0.18+CGFloat(index)*0.075)
+                context.addArc(center: CGPoint(x: 0,y: -radius*0.08), radius: r,
+                               startAngle: -.pi*0.27, endAngle: .pi*1.23, clockwise: false); context.strokePath()
+            }
+            context.restoreGState()
+        case 1:
+            // A broken, thin water mark with a faint deposit along one side.
+            context.saveGState(); context.scaleBy(x: 1, y: 0.78)
+            context.setStrokeColor(tone.withAlphaComponent(0.20).cgColor); context.setLineWidth(1.1)
+            context.addArc(center: .zero, radius: radius*0.78, startAngle: 0.12, endAngle: .pi*1.75, clockwise: false); context.strokePath()
+            context.setStrokeColor(NSColor.white.withAlphaComponent(0.10).cgColor); context.setLineWidth(0.8)
+            context.addArc(center: .zero, radius: radius*0.78-1, startAngle: 0.7, endAngle: .pi*1.6, clockwise: false); context.strokePath()
+            context.restoreGState()
+        default:
+            context.setShadow(offset: .zero, blur: 3, color: tone.cgColor)
+            for index in 0..<3 {
+                let y = CGFloat(index-1)*radius*0.27
+                context.setLineWidth(radius*0.26)
+                context.setStrokeColor(tone.withAlphaComponent(0.07).cgColor)
+                context.move(to: CGPoint(x: -radius*0.6,y: y))
+                context.addQuadCurve(to: CGPoint(x: radius*0.57,y: y+radius*0.19), control: CGPoint(x: 0,y: y-radius*0.05)); context.strokePath()
+            }
+            context.setShadow(offset: .zero, blur: 0, color: nil)
+        }
+        for _ in 0..<38 {
+            let a = CGFloat.random(in: 0...(.pi*2)), d = radius*sqrt(CGFloat.random(in: 0...1))
+            let size = CGFloat.random(in: 0.4...1.2)
+            context.setFillColor(tone.withAlphaComponent(CGFloat.random(in: 0.06...0.18)).cgColor)
+            context.fillEllipse(in: CGRect(x: cos(a)*d, y: sin(a)*d, width: size, height: size))
         }
         context.restoreGState()
         dirtBudget += 1
         stains.append(StainProgress(center: point, radius: radius, bounds: bounds))
         setNeedsDisplay(CGRect(x: point.x - 100, y: point.y - 100, width: 200, height: 200))
     }
-    private func tick() {
+    fileprivate func tick() {
         guard let window, window.isVisible else { return }
         let time = now
-        updateToolAnimation(at: time)
         if state.mode != lastMode || state.area != lastArea || state.resetID != lastReset { sync() }
+        advanceInteractionAnimation(at: time)
         if state.isWorking != lastWorking {
             if lastWorking && !state.isWorking && state.followAI { hintUntil = time + 2.5 }
             lastWorking = state.isWorking
@@ -225,29 +299,16 @@ final class PlayView: NSView {
                 if let index = bubbles.indices.filter({ bubbles[$0].poppedAt.map { time - $0 > 5 } ?? false })
                     .min(by: { (bubbles[$0].poppedAt ?? 0) < (bubbles[$1].poppedAt ?? 0) }) {
                     bubbles[index].poppedAt = nil; bubbles[index].pressedAt = nil
+                    bubbles[index].popPressure = 0; bubbles[index].contact = .zero
                     bubbles[index].appearedAt = time
                     setNeedsDisplay(bubbles[index].rect)
                 }
             case .woodfish, .fishing: break
             }
         }
-        for index in bubbles.indices {
-            if let deadline = bubbles[index].deadline, time >= deadline, bubbles[index].poppedAt == nil { popBubble(index) }
-            if time - bubbles[index].appearedAt < 0.32 || bubbles[index].pressedAt != nil && bubbles[index].poppedAt == nil ||
-                (bubbles[index].poppedAt.map { time - $0 < 0.34 } ?? false) { setNeedsDisplay(bubbles[index].rect) }
-        }
-        if state.mode == .fishing {
-            let interval = reduceMotion ? 0.125 : (state.fishing.engaged ? 1.0 / 60 : 1.0 / 30)
-            if time - lastFishingFrame >= interval {
-                lastFishingFrame = time
-                setNeedsDisplay(fishingRect.insetBy(dx: -2, dy: -2))
-            }
-            if state.fishing.phase != lastFishingPhase {
-                lastFishingPhase = state.fishing.phase; fishingVisualStartedAt = time; updateAccessibility()
-            }
-        }
+        advanceFishingAnimation(at: time)
         if state.mode == .woodfish {
-            if time - woodHitAt < 0.5 || !floatingStrikes.isEmpty { setNeedsDisplay(woodDrawingRect) }
+            if time - woodSwingAt < 0.32 || time - woodHitAt < 0.5 || !floatingStrikes.isEmpty { setNeedsDisplay(woodDrawingRect) }
             floatingStrikes.removeAll { time - $0.time > 0.95 }
             if state.woodDecaySerial != lastDecaySerial {
                 lastDecaySerial = state.woodDecaySerial
@@ -264,25 +325,86 @@ final class PlayView: NSView {
         }
         if time < hintUntil + 0.04 && hintUntil > 0 { setNeedsDisplay(CGRect(x: 0, y: bounds.height - 75, width: bounds.width, height: 70)) }
     }
+    /// Advance gameplay once per display callback, immediately before requesting its draw.
+    /// Reduce Motion suppresses scenery motion, never the feedback needed to control a fish.
+    func advanceFishingAnimation(at time: TimeInterval) {
+        guard state.mode == .fishing, state.desktopEnabled else {
+            lastFishingTick = nil
+            return
+        }
+        let previous = lastFishingTick
+        lastFishingTick = time
+        if let previous, time > previous, time - previous <= 0.25 {
+            // Small steps keep acceleration stable across refresh rates and brief missed frames.
+            var remaining = time - previous
+            while remaining > 0.000001 {
+                let step = min(remaining, 1.0 / 120)
+                state.advanceFishing(delta: step)
+                remaining -= step
+            }
+        }
+        // Do not threshold active frames at 1/60: tiny display-link jitter would skip them.
+        if state.fishing.engaged || state.castStartedAt != nil || time - lastFishingFrame >= (reduceMotion ? 0.125 : 1.0 / 30) {
+            lastFishingFrame = time
+            setNeedsDisplay(fishingRect.insetBy(dx: -2, dy: -2))
+        }
+        if state.fishing.phase != lastFishingPhase {
+            lastFishingPhase = state.fishing.phase
+            fishingVisualStartedAt = time
+            updateAccessibility()
+        }
+    }
+    func advanceInteractionAnimation(at time: TimeInterval) {
+        updateToolAnimation(at: time)
+        // Sort across *all* gestures, so a fast release cannot revert to array order.
+        let due = bubbles.indices.filter { bubbles[$0].deadline.map { $0 <= time } ?? false }
+            .sorted { bubbles[$0].deadline! < bubbles[$1].deadline! }
+        for index in due { popBubble(index, at: time) }
+        for bubble in bubbles where time-bubble.appearedAt < 0.26 ||
+            (bubble.pressedAt != nil && bubble.poppedAt == nil) || (bubble.poppedAt.map { time-$0 < 0.28 } ?? false) {
+            setNeedsDisplay(bubble.rect)
+        }
+        let contacts = pendingWoodContacts.filter { $0 <= time }
+        pendingWoodContacts.removeAll { $0 <= time }
+        for _ in contacts { completeWoodContact(at: time) }
+        for gleam in cleanGleams { setNeedsDisplay(CGRect(x: gleam.point.x-42, y: gleam.point.y-38, width: 84, height: 76)) }
+        cleanGleams.removeAll { time-$0.time > 0.24 }
+    }
     override func draw(_ dirtyRect: NSRect) {
         guard let context = NSGraphicsContext.current?.cgContext else { return }
+        // Layer-backed AppKit views may supply an unclipped CGContext. Never repaint
+        // translucent neighbouring bubbles outside the pixels we just cleared.
+        context.saveGState()
+        context.clip(to: dirtyRect)
+        defer { context.restoreGState() }
         context.clear(dirtyRect)
         switch state.mode {
-        case .wipe: if let image = bitmap?.makeImage() { context.draw(image, in: bounds) }
+        case .wipe:
+            if let image = bitmap?.makeImage() { context.draw(image, in: bounds) }
+            for gleam in cleanGleams {
+                let t = min(1, max(0, (now-gleam.time)/0.24))
+                context.saveGState()
+                context.setStrokeColor(PlayChrome.accent.withAlphaComponent((1-t)*0.26).cgColor)
+                context.setLineWidth(1.3); context.setLineCap(.round)
+                let y = gleam.point.y + (reduceMotion ? 0 : CGFloat(t)*9)
+                context.move(to: CGPoint(x: gleam.point.x-12, y: y))
+                context.addQuadCurve(to: CGPoint(x: gleam.point.x+12, y: y), control: CGPoint(x: gleam.point.x, y: y+3)); context.strokePath()
+                context.restoreGState()
+            }
         case .bubbles:
-            for bubble in bubbles where bubble.rect.intersects(dirtyRect) { drawBubble(bubble, at: now, context: context) }
+            for bubble in bubbles where bubble.rect.intersects(dirtyRect) { drawDesktopBubble(bubble, at: now, context: context) }
         case .woodfish: if woodDrawingRect.intersects(dirtyRect) { drawWoodfish(at: now, context: context) }
         case .fishing: if fishingRect.intersects(dirtyRect) { drawFishing(at: now, context: context) }
         }
         if state.mode == .wipe || state.mode == .bubbles { drawCounter() }
         if wasHeld, let point = hoverPoint {
             switch state.mode {
-            case .wipe: InteractionArtwork.cloth(at: point, pressure: toolPressure, angle: toolTilt, context: context)
+            case .wipe: InteractionArtwork.cloth(at: point, pressure: toolPressure, angle: toolTilt, drag: clothDrag, snow: state.mascotCoat == .snow, context: context)
             case .bubbles:
                 let age = now - toolReboundAt
                 let rebound = reduceMotion || age > 0.24 ? 0 : CGFloat(exp(-age * 16) * sin(age * 32))
                 InteractionArtwork.finger(at: point, pressure: toolPressure, rebound: rebound,
-                                          flipped: point.y < 105, mirrored: point.x > bounds.width - 85, context: context)
+                                          angle: handOrientation.angle, snow: state.mascotCoat == .snow, context: context)
             case .woodfish, .fishing: break
             }
         }
@@ -291,20 +413,18 @@ final class PlayView: NSView {
     private var counterRect: CGRect { CGRect(x: bounds.midX - 140, y: 2, width: 280, height: 37) }
     private func drawCounter() {
         let text = state.countLabel(for: state.mode) as NSString
-        let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium), .foregroundColor: NSColor.white]
+        let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium), .foregroundColor: PlayChrome.ink]
         let size = text.size(withAttributes: attributes)
         let pill = CGRect(x: bounds.midX - size.width / 2 - 12, y: 8, width: size.width + 24, height: 25)
-        NSColor.playInk.withAlphaComponent(0.86).setFill()
-        NSBezierPath(roundedRect: pill, xRadius: 12, yRadius: 12).fill()
+        if let c = NSGraphicsContext.current?.cgContext { PlayChrome.panel(pill, context: c) }
         text.draw(at: CGPoint(x: pill.minX + 12, y: pill.minY + 7), withAttributes: attributes)
     }
     private func drawHint() {
         let text = (now < hintUntil ? "AI 暂时忙完了" : state.mode.hint) as NSString
-        let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 12, weight: .medium), .foregroundColor: NSColor.white]
+        let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 12, weight: .medium), .foregroundColor: PlayChrome.ink]
         let size = text.size(withAttributes: attrs)
         let rect = CGRect(x: bounds.midX - size.width / 2 - 16, y: bounds.height - 56, width: size.width + 32, height: 32)
-        NSColor.playInk.withAlphaComponent(0.86).setFill()
-        NSBezierPath(roundedRect: rect, xRadius: 16, yRadius: 16).fill()
+        if let c = NSGraphicsContext.current?.cgContext { PlayChrome.panel(rect, radius: 16, context: c) }
         text.draw(at: CGPoint(x: rect.minX + 16, y: rect.minY + 9), withAttributes: attrs)
     }
     func toolRect(at point: CGPoint) -> CGRect {
@@ -314,20 +434,33 @@ final class PlayView: NSView {
     private func updateToolPoint(_ point: CGPoint?) {
         if let old = hoverPoint { setNeedsDisplay(toolRect(at: old)) }
         hoverPoint = point
-        if let point { setNeedsDisplay(toolRect(at: point)) }
+        if let point {
+            handOrientation.update(point: point, bounds: bounds, pressed: mouseIsDown, delta: 0, reduceMotion: reduceMotion)
+            setNeedsDisplay(toolRect(at: point))
+        }
     }
     private func updateToolAnimation(at time: TimeInterval) {
         let delta = min(0.05, max(0, time - lastToolTick))
         lastToolTick = time
         guard wasHeld, let point = hoverPoint, (state.mode == .wipe || state.mode == .bubbles) else { return }
         let beforePressure = toolPressure, beforeTilt = toolTilt
+        let beforeAngle = handOrientation.angle, beforeDrag = clothDrag
+        handOrientation.update(point: point, bounds: bounds, pressed: mouseIsDown, delta: delta, reduceMotion: reduceMotion)
+        if time-lastClothMove > 0.055 { targetClothDrag = .zero }
+        if reduceMotion { clothDrag = .zero }
+        else {
+            let blend = CGFloat(1-exp(-delta/0.045))
+            clothDrag.x += (targetClothDrag.x-clothDrag.x)*blend
+            clothDrag.y += (targetClothDrag.y-clothDrag.y)*blend
+        }
         let target: CGFloat = mouseIsDown ? 1 : 0
         if reduceMotion { toolPressure = target; toolTilt = -0.12 }
         else {
             toolPressure += (target - toolPressure) * CGFloat(1 - exp(-delta / 0.055))
             toolTilt += (targetToolTilt - toolTilt) * CGFloat(1 - exp(-delta / 0.07))
         }
-        if abs(toolPressure - beforePressure) > 0.001 || abs(toolTilt - beforeTilt) > 0.001 || time - toolReboundAt < 0.25 {
+        if abs(toolPressure - beforePressure) > 0.001 || abs(toolTilt - beforeTilt) > 0.001 ||
+            abs(beforeAngle-handOrientation.angle) > 0.001 || hypot(beforeDrag.x-clothDrag.x, beforeDrag.y-clothDrag.y) > 0.002 || time - toolReboundAt < 0.25 {
             setNeedsDisplay(toolRect(at: point))
         }
     }
@@ -340,12 +473,14 @@ final class PlayView: NSView {
         if wasHeld, (state.mode == .wipe || state.mode == .bubbles) { InteractionArtwork.clearCursor.set() }
         else { NSCursor.arrow.set() }
     }
-    private func popBubble(_ index: Int) {
+    private func popBubble(_ index: Int, at time: TimeInterval) {
         guard bubbles.indices.contains(index), bubbles[index].poppedAt == nil else { return }
-        bubbles[index].poppedAt = now
+        bubbles[index].popPressure = BubblePose(pressedAt: bubbles[index].pressedAt, poppedAt: nil, popPressure: 0,
+                                               at: time, reduceMotion: reduceMotion).pressure
+        bubbles[index].poppedAt = time
         if let point = hoverPoint, wasHeld,
            hypot(point.x - bubbles[index].point.x, point.y - bubbles[index].point.y) < bubbles[index].radius * 1.4 {
-            toolReboundAt = now
+            toolReboundAt = time
             toolPressure = max(toolPressure, 0.75)
             setNeedsDisplay(toolRect(at: point))
         }
@@ -357,71 +492,85 @@ final class PlayView: NSView {
         setNeedsDisplay(bubbles[index].rect)
     }
     private func pressBubbles(from start: CGPoint, to end: CGPoint, sweeping: Bool) {
-        let dx = end.x - start.x, dy = end.y - start.y
-        let lengthSquared = dx * dx + dy * dy
-        var sequence = 0
-        for index in bubbles.indices where bubbles[index].poppedAt == nil && bubbles[index].pressedAt == nil {
+        let time = now
+        let hits = bubbles.indices.compactMap { index -> (Int, BubbleContact)? in
+            guard bubbles[index].poppedAt == nil, bubbles[index].pressedAt == nil,
+                  let hit = BubbleContact.hit(center: bubbles[index].point, radius: bubbles[index].radius, from: start, to: end) else { return nil }
+            return (index, hit)
+        }.sorted { $0.1.entry < $1.1.entry }
+        let lastDeadline = bubbles.compactMap(\.deadline).max() ?? time
+        for (sequence, item) in hits.enumerated() {
+            let (index, hit) = item
             let p = bubbles[index].point
-            let t = lengthSquared > 0 ? min(1, max(0, ((p.x - start.x) * dx + (p.y - start.y) * dy) / lengthSquared)) : 0
-            let contact = CGPoint(x: start.x + dx * t, y: start.y + dy * t)
-            if hypot(contact.x - p.x, contact.y - p.y) < bubbles[index].radius {
-                bubbles[index].pressedAt = now
-                bubbles[index].contact = CGPoint(x: (contact.x - p.x) * 0.2, y: (contact.y - p.y) * 0.2)
-                bubbles[index].deadline = now + (sweeping ? 0.055 + Double(sequence) * 0.01 : 0.12)
-                sequence += 1
-                setNeedsDisplay(bubbles[index].rect)
-            }
+            bubbles[index].pressedAt = time
+            bubbles[index].contact = CGPoint(x: hit.point.x-p.x, y: hit.point.y-p.y)
+            bubbles[index].deadline = max(time+(sweeping ? 0.055 : 0.095), lastDeadline+0.008) + Double(sequence)*0.008
+            setNeedsDisplay(bubbles[index].rect)
         }
     }
     private func wipe(from start: CGPoint, to end: CGPoint, elapsed: TimeInterval) {
         let distance = hypot(end.x - start.x, end.y - start.y)
         guard distance > 0.5 else { return }
-        let steps = min(600, max(1, Int(distance / 5)))
-        var dirt = 0.0
-        for step in 0...steps {
-            let t = CGFloat(step) / CGFloat(steps)
-            let point = CGPoint(x: start.x + (end.x - start.x) * t, y: start.y + (end.y - start.y) * t)
-            dirt = max(dirt, dirtAlpha(near: point))
-            erase(at: point)
+        let footprint = ClothContact.sweep(from: start, to: end)
+        let dirt = dirtAlpha(in: footprint)
+        if let context = bitmap {
+            context.saveGState(); context.setBlendMode(.destinationOut)
+            context.setFillColor(NSColor.white.cgColor); context.addPath(footprint); context.fillPath(); context.restoreGState()
         }
         if state.soundEnabled { PlayAudio.shared.wipe(speed: Double(distance) / max(0.008, elapsed), dirt: dirt) }
         if dirt > 0.01 { dirtBudget = max(0, dirtBudget - distance / 350) }
         for index in stains.indices {
-            if stains[index].erase(from: start, to: end, radius: 22) { state.wipedStain() }
+            if stains[index].erase(where: { footprint.contains($0) }) {
+                state.wipedStain()
+                cleanGleams.append(CleanGleam(point: end, time: now))
+            }
         }
         stains.removeAll { $0.completed }
-        let rect = CGRect(x: min(start.x, end.x) - 33, y: min(start.y, end.y) - 33,
-                          width: abs(end.x - start.x) + 66, height: abs(end.y - start.y) + 66)
-        setNeedsDisplay(rect)
+        setNeedsDisplay(footprint.boundingBoxOfPath.insetBy(dx: -2, dy: -2))
     }
-    private func dirtAlpha(near point: CGPoint) -> Double {
-        guard let bitmap, let data = bitmap.data else { return 0 }
+    /// Sample the actual contact area before erasing it. The centre is already clean
+    /// on consecutive drag events; only the leading edge may still touch dirt.
+    func dirtAlpha(in footprint: CGPath) -> Double {
+        guard let bitmap, let data = bitmap.data, bounds.width > 0 else { return 0 }
         let scale = CGFloat(bitmap.width) / bounds.width
+        let rect = footprint.boundingBoxOfPath.intersection(bounds)
+        guard !rect.isNull, !rect.isEmpty else { return 0 }
+        let minX = max(0, Int(floor(rect.minX * scale)))
+        let maxX = min(bitmap.width - 1, Int(ceil(rect.maxX * scale)))
+        let minY = max(0, Int(floor(rect.minY * scale)))
+        let maxY = min(bitmap.height - 1, Int(ceil(rect.maxY * scale)))
+        // Bound work for very long coalesced drags, while retaining pixel-scale
+        // sampling for ordinary movements and thin ink along the cloth edge.
+        let step = max(1, Int(ceil(sqrt(Double((maxX-minX+1)*(maxY-minY+1)) / 16384))))
         let bytes = data.assumingMemoryBound(to: UInt8.self)
         var maximum: UInt8 = 0
-        for dx: CGFloat in [-18, 0, 18] {
-            for dy: CGFloat in [-18, 0, 18] {
-                let x = min(bitmap.width - 1, max(0, Int((point.x + dx) * scale)))
-                // Bitmap memory row 0 corresponds to the image's top row.
-                let y = min(bitmap.height - 1, max(0, bitmap.height - 1 - Int((point.y + dy) * scale)))
-                maximum = max(maximum, bytes[y * bitmap.bytesPerRow + x * 4 + 3])
+        for y in stride(from: minY, through: maxY, by: step) {
+            let row = (bitmap.height - 1 - y) * bitmap.bytesPerRow
+            for x in stride(from: minX, through: maxX, by: step) {
+                let alpha = bytes[row + x * 4 + 3]
+                if alpha > maximum && footprint.contains(CGPoint(x: (CGFloat(x)+0.5)/scale, y: (CGFloat(y)+0.5)/scale)) {
+                    maximum = alpha
+                    if maximum == 255 { return 1 }
+                }
             }
         }
         return Double(maximum) / 255
     }
-    private func erase(at point: CGPoint) {
-        guard let context = bitmap else { return }
-        context.saveGState(); context.setBlendMode(.destinationOut)
-        let colors = [NSColor.white.cgColor, NSColor.white.cgColor, NSColor.white.withAlphaComponent(0).cgColor]
-        if let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors as CFArray, locations: [0, 0.72, 1]) {
-            context.drawRadialGradient(gradient, startCenter: point, startRadius: 0, endCenter: point, endRadius: 29, options: [])
-        }
-        context.restoreGState()
-    }
     private func strikeWood() {
+        let time = now
+        woodSwingFrom = malletAngle(at: time)
+        woodSwingAt = time
+        pendingWoodContacts.append(time + (reduceMotion ? 0 : 0.035))
+        if reduceMotion { advanceInteractionAnimation(at: time) }
+        setNeedsDisplay(woodDrawingRect)
+    }
+    private func completeWoodContact(at time: TimeInterval) {
         state.strike()
-        woodHitAt = now
-        floatingStrikes.append(FloatingStrike(time: now, offset: CGFloat.random(in: -17...17)))
+        woodHitAt = time
+        if let last = floatingStrikes.last, last.delta > 0, time-last.time < 0.18 {
+            floatingStrikes[floatingStrikes.count-1].delta += 1
+            floatingStrikes[floatingStrikes.count-1].time = time
+        } else { floatingStrikes.append(FloatingStrike(time: time, offset: 0)) }
         if floatingStrikes.count > 16 { floatingStrikes.removeFirst() }
         if state.soundEnabled { PlayAudio.shared.wood(position: Double(woodCenter.x / bounds.width) * 2 - 1) }
         if window != nil { NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now) }
@@ -472,7 +621,8 @@ final class PlayView: NSView {
         guard wasHeld else { return }
         let point = convert(event.locationInWindow, from: nil)
         mouseIsDown = true; previousPoint = point; previousTime = event.timestamp
-        toolPressure = 0.25
+        toolPressure = reduceMotion ? 1 : 0.25
+        lastToolTick = now
         updateToolPoint(point)
         cursorUpdate(with: event)
         switch state.mode {
@@ -500,7 +650,12 @@ final class PlayView: NSView {
         let start = previousPoint ?? point
         if state.mode == .wipe {
             let dx = point.x - start.x, dy = point.y - start.y
-            if hypot(dx, dy) > 1 { targetToolTilt = -0.12 + atan2(dy, abs(dx) + 8) * 0.20 }
+            if hypot(dx, dy) > 1 {
+                targetToolTilt = -0.10 + min(0.13, max(-0.13, atan2(dy, abs(dx)+8)*0.10))
+                let elapsed = max(0.008, event.timestamp-previousTime)
+                targetClothDrag = CGPoint(x: -min(4, max(-4, dx/elapsed*0.006)), y: -min(4, max(-4, dy/elapsed*0.006)))
+                lastClothMove = now
+            }
             wipe(from: start, to: point, elapsed: event.timestamp - previousTime)
         }
         if state.mode == .bubbles { pressBubbles(from: start, to: point, sweeping: true) }
@@ -516,12 +671,11 @@ final class PlayView: NSView {
                              origin: CGPoint(x: tip.x / fishingRect.width, y: tip.y / 195))
         }
         state.fishingRelease()
-        if state.mode == .bubbles {
-            for index in bubbles.indices where bubbles[index].pressedAt != nil && bubbles[index].poppedAt == nil { popBubble(index) }
-        }
+        // A quick release keeps its brief dent/collapse sequence and traversal order.
+        // Deadlines are serviced by the common animation clock, never by array-order mouse-up.
         PlayAudio.shared.endWipe()
         previousPoint = nil; mouseIsDown = false; strikeGate.release()
-        targetToolTilt = -0.12
+        targetToolTilt = -0.10; targetClothDrag = .zero
         if let point = hoverPoint { setNeedsDisplay(toolRect(at: point)) }
     }
     override func mouseEntered(with event: NSEvent) {
@@ -543,4 +697,10 @@ final class PlayView: NSView {
 private final class PlayAccessibilityButton: NSAccessibilityElement {
     var action: (() -> Void)?
     override func accessibilityPerformPress() -> Bool { action?(); return true }
+}
+
+/// CADisplayLink retains its target; keep that target weak toward the view.
+private final class PlayFrameTarget: NSObject {
+    weak var view: PlayView?
+    @objc func step(_ link: CADisplayLink) { view?.tick() }
 }

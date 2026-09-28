@@ -106,41 +106,48 @@ import WhileCore
         state.detectedWorking = true
         state.workIntensity = 0.72
         state.soundEnabled = false
-        let view = NSHostingView(rootView: ContentView(state: state))
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 798, height: 688), styleMask: [.borderless], backing: .buffered, defer: false)
-        window.contentView = view
-        view.frame = NSRect(x: 0, y: 0, width: 798, height: 688)
-        view.layoutSubtreeIfNeeded()
-        RunLoop.main.run(until: Date().addingTimeInterval(0.15))
-        guard let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { fatalError("settings bitmap unavailable") }
-        view.cacheDisplay(in: view.bounds, to: bitmap)
-        guard let data = bitmap.representation(using: .png, properties: [:]) else { fatalError("settings PNG unavailable") }
-        try data.write(to: URL(fileURLWithPath: ".build/fishing-guide.png"))
-        precondition(view.bounds.width == 798 && view.bounds.height == 688)
-        precondition(state.fishingBook.total == 13 && state.fishingBook.discoveredFish == 6)
-        print("NativeFishingGuideChecks: settings and populated catalogue rendered at 798 × 688 using an isolated test store.")
-        for section in [FishingGuide.Section.rods, .achievements] {
-            let pane = NSHostingView(rootView: FishingGuide(state: state, section: section))
-            let paneWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 360, height: 688), styleMask: [.borderless], backing: .buffered, defer: false)
-            paneWindow.contentView = pane
-            pane.frame = NSRect(x: 0, y: 0, width: 360, height: 688)
-            pane.layoutSubtreeIfNeeded()
+        func capture<V: View>(_ root: V, size: NSSize?, to name: String) throws -> NSSize {
+            let host = NSHostingView(rootView: root)
+            let bounds = NSRect(origin: .zero, size: size ?? host.fittingSize)
+            let window = NSWindow(contentRect: bounds, styleMask: [.borderless], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            window.contentView = host
+            host.frame = bounds
+            host.layoutSubtreeIfNeeded()
             RunLoop.main.run(until: Date().addingTimeInterval(0.15))
-            let capture = pane.bitmapImageRepForCachingDisplay(in: pane.bounds)!
-            pane.cacheDisplay(in: pane.bounds, to: capture)
-            let name = section == .rods ? "fishing-rods" : "fishing-achievements"
-            try capture.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: ".build/" + name + ".png"))
+            guard let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { fatalError("\(name) bitmap unavailable") }
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: ".build/" + name + ".png"))
+            window.close()
+            return bounds.size
         }
-        print("NativeFishingGuideChecks: equipment and achievements panes rendered using isolated fixture data.")
+        // The live cat needs Metal; offscreen renders use the symbol fallback.
+        let panel = try capture(MenuBarView(state: state, mascot: MascotController(bundle: nil))
+            .background(Color(nsColor: .windowBackgroundColor)), size: nil, to: "menu-bar-panel")
+        precondition(panel.width == MenuBarView.width && panel.height < 560, "The menu bar panel fits under the menu bar on small displays")
+        precondition(state.fishingBook.total == 13 && state.fishingBook.discoveredFish == 6)
+        precondition(state.mascotMood == .idle, "With the desktop off the cat waits")
+        state.desktopEnabled = true
+        precondition(state.mascotMood == .watch, "Fishing while the AI works: the cat watches the float")
+        state.detectedWorking = false
+        precondition(state.mascotMood == .sleep, "Following an idle AI: the cat dozes")
+        state.desktopEnabled = false
+        for legacyCoat in ["tabby", "black"] {
+            let legacySuite = suite + ".legacy-" + legacyCoat
+            let legacy = UserDefaults(suiteName: legacySuite)!
+            legacy.set(legacyCoat, forKey: "mascot.coat")
+            precondition(AppState(defaults: legacy).mascotCoat == .ink, "Coats saved before the spirit cat fall back to ink")
+            legacy.removePersistentDomain(forName: legacySuite)
+        }
+        print("NativeFishingGuideChecks: menu bar panel rendered at \(Int(panel.width)) × \(Int(panel.height)) with isolated fixture data; cat moods follow play and AI state; old coats migrate to ink.")
+        for section in FishingGuide.Section.allCases where section != .tank {
+            _ = try capture(FishingGuide(state: state, section: section), size: NSSize(width: 940, height: 680), to: "collection-\(section)")
+        }
+        print("NativeFishingGuideChecks: fish book, rods and achievements rendered in the collection window.")
         state.mode = .woodfish
         state.followAI = true; state.selectedSources = [.workbuddy]
         state.hookSetupMessage = "已安装，请重启 WorkBuddy；如有 Hooks 审核提示，请在客户端启用。"
-        let hookView = NSHostingView(rootView: ContentView(state: state))
-        hookView.frame = NSRect(x: 0, y: 0, width: 438, height: 688)
-        hookView.layoutSubtreeIfNeeded()
-        let hookBitmap = hookView.bitmapImageRepForCachingDisplay(in: hookView.bounds)!
-        hookView.cacheDisplay(in: hookView.bounds, to: hookBitmap)
-        try hookBitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: ".build/hook-settings.png"))
-        print("NativeFishingGuideChecks: WorkBuddy settings with hook setup result rendered at 438 × 688.")
+        _ = try capture(SettingsView(state: state, preview: MascotController(bundle: nil)), size: NSSize(width: 520, height: 1040), to: "hook-settings")
+        print("NativeFishingGuideChecks: WorkBuddy settings with hook setup result rendered at 520 × 1040.")
     }
 }

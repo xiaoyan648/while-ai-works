@@ -139,6 +139,20 @@ func event(_ type: String, turn: String? = "a", timestamp: String? = nil) -> Dat
         _ = decay.advance(delta: 2, active: true)
         try expect(!decay.advance(delta: 1, active: false) && decay.elapsed == 0, "idle work clears partial decay time")
         try expect(!decay.advance(delta: 3600, active: true), "sleep or relaunch must not apply offline debt")
-        print("CoreChecks: 46 checks passed (lifecycle, rotation, counters, stain coverage, work decay, audio).")
+        var phases = WorkActivity()
+        func phaseEvent(_ type: String, _ payload: String) {
+            phases.consume(line: Data(("{\"type\":\"" + type + "\",\"payload\":" + payload + "}").utf8), sessionID: "phase")
+        }
+        phaseEvent("event_msg", #"{"type":"task_started","turn_id":"p"}"#)
+        phaseEvent("response_item", #"{"type":"function_call","name":"exec_command","arguments":"PRIVATE"}"#)
+        try expect(phases.active["phase"]?.phase == .tool, "tool phase has no raw arguments")
+        phaseEvent("response_item", #"{"type":"reasoning"}"#)
+        try expect(phases.active["phase"]?.phase == .thinking, "reasoning phase")
+        phaseEvent("event_msg", #"{"type":"agent_message","message":"PRIVATE"}"#)
+        try expect(phases.active["phase"]?.phase == .replying, "reply phase")
+        phaseEvent("event_msg", #"{"type":"task_complete","turn_id":"p"}"#)
+        phaseEvent("response_item", #"{"type":"function_call"}"#)
+        try expect(phases.active.isEmpty, "late tool metadata cannot revive a completed session")
+        print("CoreChecks: 50 checks passed (lifecycle, rotation, counters, stain coverage, work decay, audio).")
     }
 }

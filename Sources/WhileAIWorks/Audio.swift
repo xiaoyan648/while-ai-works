@@ -9,6 +9,7 @@ final class PlayAudio {
     private var friction = FrictionEnvelope()
     private var splashPlayer: AVAudioPlayer?
     private var bitePlayer: AVAudioPlayer?
+    private var catchPlayer: AVAudioPlayer?
     private var wipePlayer: AVAudioPlayer?
     private var popPlayers: [AVAudioPlayer] = []
     private var woodPlayers: [AVAudioPlayer] = []
@@ -22,6 +23,8 @@ final class PlayAudio {
         splashPlayer?.prepareToPlay()
         bitePlayer = try? AVAudioPlayer(data: Self.biteWAV())
         bitePlayer?.prepareToPlay()
+        catchPlayer = try? AVAudioPlayer(data: Self.catchRevealWAV())
+        catchPlayer?.prepareToPlay()
         wipePlayer = try? AVAudioPlayer(data: Self.frictionWAV())
         wipePlayer?.numberOfLoops = -1
         wipePlayer?.enableRate = true
@@ -72,6 +75,28 @@ final class PlayAudio {
         bitePlayer?.pan = Float(max(-1, min(1, position))) * 0.4
         bitePlayer?.play()
     }
+    func catchReveal() {
+        catchPlayer?.currentTime = 0
+        catchPlayer?.volume = masterVolume * 0.68
+        catchPlayer?.play()
+    }
+    /// A warm rising two-note cue, emitted once when a catch lands.
+    static func catchRevealWAV() -> Data {
+        var samples: [Double] = []
+        for i in 0..<29988 {
+            let time = Double(i) / 44100
+            var value = 0.0
+            for (start, frequency) in [(0.0, 660.0), (0.11, 880.0)] {
+                let t = time - start
+                if t >= 0 {
+                    let envelope = (1-exp(-t/0.006)) * exp(-t/0.095)
+                    value += envelope * (sin(2 * .pi * frequency * t) * 0.34 + sin(2 * .pi * frequency * 2 * t) * 0.055)
+                }
+            }
+            samples.append(value * min(1, max(0, (0.68-time)/0.035)))
+        }
+        return wav(samples)
+    }
     /// One short water "plip" with a restrained bright overtone, distinct from bubble pops.
     static func biteWAV() -> Data {
         var samples: [Double] = []
@@ -102,6 +127,7 @@ final class PlayAudio {
     func stopAll() {
         splashPlayer?.stop()
         bitePlayer?.stop()
+        catchPlayer?.stop()
         friction = FrictionEnvelope()
         wipePlayer?.stop()
         wipePlayer?.volume = 0
