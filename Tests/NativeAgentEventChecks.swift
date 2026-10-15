@@ -17,6 +17,7 @@ import AgentHUDCore
         let state = AppState(defaults: defaults)
         state.soundEnabled = false; state.selectedSources = [.codex, .claude]
         state.desktopPetEnabled = true; state.desktopPetPresentation = .dock
+        state.dock(on: .left)
         state.activeSessionCounts = [.codex: 1, .claude: 0]
         let dock = DesktopDockController(state: state, mascot: MascotController(bundle: nil), cardMascot: MascotController(bundle: nil))
         func settle(_ seconds: Double = 0.2) { RunLoop.main.run(until: Date().addingTimeInterval(seconds)) }
@@ -94,6 +95,29 @@ import AgentHUDCore
         check(!state.desktopPetShowsStatus && !dock.detailPanel.isVisible, "mode changes keep the card collapsed")
         state.desktopPetShowsStatus = true; dock.refresh()
         check(state.desktopDockTab == .sessions, "reopening after a presentation change returns to sessions")
+        dock.dismiss(); dock.select(.claude)
+        let destination = URL(string: "claude://claude.ai/epitaxy/local_00000000-0000-0000-0000-000000000001")!
+        func navigationFixture(_ title: String, event: AgentSessionEvent, url: URL?, command: String? = nil) -> AgentDockSession {
+            .init(id: title, source: .claude, title: title, project: nil, status: "最近会话", running: event == .working,
+                  tokensIn: 0, tokensOut: 0, cacheRead: 0, reply: nil, observedAt: Date(), navigationURL: url,
+                  resumeCommand: command, event: event)
+        }
+        state.agentDashboard.sessions = [
+            navigationFixture("运行中的桌面会话", event: .working, url: destination),
+            navigationFixture("最近的桌面会话", event: .recent, url: destination),
+            navigationFixture("终端会话", event: .recent, url: nil, command: "claude --resume fixture"),
+            navigationFixture("缺少入口", event: .finished, url: nil)
+        ]
+        dock.refresh(); settle(0.4)
+        let navigationRoot = dock.detailPanel.contentView!
+        navigationRoot.layoutSubtreeIfNeeded()
+        let navigationBitmap = navigationRoot.bitmapImageRepForCachingDisplay(in: navigationRoot.bounds)!
+        navigationRoot.cacheDisplay(in: navigationRoot.bounds, to: navigationBitmap)
+        let navigationOutput = URL(fileURLWithPath: ".build/ui-review/session-navigation.png")
+        try! FileManager.default.createDirectory(at: navigationOutput.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try! navigationBitmap.representation(using: .png, properties: [:])!.write(to: navigationOutput)
+        print("Session navigation fixture captured: \(navigationOutput.path)")
+        state.agentDashboard.sessions = []
         dock.dismiss(); dock.select(.codex)
         let question = PermissionQuestion(id: "native-question", question: "选择布局方式", options: [.init(label: "就地处理"), .init(label: "独立浮窗")])
         let request = PermissionRequest(id: "native-question-request", source: .codex, sessionID: "native-question-session",

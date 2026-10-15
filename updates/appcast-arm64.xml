@@ -6,6 +6,37 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <channel>
         <title>While AI Works</title>
         <item>
+            <title>0.17.2</title>
+            <pubDate>Thu, 15 Oct 2026 01:46:14 -0400</pubDate>
+            <link>https://github.com/xiaoyan648/while-ai-works/releases/tag/v0.17.2</link>
+            <sparkle:version>30</sparkle:version>
+            <sparkle:shortVersionString>0.17.2</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description sparkle:format="markdown"><![CDATA[# 0.17.2 · 会话跳转入口修复
+
+版本 0.17.2，构建号 30。需要 macOS 14 或更新版本。
+
+## 会话入口
+
+- 修复猫条中「运行中」和「最近会话」的跳转按钮被隐藏的问题。有可用入口的 Codex / Claude 会话均可回到原会话。
+- Claude 终端会话只有恢复命令时，改用复制图标；点击后显示已复制提示，在原终端执行即可继续。
+- 没有跳转地址或恢复命令的记录不显示入口。提问与授权仍优先显示对应处理按钮。
+
+## 更新与安装
+
+0.17.1 用户可在「设置 → 关于 → 检查更新」中升级。0.17.0 及更早版本需要手动安装一次。原有设置和鱼获保留。
+
+- M 系列 Mac：`While-AI-Works-0.17.2-macOS-arm64.dmg`
+- Intel Mac：`While-AI-Works-0.17.2-macOS-x86_64.dmg`
+
+退出旧版，打开 DMG，将 **While AI Works.app** 拖入 **Applications（应用程序）**。同时提供 Sparkle 使用的两种架构 ZIP、签名更新清单和 `SHA256SUMS.txt`。
+
+应用仍采用 ad-hoc 签名，尚无 Developer ID 签名或 Apple 公证。更新包和更新清单验证 Ed25519 签名；首次安装可能需要在 macOS「隐私与安全性」中允许打开。
+]]></description>
+            <enclosure url="https://github.com/xiaoyan648/while-ai-works/releases/download/v0.17.2/While-AI-Works-0.17.2-macOS-arm64.zip" length="227327350" type="application/octet-stream" sparkle:edSignature="tCiL7EMQhdfJK38Zv/hMM8qtrpRFcOXsVUdr4NLpjmHGO90n06qcyC6PappjKTSYJHm9EeRJnd4N1+S5lppdAg=="/>
+        </item>
+        <item>
             <title>0.17.1</title>
             <pubDate>Thu, 15 Oct 2026 00:09:02 -0400</pubDate>
             <link>https://github.com/xiaoyan648/while-ai-works/releases/tag/v0.17.1</link>
@@ -46,6 +77,6 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: x7g/LlzHMItqWDIdmoqrMcpJJ+Sw0QUL+bNck4oxzwAM7tsw0LUrNYG9muFgNFH0KSv3jNvNsO5NYjEbzQ+ZBg==
-length: 3074
+edSignature: 7sx5mezio3YEGsj7WquJFVqoNmD3kYQwudri1IWIey4R8bs1C7jdK45qq2whHv8o4iEOl2gcZZW+2TlpsBmqAw==
+length: 5157
 -->

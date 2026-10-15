@@ -82,7 +82,7 @@ Agent 还没开工，渔业部先把竿架好。
 
 ## 下载开玩
 
-[下载 Mac 版 · 0.17.1](https://github.com/xiaoyan648/while-ai-works/releases/tag/v0.17.1)
+[下载 Mac 版 · 0.17.2](https://github.com/xiaoyan648/while-ai-works/releases/tag/v0.17.2)
 
 适用于 **macOS 14 或更新版本**，请按芯片选择安装包：
 

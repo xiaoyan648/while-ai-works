@@ -1262,13 +1262,13 @@ private struct AgentDockSessionView: View {
                         }.buttonStyle(.plain).foregroundStyle(.secondary).help("在独立浮窗中处理长内容")
                             .accessibilityLabel("展开待处理请求").accessibilityIdentifier("agent-interaction-expand")
                     }
-                } else if row.event == .finished || row.event == .approval || row.event == .input {
-                    if session.navigationURL != nil || session.resumeCommand != nil {
-                        Button { state.openAgentSession(session) } label: {
-                            Image(systemName: "arrow.up.forward").font(.system(size: 10)).frame(width: 24, height: 24)
-                        }.buttonStyle(.plain).foregroundStyle(.secondary).help("回到原会话")
-                            .accessibilityLabel("回到原会话：" + session.title)
-                    }
+                } else if session.navigationURL != nil || session.resumeCommand != nil {
+                    Button { state.openAgentSession(session) } label: {
+                        Image(systemName: session.navigationURL != nil ? "arrow.up.forward" : "doc.on.doc")
+                            .font(.system(size: 10)).frame(width: 24, height: 24)
+                    }.buttonStyle(.plain).foregroundStyle(.secondary)
+                        .help(session.navigationURL != nil ? "回到原会话" : "复制恢复命令，在原终端继续")
+                        .accessibilityLabel((session.navigationURL != nil ? "回到原会话：" : "复制恢复命令：") + session.title)
                 }
             }
             if let selected {
@@ -1292,6 +1292,9 @@ private struct AgentDockSessionView: View {
             }
             if row.requests.isEmpty, row.event == .approval || row.event == .input {
                 Text("请到原会话处理，客户端暂未提供可回答的请求。").font(.system(size: 10)).foregroundStyle(.secondary)
+            }
+            if let status = state.agentMessageStatus[session.id] {
+                Text(status).font(.system(size: 9)).foregroundStyle(.secondary)
             }
             if let delivery = state.agentInteractionDelivery[session.source], selected != nil {
                 Text(delivery).font(.system(size: 9)).foregroundStyle(.secondary)
