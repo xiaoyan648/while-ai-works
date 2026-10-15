@@ -24,6 +24,12 @@
 
 v0.16.0 还给人类这边添了一位同事：小猫住在桌面，帮你留意 AI 的工作状态，也陪你擦污渍、捏气泡、敲木鱼。钓到鱼，它会举起来一起庆祝。
 
+v0.17.0 新增「猫条」：小猫可以收成屏幕边缘的 AI 工作台，留意会话、查看额度，在对应卡片处理提问与授权。猫条与宠物模式可在设置中切换。
+
+<img src="images/cat-dock-0.17.0.png" alt="猫条与额度卡片示例，使用演示数据" width="480">
+
+猫条界面示例，账户与会话均为演示数据。
+
 ## 45 秒，看小猫陪你上班
 
 新版 UI、桌面小猫、AI 运行监控，以及猫爪小游戏和举鱼庆祝，都在这支 v0.16.0 宣传片里。
@@ -76,16 +82,16 @@ Agent 还没开工，渔业部先把竿架好。
 
 ## 下载开玩
 
-[下载 Mac 版 · 0.16.0](https://github.com/xiaoyan648/while-ai-works/releases/tag/v0.16.0)
+[下载 Mac 版 · 0.17.0](https://github.com/xiaoyan648/while-ai-works/releases/tag/v0.17.0)
 
 适用于 **macOS 14 或更新版本**，请按芯片选择安装包：
 
-- **M 系列 Mac**：下载文件名带 `arm64` 的 ZIP。
-- **Intel Mac**：下载文件名带 `x86_64` 的 ZIP。
+- **M 系列 Mac**：下载文件名带 `arm64` 的 DMG。
+- **Intel Mac**：下载文件名带 `x86_64` 的 DMG。
 
 Intel 包已通过 Rosetta 下的运行与资源检查，尚未完成 Intel 真机验收。暂不支持 Windows。
 
-1. 下载页面里的 `.zip` 文件，解压后将 **While AI Works.app** 拖入「应用程序」。
+1. 下载对应芯片的 `.dmg`，打开后将 **While AI Works.app** 拖到 **Applications（应用程序）**。升级前先退出旧版，再替换应用；原有设置和鱼获保留。也提供 ZIP。
 2. 打开应用，点菜单栏里的小猫，打开「开始玩」，选一种玩法。
 3. 按 **⌘⇧空格** 随时收起桌面效果，回去看看 AI 干得怎么样。
 
@@ -99,11 +105,11 @@ Codex 可直接跟随。Claude Code / Qoder / WorkBuddy 首次使用需要在同
 
 可以同时跟随多个客户端。只要还有一个会话在工作，玩法就会跟着变化；最后一个结束后，剩下的可以继续玩。木鱼扣减不会因多个客户端同时工作而翻倍。
 
-[连接与使用说明](INTEGRATIONS.md)
+[连接与使用说明](INTEGRATIONS.md) · [猫条与工作卡片](docs/cat-dock.md)
 
 ## 放心摸鱼
 
-不需要注册账号，不读取桌面画面，也不会上传你的对话或代码。鱼获、图鉴和累计记录都留在自己的 Mac 上。
+不需要注册本应用账号，不读取桌面画面。鱼获、图鉴和累计记录都留在自己的 Mac 上。启用工作卡片后，可在本机内存中预览已关注客户端的回复，默认关闭，可在设置中开启；账户额度由已登录的官方客户端查询。只有你主动提交时，回答或权限选择才通过原客户端送回对应会话。应用不把对话或代码上传到独立服务。
 
 应用住在菜单栏里：点小猫打开面板，右键打开快捷菜单。它在等你、陪你玩、盯着浮漂，AI 没开工时会打个盹；钓到鱼会跳起来，点它会蹭蹭你。显示屏幕、音量、自动轮换、快捷键和小猫毛色（墨 / 雪）都在「设置」里，支持深色模式。
 
@@ -115,10 +121,10 @@ Qoder / WorkBuddy 的连接还需要更多真实使用反馈；如果状态没�
 
 ## 源码与构建
 
-代码现已采用 [MIT License](LICENSE) 开源。欢迎阅读、修改和贡献。
+本项目代码采用 [MIT License](LICENSE) 开源，第三方目录保留其原许可。欢迎阅读、修改和贡献。
 图片、纹理、三维模型和品牌素材的来源与许可范围见 [资源说明](ASSETS.md)，这些素材不属于代码的 MIT 授权范围。
 
-需要 macOS 14+、Apple Command Line Tools（Swift 5.10+）和 Python 3。唯一的第三方依赖是 [Rive](https://github.com/rive-app/rive-ios) 运行时（MIT），用于菜单栏小猫的动画：首次构建时脚本下载官方发布包并校验 SHA-256，之后可离线构建。其余资源都在仓库内，不需要生成服务 API Key 或 Blender。
+需要 macOS 14+、Apple Command Line Tools（Swift 6.1+）和 Python 3。第三方依赖包括 [Rive](https://github.com/rive-app/rive-ios) 运行时（MIT）和固定版本的 [Agent HUD Core](Vendor/AgentHUDOpen/README.md)（Apache-2.0）。Rive 用于小猫动画，首次构建时下载官方发布包并校验 SHA-256；Agent HUD Core 源码随仓库提供，用于 Codex / Claude 用量及会话接入。依赖就绪后可离线构建，不需要生成服务 API Key 或 Blender。
 
 ```sh
 git clone https://github.com/xiaoyan648/while-ai-works.git

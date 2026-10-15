@@ -15,8 +15,8 @@ xcrun swiftc "${swift_flags[@]}" -parse-as-library -I .build/native -L .build/na
     -lWhileCore Sources/WhileAIWorks/Audio.swift Tests/NativeAudioChecks.swift -o .build/native/NativeAudioChecks
 .build/native/NativeAudioChecks
 for interaction_check in NativeInteractionChecks NativeMotionChecks; do
-xcrun swiftc "${swift_flags[@]}" -parse-as-library -I .build/native -L .build/native -lWhileCore \
-    Sources/WhileAIWorks/AppState.swift Sources/WhileAIWorks/Audio.swift Sources/WhileAIWorks/PlaySurface.swift \
+xcrun swiftc "${swift_flags[@]}" -parse-as-library -I .build/native -L .build/native -lWhileCore "${agent_hud_flags[@]}" \
+    Sources/WhileAIWorks/AppState.swift Sources/WhileAIWorks/AgentInteractionModels.swift Sources/WhileAIWorks/Audio.swift Sources/WhileAIWorks/PlaySurface.swift \
     Sources/WhileAIWorks/BubbleDrawing.swift Sources/WhileAIWorks/WoodfishDrawing.swift Sources/WhileAIWorks/InteractionDrawing.swift \
     Sources/WhileAIWorks/FishingSprites.swift Sources/WhileAIWorks/FishingDrawing.swift Sources/WhileAIWorks/InteractionShortcut.swift "Tests/${interaction_check}.swift" -o ".build/native/${interaction_check}"
 ".build/native/${interaction_check}"
@@ -24,10 +24,10 @@ done
 xcrun swiftc "${swift_flags[@]}" -parse-as-library Sources/WhileAIWorks/InteractionDrawing.swift \
     Tests/NativeArtworkChecks.swift -o .build/native/NativeArtworkChecks
 .build/native/NativeArtworkChecks
-xcrun swiftc "${swift_flags[@]}" -parse-as-library -I .build/native -L .build/native -lWhileCore \
+xcrun swiftc "${swift_flags[@]}" -parse-as-library -I .build/native -L .build/native -lWhileCore "${agent_hud_flags[@]}" \
     Tests/FishingChecks.swift -o .build/native/FishingChecks
 .build/native/FishingChecks
-xcrun swiftc "${swift_flags[@]}" -parse-as-library -I .build/native -L .build/native -lWhileCore \
+xcrun swiftc "${swift_flags[@]}" -parse-as-library -I .build/native -L .build/native -lWhileCore "${agent_hud_flags[@]}" \
     Sources/WhileAIWorks/AquariumGlass.swift Sources/WhileAIWorks/AquariumNavigation.swift Sources/WhileAIWorks/PackedMesh.swift Sources/WhileAIWorks/GeneratedFish.swift Sources/WhileAIWorks/GeneratedPuffer.swift Sources/WhileAIWorks/GeneratedAquascape.swift Sources/WhileAIWorks/Aquarium3D.swift Tests/NativeGeneratedPufferChecks.swift \
     -o .build/native/NativeGeneratedPufferChecks
 .build/native/NativeGeneratedPufferChecks

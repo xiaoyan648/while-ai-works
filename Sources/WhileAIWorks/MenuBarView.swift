@@ -60,19 +60,45 @@ struct MenuBarView: View {
         .padding(.top, 22)
         .background { ForestBackdrop(cornerRadius: 14, focus: 0.2) }
         .overlay(alignment: .topTrailing) {
-            Toggle(isOn: $state.desktopPetEnabled) {
-                Label("桌面猫", systemImage: "cat")
-                    .font(.system(size: 10, weight: .medium))
-            }
-            .toggleStyle(.button).buttonStyle(.borderless).tint(Theme.accent)
-            .padding(.horizontal, 8).padding(.vertical, 5)
-            .background(state.desktopPetEnabled ? Theme.accent.opacity(0.13) : Theme.well, in: Capsule())
-            .foregroundStyle(state.desktopPetEnabled ? Theme.accent : .secondary)
-            .help(state.desktopPetEnabled ? "收起桌面小猫" : "在桌面显示小猫")
-            .accessibilityIdentifier("desktop-pet-toggle")
-            .padding(8)
+            companionControl.padding(8)
         }
         .accessibilityElement(children: .contain)
+    }
+
+    private var companionControl: some View {
+        HStack(spacing: 2) {
+            Button { state.desktopPetEnabled.toggle() } label: {
+                Image(systemName: "cat").font(.system(size: 12))
+                    .frame(width: 24, height: 26)
+            }
+            .foregroundStyle(state.desktopPetEnabled ? Theme.accent : .secondary)
+            .help(state.desktopPetEnabled ? "收起桌面陪伴" : "显示桌面陪伴")
+            .accessibilityLabel(state.desktopPetEnabled ? "收起桌面陪伴" : "显示桌面陪伴")
+            .accessibilityValue(state.desktopPetEnabled ? "显示" : "隐藏")
+            .accessibilityIdentifier("desktop-pet-toggle")
+            Divider().frame(height: 12).padding(.horizontal, 2)
+            ForEach(DesktopPetPresentation.allCases) { presentation in
+                let selected = state.desktopPetEnabled && state.desktopPetPresentation == presentation
+                Button {
+                    state.desktopPetPresentation = presentation
+                    state.desktopPetEnabled = true
+                } label: {
+                    Text(presentation == .dock ? "猫条" : "宠物")
+                        .font(.system(size: 10, weight: selected ? .semibold : .medium))
+                        .frame(width: 40, height: 26)
+                        .background(selected ? Theme.accent.opacity(0.16) : .clear, in: Capsule())
+                }
+                .foregroundStyle(selected ? Theme.accent : .primary)
+                .help(presentation == .dock ? "显示贴边猫条" : "显示桌面宠物")
+                .accessibilityLabel(presentation == .dock ? "猫条模式" : "宠物模式")
+                .accessibilityAddTraits(selected ? .isSelected : [])
+                .accessibilityIdentifier("desktop-presentation-" + presentation.rawValue)
+            }
+        }
+        .buttonStyle(.plain).padding(3)
+        .background(Theme.well, in: Capsule())
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("桌面陪伴模式")
     }
 
     private var headline: String {

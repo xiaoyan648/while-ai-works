@@ -23,6 +23,9 @@ import SwiftUI
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
         let state = AppState(defaults: defaults)
+        // This suite remains a regression gate for the original free-roaming cat.
+        // The edge dock has its own placement, input and live-render checks.
+        state.desktopPetPresentation = .companion
         state.soundEnabled = false
         precondition(state.desktopPetSize == .medium, "existing installs keep the original cat size")
         state.desktopPetSize = .large

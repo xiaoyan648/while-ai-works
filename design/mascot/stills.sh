@@ -16,6 +16,7 @@ poses=(
   "play|--data=mood=play --advance=22"
   "celebrate|--data=celebrate=1 --advance=52"
   "pet|--data=pet=1 --advance=60"
+  "perched|--data=posture=perched --data=mood=curious --advance=90"
 )
 for bg in 000000 FFFFFF; do
   python3 "$here/build_scene.py" --out "$work/bg-$bg" --bg "$bg" >/dev/null

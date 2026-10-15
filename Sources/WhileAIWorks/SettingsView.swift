@@ -10,6 +10,13 @@ struct SettingsView: View {
     var body: some View {
         Form {
             companion
+            Section("AI 工作台") {
+                Toggle("在工作卡片预览回复", isOn: $state.agentReplyPreviews)
+                    .accessibilityIdentifier("agent-reply-previews")
+                Text("用量由已登录客户端读取。回复仅在本机内存展示；关闭后隐藏正文。消息通过原会话发送，Claude 可回到客户端或复制恢复命令继续。")
+                    .font(.caption).foregroundStyle(.secondary)
+                Button("刷新用量", action: state.refreshAgentData)
+            }
             controls
             desktop
             ai
@@ -42,21 +49,39 @@ struct SettingsView: View {
                 }
             }
             .padding(.vertical, 4)
-            Toggle("在桌面显示小猫", isOn: $state.desktopPetEnabled)
+            Toggle("在桌面显示陪伴", isOn: $state.desktopPetEnabled)
                 .accessibilityIdentifier("desktop-pet-toggle")
-            Picker("桌面小猫大小", selection: $state.desktopPetSize) {
-                ForEach(DesktopPetSize.allCases) { Text($0.title).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .accessibilityIdentifier("desktop-pet-size")
             if state.desktopPetEnabled {
+                Picker("展现形态", selection: $state.desktopPetPresentation) {
+                    ForEach(DesktopPetPresentation.allCases) { Text($0.title).tag($0) }
+                }.pickerStyle(.segmented).accessibilityIdentifier("desktop-pet-presentation")
+                if state.desktopPetPresentation == .dock {
+                    Picker("猫条方向", selection: $state.desktopDockOrientation) {
+                        ForEach(DesktopDockOrientation.allCases) { Text($0.title).tag($0) }
+                    }.pickerStyle(.segmented).accessibilityIdentifier("cat-dock-orientation")
+                    Picker("边缘形态", selection: $state.desktopDockAttachment) {
+                        ForEach(DesktopDockAttachment.allCases) { Text($0.title).tag($0) }
+                    }.pickerStyle(.segmented).accessibilityIdentifier("cat-dock-attachment")
+                    Picker("停靠边缘", selection: $state.desktopDockEdge) {
+                        ForEach(DesktopDockEdge.allCases.filter { $0.orientation == state.desktopDockOrientation }) { Text($0.title).tag($0) }
+                    }.accessibilityIdentifier("cat-dock-edge")
+                } else {
+                    Picker("桌面小猫大小", selection: $state.desktopPetSize) {
+                        ForEach(DesktopPetSize.allCases) { Text($0.title).tag($0) }
+                    }.pickerStyle(.segmented).accessibilityIdentifier("desktop-pet-size")
+                }
+                Picker("陪伴外观", selection: $state.desktopCompanionAppearance) {
+                    ForEach(DesktopCompanionAppearance.allCases) { Text($0.title).tag($0) }
+                }.pickerStyle(.segmented).accessibilityIdentifier("cat-dock-appearance")
                 Toggle("展开 AI 工作详情", isOn: $state.desktopPetShowsStatus)
                     .accessibilityIdentifier("desktop-pet-status")
                 LabeledContent("位置") {
-                    Button("回到屏幕角落") { state.resetDesktopPetPosition() }
+                    Button(state.desktopPetPresentation == .dock ? "回到边缘中央" : "回到屏幕角落") { state.resetDesktopPetPosition() }
                         .accessibilityIdentifier("desktop-pet-reset")
                 }
-                Text("数字气泡显示运行中的会话数，点开查看详情。默认收起；拖动小猫可移动，右键打开菜单。")
+                Text(state.desktopPetPresentation == .dock
+                     ? "悬停预览，点击固定工作卡片。拖动猫头可移动、换边；横竖方向可在猫条菜单里切换。"
+                     : "数字气泡显示运行中的会话数，点开查看详情。拖动小猫可移动，右键可切换为猫条。")
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -142,6 +167,29 @@ struct SettingsView: View {
                 Label(message, systemImage: "checkmark.circle")
                     .font(.callout).foregroundStyle(Theme.accent)
                     .fixedSize(horizontal: false, vertical: true)
+            }
+            Divider()
+            Toggle("在猫条接收授权与提问", isOn: $state.agentInteractionsEnabled)
+                .accessibilityIdentifier("agent-interactions-enabled")
+            ForEach([WorkSource.codex, .claude]) { source in
+            HStack {
+                Text(source.clientName + " 工具交互").font(.callout)
+                Spacer()
+                let installed = source == .codex ? state.codexInteractionInstalled : state.claudeInteractionInstalled
+                Button(installed ? "重新安装" : "安装交互监听") {
+                    if source == .codex { state.installCodexInteraction(false) } else { state.installClaudeInteraction(false) }
+                }.controlSize(.small).accessibilityIdentifier(source.rawValue + "-interaction-install")
+                if installed {
+                    Button("移除") {
+                        if source == .codex { state.installCodexInteraction(true) } else { state.installClaudeInteraction(true) }
+                    }.controlSize(.small)
+                }
+            }
+            }
+            Text("Codex 桌面问题卡自动接入。工具授权需安装对应交互监听并重启会话；Codex 只接收人工审核请求。关闭小猫或超时后回到原客户端处理，不会自动批准。")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            if let message = state.agentInteractionSetupMessage {
+                Text(message).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
         } header: {
             Text("跟随 AI")

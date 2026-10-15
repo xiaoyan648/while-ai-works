@@ -1,4 +1,5 @@
 import AppKit
+import AgentHUDCore
 import Combine
 import WhileCore
 
@@ -53,6 +54,51 @@ struct DesktopWorkSession: Identifiable, Equatable {
     let id: String
     let source: WorkSource
     let phase: WorkPhase
+}
+
+enum DesktopPetPresentation: String, CaseIterable, Identifiable {
+    case dock, companion
+    var id: String { rawValue }
+    var title: String { self == .dock ? "贴边猫条" : "桌面小猫" }
+}
+
+enum DesktopDockOrientation: String, CaseIterable, Identifiable {
+    case vertical, horizontal
+    var id: String { rawValue }
+    var title: String { self == .vertical ? "竖向" : "横向" }
+    var defaultEdge: DesktopDockEdge { self == .vertical ? .right : .bottom }
+}
+
+enum DesktopDockEdge: String, CaseIterable, Codable, Identifiable {
+    case left, right, top, bottom
+    var id: String { rawValue }
+    var title: String {
+        switch self { case .left: return "左边"; case .right: return "右边"; case .top: return "上边"; case .bottom: return "下边" }
+    }
+    var orientation: DesktopDockOrientation { self == .left || self == .right ? .vertical : .horizontal }
+}
+
+enum DesktopDockAttachment: String, CaseIterable, Identifiable {
+    case floating, attached
+    var id: String { rawValue }
+    var title: String { self == .attached ? "贴边融合" : "悬浮" }
+}
+
+enum DesktopCompanionAppearance: String, CaseIterable, Identifiable {
+    case system, light, dark
+    var id: String { rawValue }
+    var title: String {
+        switch self { case .system: return "跟随系统"; case .light: return "浅色"; case .dark: return "深色" }
+    }
+    var native: NSAppearance? {
+        switch self { case .system: return nil; case .light: return NSAppearance(named: .aqua); case .dark: return NSAppearance(named: .darkAqua) }
+    }
+}
+
+struct DesktopDockPosition: Codable, Equatable {
+    var screenID: String
+    /// The fraction along the usable edge, independent of screen resolution.
+    var fraction: Double
 }
 
 enum DesktopPetSize: String, CaseIterable, Identifiable {
@@ -121,6 +167,36 @@ final class AppState: ObservableObject {
     } }
     @Published var activeSessionCounts: [WorkSource: Int] = [:]
     @Published var desktopWorkSessions: [DesktopWorkSession] = []
+    @Published var agentDashboard = AgentDockData()
+    @Published var desktopDockTab = DesktopDockTab.sessions
+    @Published var agentReplyPreviews = false {
+        didSet { defaults.set(agentReplyPreviews, forKey: "mascot.agent.replyPreviews") }
+    }
+    @Published var agentComposeSessionID: String?
+    @Published var agentDrafts: [String: String] = [:]
+    @Published var agentMessageStatus: [String: String] = [:]
+    @Published var agentSending = Set<String>()
+    @Published var agentInteractions: [AgentInteraction] = []
+    @Published var agentInteractionDrafts: [String: AgentInteractionDraft] = [:]
+    @Published var agentInteractionInputID: String?
+    @Published var agentInteractionSelectionID: String?
+    @Published var agentInteractionDelivery: [WorkSource: String] = [:]
+    @Published var agentInteractionsEnabled = true {
+        didSet { defaults.set(agentInteractionsEnabled, forKey: "mascot.agent.interactions") }
+    }
+    @Published var agentInteractionSetupMessage: String?
+    @Published var claudeInteractionInstalled = false
+    @Published var codexInteractionInstalled = false
+    var answerAgentInteraction: (String, PermissionDecision) -> Void = { _, _ in }
+    var openAgentInteraction: (String) -> Void = { _ in }
+    var installClaudeInteraction: (Bool) -> Void = { _ in }
+    var installCodexInteraction: (Bool) -> Void = { _ in }
+    var refreshAgentData: () -> Void = {}
+    var showAgentReplyPreview: (AgentDockSession, NSView) -> Void = { _, _ in }
+    var hideAgentReplyPreview: () -> Void = {}
+    var openAgentSession: (AgentDockSession) -> Void = { _ in }
+    var sendAgentMessage: (AgentDockSession, String) async -> AgentMessageOutcome = { _, _ in .unavailable }
+    var focusAgentComposer: () -> Void = {}
     @Published var workSourceDetails: [WorkSource: String] = [:]
     var activeSessionCount: Int { activeSessionCounts.values.reduce(0, +) }
     var selectedClientsLabel: String {
@@ -165,6 +241,30 @@ final class AppState: ObservableObject {
     @Published var desktopPetSize: DesktopPetSize {
         didSet { defaults.set(desktopPetSize.rawValue, forKey: "mascot.desktop.size") }
     }
+    @Published var desktopPetPresentation: DesktopPetPresentation {
+        didSet { defaults.set(desktopPetPresentation.rawValue, forKey: "mascot.desktop.presentation"); desktopPetShowsStatus = false }
+    }
+    @Published var desktopCompanionAppearance: DesktopCompanionAppearance {
+        didSet { defaults.set(desktopCompanionAppearance.rawValue, forKey: "mascot.desktop.appearance") }
+    }
+    @Published var desktopDockOrientation: DesktopDockOrientation {
+        didSet {
+            defaults.set(desktopDockOrientation.rawValue, forKey: "mascot.dock.orientation")
+            if desktopDockEdge.orientation != desktopDockOrientation { desktopDockEdge = desktopDockOrientation.defaultEdge }
+            desktopPetShowsStatus = false
+        }
+    }
+    @Published var desktopDockEdge: DesktopDockEdge {
+        didSet { defaults.set(desktopDockEdge.rawValue, forKey: "mascot.dock.edge") }
+    }
+    @Published var desktopDockAttachment: DesktopDockAttachment {
+        didSet { defaults.set(desktopDockAttachment.rawValue, forKey: "mascot.dock.attachment") }
+    }
+    @Published var desktopDockPosition: DesktopDockPosition? {
+        didSet { defaults.set(desktopDockPosition.flatMap { try? JSONEncoder().encode($0) }, forKey: "mascot.dock.position") }
+    }
+    /// Selection and expansion never survive relaunch or a change of presentation.
+    @Published var desktopDockSource: WorkSource?
     @Published var desktopPetEnabled: Bool { didSet {
         defaults.set(desktopPetEnabled, forKey: "mascot.desktop.enabled")
         if !desktopPetEnabled && !(desktopEnabled && followAI) { clearWorkState() }
@@ -176,7 +276,15 @@ final class AppState: ObservableObject {
         get { defaults.data(forKey: "mascot.desktop.position").flatMap { try? JSONDecoder().decode(DesktopPetPosition.self, from: $0) } }
         set { defaults.set(newValue.flatMap { try? JSONEncoder().encode($0) }, forKey: "mascot.desktop.position") }
     }
-    func resetDesktopPetPosition() { desktopPetPosition = nil; desktopPetResetID = UUID() }
+    func resetDesktopPetPosition() {
+        if desktopPetPresentation == .dock { desktopDockPosition = nil }
+        else { desktopPetPosition = nil }
+        desktopPetResetID = UUID()
+    }
+    func dock(on edge: DesktopDockEdge) {
+        if desktopDockOrientation != edge.orientation { desktopDockOrientation = edge.orientation }
+        desktopDockEdge = edge
+    }
     func companionCatch(at time: TimeInterval) -> FishingReward? {
         guard desktopEnabled, mode == .fishing, castStartedAt == nil,
               let reward = fishingReward, reward.isVisible(at: time) else { return nil }
@@ -203,11 +311,15 @@ final class AppState: ObservableObject {
         if let source = WorkSource.allCases.first(where: { (activeSessionCounts[$0] ?? 0) > 0 }) { return source.clientName + " 在工作" }
         return "陪你等开工"
     }
+    func agentRunningCount(for source: WorkSource) -> Int {
+        max(activeSessionCounts[source] ?? 0, agentDashboard.sessions.filter { $0.source == source && $0.running }.count)
+    }
     func desktopPetStatus(for source: WorkSource) -> String {
         guard selectedSources.contains(source) else { return "未关注" }
-        guard let count = activeSessionCounts[source] else { return "正在读取" }
+        let count = agentRunningCount(for: source)
+        if activeSessionCounts[source] == nil && agentDashboard.updatedAt == nil { return "正在读取" }
         if count > 0 { return "\(count) 个会话" }
-        if !(workSourceDetails[source] ?? "").isEmpty { return source == .codex ? "状态不可用" : "等待连接" }
+        if !agentDashboard.sessions.contains(where: { $0.source == source }) && !(workSourceDetails[source] ?? "").isEmpty { return source == .codex ? "状态不可用" : "等待连接" }
         return "未检测到工作"
     }
     /// Bumped for every landed catch, so the cat can celebrate.
@@ -293,6 +405,7 @@ final class AppState: ObservableObject {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        agentReplyPreviews = defaults.bool(forKey: "mascot.agent.replyPreviews")
         targetScreenID=defaults.string(forKey:"desktop.targetScreen") ?? ""
         fishingEnvironment = FishingEnvironment.resolve(mode: .system)
         let savedKey = defaults.object(forKey: "interaction.shortcutKey") as? Int ?? 49
@@ -319,6 +432,7 @@ final class AppState: ObservableObject {
         area = PlayArea(rawValue: defaults.string(forKey: "area") ?? "") ?? .edges
         // Existing manual mode is preserved; the first multi-source selection defaults to all.
         followAI = defaults.object(forKey: "work.followAI") as? Bool ?? (defaults.string(forKey: "source") != "manual")
+        agentInteractionsEnabled = defaults.object(forKey: "mascot.agent.interactions") as? Bool ?? true
         selectedSources = defaults.stringArray(forKey: "work.sources").map { Set($0.compactMap(WorkSource.init(rawValue:))) }
             ?? Set(WorkSource.allCases)
         desktopEnabled = false
@@ -328,6 +442,14 @@ final class AppState: ObservableObject {
         soundEnabled = defaults.object(forKey: "sound") as? Bool ?? true
         mascotCoat = MascotCoat(rawValue: defaults.string(forKey: "mascot.coat") ?? "") ?? .ink
         desktopPetSize = DesktopPetSize(rawValue: defaults.string(forKey: "mascot.desktop.size") ?? "") ?? .medium
+        desktopPetPresentation = DesktopPetPresentation(rawValue: defaults.string(forKey: "mascot.desktop.presentation") ?? "") ?? .dock
+        desktopCompanionAppearance = DesktopCompanionAppearance(rawValue: defaults.string(forKey: "mascot.desktop.appearance") ?? "") ?? .system
+        let orientation = DesktopDockOrientation(rawValue: defaults.string(forKey: "mascot.dock.orientation") ?? "") ?? .vertical
+        desktopDockOrientation = orientation
+        let edge = DesktopDockEdge(rawValue: defaults.string(forKey: "mascot.dock.edge") ?? "") ?? orientation.defaultEdge
+        desktopDockEdge = edge.orientation == orientation ? edge : orientation.defaultEdge
+        desktopDockAttachment = DesktopDockAttachment(rawValue: defaults.string(forKey: "mascot.dock.attachment") ?? "") ?? .attached
+        desktopDockPosition = defaults.data(forKey: "mascot.dock.position").flatMap { try? JSONDecoder().decode(DesktopDockPosition.self, from: $0) }
         desktopPetEnabled = defaults.bool(forKey: "mascot.desktop.enabled")
         volume = min(1, max(0, defaults.object(forKey: "volume") as? Double ?? 0.55))
         PlayAudio.shared.masterVolume = Float(volume)
@@ -508,4 +630,56 @@ final class AppState: ObservableObject {
 extension NSColor {
     static let playInk = NSColor(srgbRed: 0.14, green: 0.21, blue: 0.19, alpha: 1)
     static let playMint = NSColor(srgbRed: 0.23, green: 0.48, blue: 0.39, alpha: 1)
+}
+
+/// UI-owned values: no upstream model or conversation body is written to defaults.
+struct AgentDockData: Equatable {
+    var quotas: [AgentDockQuota] = []
+    var sessions: [AgentDockSession] = []
+    var notices: [WorkSource: String] = [:]
+    var plans: [WorkSource: String] = [:]
+    var updatedAt: Date?
+}
+enum DesktopDockTab: String, CaseIterable { case sessions, quota }
+enum AgentQuotaWindow: Equatable { case session, weekly, modelWeekly, other }
+enum AgentSessionEvent: Equatable { case input, approval, finished, working, recent }
+struct AgentDockQuota: Equatable, Identifiable {
+    let id: String
+    let source: WorkSource
+    let title: String
+    let remaining: Double?
+    let resetAt: Date?
+    let observedAt: Date
+    let stale: Bool
+    var window: AgentQuotaWindow = .other
+}
+struct AgentDockSession: Equatable, Identifiable, Sendable {
+    let id: String
+    let source: WorkSource
+    let title: String
+    let project: String?
+    let status: String
+    let running: Bool
+    let tokensIn: Int
+    let tokensOut: Int
+    let cacheRead: Int
+    let reply: String?
+    let observedAt: Date
+    let navigationURL: URL?
+    let resumeCommand: String?
+    var event: AgentSessionEvent = .recent
+    var eventAt: Date? = nil
+    var dockIdentity: String { source.rawValue + ":" + id }
+    var canSend: Bool { source == .codex && navigationURL?.scheme == "codex" && navigationURL?.lastPathComponent == id }
+}
+enum AgentMessageOutcome: Equatable {
+    case accepted, unavailable, failed(String), uncertain
+    var title: String {
+        switch self {
+        case .accepted: return "已送达原会话"
+        case .unavailable: return "原会话当前不可接收，请打开客户端继续"
+        case .failed(let message): return message
+        case .uncertain: return "发送结果待确认；请查看原会话，勿重复发送"
+        }
+    }
 }

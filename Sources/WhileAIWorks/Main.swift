@@ -3,7 +3,17 @@ import SwiftUI
 import Combine
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
-    let state = AppState()
+    let state: AppState = {
+        guard ProcessInfo.processInfo.environment["WHILE_AI_WORKS_CAT_PREVIEW"] == "1" else { return AppState() }
+        // A runnable review build reads real local work state, but never changes
+        // the installed app's preferences or starts its games/audio.
+        let defaults = UserDefaults(suiteName: "WhileAIWorks.CatDockPreview")!
+        let state = AppState(defaults: defaults)
+        state.desktopEnabled = false; state.soundEnabled = false
+        state.desktopPetEnabled = true
+        state.agentReplyPreviews = true
+        return state
+    }()
     private var statusItem: NSStatusItem!
     private var overlay: DesktopOverlay!
     private var monitor: CodexMonitor!
@@ -11,6 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var windows: AppWindows!
     private var panel: MenuBarPanelController!
     private var desktopPet: DesktopPetController!
+    private var agentHub: AgentHubDataController!
     private let mascot = MascotController()
     private let quickMenu = NSMenu()
     private var subscriptions: Set<AnyCancellable> = []
@@ -27,6 +38,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         interactionShortcut = InteractionShortcut(state: state)
         overlay = DesktopOverlay(state: state)
         monitor = CodexMonitor(state: state)
+        agentHub = AgentHubDataController(state: state)
         windows = AppWindows(state: state)
         panel = MenuBarPanelController(content: MenuBarView(
             state: state, mascot: mascot,
@@ -41,6 +53,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             DispatchQueue.main.async { self?.updateStatusIcon() }
         }.store(in: &subscriptions)
         if DebugSnapshots.directory != nil { runSnapshots(); return }
+        if ProcessInfo.processInfo.environment["WHILE_AI_WORKS_CAT_PREVIEW"] == "1" { return }
         // Greet with the panel so a first launch never looks like nothing happened.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in self?.showPanel() }
     }
@@ -171,7 +184,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             .credits: NSAttributedString(string: "擦污渍、捏气泡、敲木鱼、钓鱼。\n菜单栏里还住着一只猫。")
         ])
     }
-    func applicationWillTerminate(_ notification: Notification) { PlayAudio.shared.stopAll() }
+    func applicationWillTerminate(_ notification: Notification) { agentHub?.stop(); PlayAudio.shared.stopAll() }
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if !flag { showPanel() }
         return true

@@ -7,6 +7,8 @@ import WhileCore
 enum Theme {
     static let accent = Color(nsColor: .adaptive(light: 0x2F7A63, dark: 0x6CC6A5))
     static let gold = Color(nsColor: .adaptive(light: 0xA66F1C, dark: 0xE5B75C))
+    static let attention = Color(nsColor: .adaptive(light: 0x94601C, dark: 0xE5B75C))
+    static let attentionBadge = Color(nsColor: .adaptive(light: 0xF0CC83, dark: 0xE5B75C))
     static let silver = Color(nsColor: .adaptive(light: 0x8B939C, dark: 0xC3CAD2))
     static let working = Color(nsColor: .adaptive(light: 0x2F9A6C, dark: 0x5FD39A))
     /// A quiet fill for grouped rows sitting on window or panel material.

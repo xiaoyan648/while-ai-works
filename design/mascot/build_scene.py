@@ -405,7 +405,16 @@ fill(hit, "00000000")
 paw = node("Paw", 104, 199, cat, opacity=0.0)
 part("Paw Shape", 104, 199, paw, oval=(104, 199, 21, 13))
 
-head_bob = node("Head Bob", 120, 126, cat)
+# Two real fur paws wrap over the card rim. The posture layer hides the lower
+# body, rather than stretching the seated cat or painting a second mascot.
+perch_paws = node("Perch Paws", 120, 137, cat, opacity=0.0)
+part("Perch Paw L", 97, 139, perch_paws, oval=(97, 139, 17, 15))
+part("Perch Paw R", 157, 139, perch_paws,
+     "M 143 146 C 141 143 142 132 147 128 C 151 124 163 124 169 129 "
+     "C 173 132 174 143 171 146 C 169 148 166 147 165 144 "
+     "C 164 150 158 150 157 145 C 155 150 150 150 150 145 C 147 150 144 149 143 146 Z")
+perch_tilt = node("Perch Tilt", 120, 126, cat)
+head_bob = node("Head Bob", 120, 126, perch_tilt)
 head_tilt = node("Head Tilt", 120, 126, head_bob)
 head_look = node("Head Look", 120, 126, head_tilt)
 
@@ -465,6 +474,9 @@ for side, ex in (("L", 101), ("R", 139)):
 HEAD = ("M 120 53 C 146 53 166 68 167 92 C 168 114 148 131 120 131 "
         "C 92 131 72 114 73 92 C 74 68 94 53 120 53 Z")
 part("Head", 120, 92, head_look, HEAD)
+perch_head_edge = shape("Perch Head Edge", 120, 92, head_look, opacity=0.0)
+path(perch_head_edge, HEAD)
+stroke(perch_head_edge, P["shade"], 1.5, role="shade")
 
 ears = {}
 for side, pivot_x in (("L", 96), ("R", 144)):
@@ -490,6 +502,12 @@ stroke(tail, P["fur"], 9.5, role="fur", trim=(0.0, 0.72), name="Middle")
 stroke(tail, P["fur"], 12, role="fur", trim=(0.0, 0.4), name="Base")
 glow_paints(tail_glow, thickness=9.5)
 GLOWS.append(tail_glow)
+# A real left-side tail curls behind the card, used only by the perched pose.
+perch_tail = node("Perch Tail", 88, 161, cat, opacity=0.0)
+perch_tail_shape = shape("Perch Tail Fur", 88, 161, perch_tail)
+path(perch_tail_shape, "M 88 161 C 45 180 7 168 8 135 C 8 111 33 103 49 111")
+stroke(perch_tail_shape, P["fur"], 8, role="fur")
+
 # Every glow twin sits just behind the rearmost fur (the tail), in tree order among themselves.
 for g in GLOWS:
     target = El("DrawTarget", drawableId=tail.id, placementValue="after", name="Behind Fur")
@@ -534,17 +552,26 @@ for key, label in (("ink", "Ink"), ("snow", "Snow")):
     coat_enum.add(v)
     COAT[key] = v
 
+posture_enum = El("DataEnumCustom", name="Posture")
+POSTURE = {}
+for key in ("seated", "perched"):
+    v = El("DataEnumValue", key=key, value=key.title())
+    posture_enum.add(v)
+    POSTURE[key] = v
+
 vm_mood = El("ViewModelPropertyEnumCustom", enumId=mood_enum.id, name="mood")
 vm_coat = El("ViewModelPropertyEnumCustom", enumId=coat_enum.id, name="coat")
+vm_posture = El("ViewModelPropertyEnumCustom", enumId=posture_enum.id, name="posture")
 vm_look_x = El("ViewModelPropertyNumber", name="lookX")
 vm_look_y = El("ViewModelPropertyNumber", name="lookY")
 vm_celebrate = El("ViewModelPropertyTrigger", name="celebrate")
 vm_pet = El("ViewModelPropertyTrigger", name="pet")
 view_model.attrs["defaultInstanceId"] = instance.id
-view_model.add(vm_mood, vm_coat, vm_look_x, vm_look_y, vm_celebrate, vm_pet, instance)
+view_model.add(vm_mood, vm_coat, vm_posture, vm_look_x, vm_look_y, vm_celebrate, vm_pet, instance)
 instance.add(
     El("ViewModelInstanceEnum", propertyValue=MOOD["idle"].id, viewModelPropertyId=vm_mood.id),
     El("ViewModelInstanceEnum", propertyValue=COAT["ink"].id, viewModelPropertyId=vm_coat.id),
+    El("ViewModelInstanceEnum", propertyValue=POSTURE["seated"].id, viewModelPropertyId=vm_posture.id),
     El("ViewModelInstanceNumber", propertyValue=0, viewModelPropertyId=vm_look_x.id),
     El("ViewModelInstanceNumber", propertyValue=0, viewModelPropertyId=vm_look_y.id),
     El("ViewModelInstanceTrigger", viewModelPropertyId=vm_celebrate.id),
@@ -941,6 +968,24 @@ for key in ("ink", "snow"):
 
 # ---------------------------------------------------------- state machine
 
+posture_anims = {}
+for key in POSTURE:
+    a = Anim("Posture " + key.title(), 1, loop="oneShot")
+    for target in (torso, tail, tail_glow, orb, ground, motes, aura, fx):
+        a.key(target, "opacity", [(0, 0 if key == "perched" else 1)])
+    a.key(perch_paws, "opacity", [(0, 1 if key == "perched" else 0)])
+    a.key(perch_tail, "opacity", [(0, 1 if key == "perched" else 0)])
+    a.key(perch_head_edge, "opacity", [(0, 1 if key == "perched" else 0)])
+    a.key(perch_paws, "y", [(0, perch_paws.ly - 6 if key == "perched" else perch_paws.ly)])
+    a.key(perch_tilt, "rotation", [(0, -0.25 if key == "perched" else 0)])
+    for glow in GLOWS:
+        if glow is tail_glow:
+            continue
+        perched_opacity = 0
+        a.key(glow, "opacity", [(0, perched_opacity if key == "perched" else 1)])
+    posture_anims[key] = a
+    animations.append(a)
+
 def enum_condition(prop, value):
     return El("TransitionViewModelCondition", opValue="equal").add(
         El("TransitionPropertyViewModelComparator").add(
@@ -1011,13 +1056,19 @@ s_ink.add(El("StateTransition", stateToId=s_snow.id, duration=400).add(enum_cond
 s_snow.add(El("StateTransition", stateToId=s_ink.id, duration=400).add(enum_condition(vm_coat, COAT["ink"])))
 coat_layer = layer("Coat", s_ink, [s_ink, s_snow])
 
+s_seated = astate(posture_anims["seated"], 0, 0)
+s_perched = astate(posture_anims["perched"], 260, 0)
+s_seated.add(El("StateTransition", stateToId=s_perched.id, duration=260).add(enum_condition(vm_posture, POSTURE["perched"])))
+s_perched.add(El("StateTransition", stateToId=s_seated.id, duration=260).add(enum_condition(vm_posture, POSTURE["seated"])))
+posture_layer = layer("Posture", s_seated, [s_seated, s_perched])
+
 pet_listener = El("StateMachineListenerSingle", targetId=hit.id, listenerTypeValue="click", name="Pet").add(
     El("ListenerViewModelChange").add(
         El("BindablePropertyTrigger", propertyValue=1).add(
             El("DataBindContext", sourcePathIds=vm_path(vm_pet), propertyKey=686, direction=True))))
 
 state_machine.add(pet_listener, always(breathe), always(blink), always(drift), always(hover),
-                  tail_layer, mood_layer, coat_layer)
+                  tail_layer, mood_layer, coat_layer, posture_layer)
 artboard.add(state_machine)
 
 # Look: host-driven numbers, eased by an interpolating converter.
@@ -1033,7 +1084,7 @@ for a in animations:
 
 doc = El("Rive", _id=False, version="1", kind="fragment").add(
     Comment("Generated by build_scene.py. Edit the script, not this file."),
-    artboard, mood_enum, coat_enum, smooth, view_model)
+    artboard, mood_enum, coat_enum, posture_enum, smooth, view_model)
 ARGS.out.mkdir(parents=True, exist_ok=True)
 (ARGS.out / "scene.rml").write_text(doc.render() + "\n")
 if ARGS.out != HERE:

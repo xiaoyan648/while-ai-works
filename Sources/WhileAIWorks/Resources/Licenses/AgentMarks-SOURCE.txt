@@ -1,0 +1,5 @@
+Client marks from Agent HUD Open, Apache-2.0 repository
+https://github.com/jazzenchen/agent-hud-open
+Revision faa3a06fcf06510855ada332ea454f1f6df30ab4
+Original PNGs preserved. Marks identify their respective clients.
+Cat dock contour and composition authored in While AI Works.

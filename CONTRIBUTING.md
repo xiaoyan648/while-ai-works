@@ -20,11 +20,11 @@
 ```sh
 TARGET_ARCH=x86_64 bash scripts/build.sh
 bash scripts/package-release.sh "dist/x86_64/While AI Works.app"
-# 本机架构安装包
+# 本机架构 DMG 与 ZIP 安装包
 bash scripts/package-release.sh
 ```
 
-Apple Silicon 上交叉编译的 Intel 应用位于 `dist/x86_64`。运行 x86_64 程序需要 Rosetta 或 Intel Mac；交叉编译通过不代表 Intel 真机验收。
+Apple Silicon 上交叉编译的 Intel 应用位于 `dist/x86_64`。运行 x86_64 程序需要 Rosetta 或 Intel Mac；交叉编译通过不代表 Intel 真机验收。`package-release.sh` 同时生成 DMG、ZIP 与 SHA256SUMS.txt，校验两个辅助程序架构，并挂载 DMG 检查 Applications 快捷入口、应用逐文件一致性及签名。
 
 ## 检查边界
 

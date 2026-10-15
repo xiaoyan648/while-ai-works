@@ -15,6 +15,7 @@ final class MascotController: ObservableObject {
     private var look = CGPoint.zero
     var attention: CGPoint?
     private var active = true
+    private var perched = false
 
     static var resources: Bundle {
         #if SWIFT_PACKAGE
@@ -34,7 +35,7 @@ final class MascotController: ObservableObject {
             return
         }
         let model = RiveModel(riveFile: file)
-        riveViewModel = RiveViewModel(model, stateMachineName: nil, fit: .contain, alignment: .center,
+        riveViewModel = RiveViewModel(model, stateMachineName: "Cat", fit: .contain, alignment: .center,
                                       autoPlay: true, artboardName: "Cat")
         model.enableAutoBind { [weak self] instance in
             self?.instance = instance
@@ -71,6 +72,11 @@ final class MascotController: ObservableObject {
 
     func pet() { instance?.triggerProperty(fromPath: "pet")?.trigger() }
 
+    func setPerched(_ perched: Bool) {
+        self.perched = perched
+        instance?.enumProperty(fromPath: "posture")?.value = perched ? "perched" : "seated"
+    }
+
     /// Stop rendering while nothing on screen shows the cat.
     func setActive(_ active: Bool) {
         guard active != self.active, let riveViewModel else { return }
@@ -83,6 +89,7 @@ final class MascotController: ObservableObject {
         instance?.enumProperty(fromPath: "coat")?.value = coat.rawValue
         instance?.numberProperty(fromPath: "lookX")?.value = Float(look.x)
         instance?.numberProperty(fromPath: "lookY")?.value = Float(look.y)
+        instance?.enumProperty(fromPath: "posture")?.value = perched ? "perched" : "seated"
     }
 }
 
@@ -95,19 +102,15 @@ final class MascotHostView: NSView {
     init(controller: MascotController) {
         self.controller = controller
         super.init(frame: .zero)
+        wantsLayer = true
         // Transparent hosts can otherwise expose a dirty rect extending into sibling
         // views on macOS 14+. Keep the Metal viewport local to the cat's bounds.
         clipsToBounds = true
         if let riveView = controller.riveViewModel?.createRiveView() {
             riveView.clipsToBounds = true
-            riveView.translatesAutoresizingMaskIntoConstraints = false
+            riveView.frame = bounds
+            riveView.autoresizingMask = [.width, .height]
             addSubview(riveView)
-            NSLayoutConstraint.activate([
-                riveView.leadingAnchor.constraint(equalTo: leadingAnchor),
-                riveView.trailingAnchor.constraint(equalTo: trailingAnchor),
-                riveView.topAnchor.constraint(equalTo: topAnchor),
-                riveView.bottomAnchor.constraint(equalTo: bottomAnchor)
-            ])
         }
         setAccessibilityElement(true)
         setAccessibilityRole(.image)
@@ -115,6 +118,14 @@ final class MascotHostView: NSView {
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func layout() {
+        super.layout()
+        if let view = controller.riveViewModel?.riveView {
+            view.frame = bounds
+            view.layer?.contentsScale = window?.backingScaleFactor ?? 1
+        }
+    }
 
     deinit {
         timer?.invalidate()
@@ -131,6 +142,7 @@ final class MascotHostView: NSView {
             controller.setActive(false)
             return
         }
+        controller.riveViewModel?.riveView?.layer?.contentsScale = window.backingScaleFactor
         occlusionObserver = NotificationCenter.default.addObserver(
             forName: NSWindow.didChangeOcclusionStateNotification, object: window, queue: .main) { [weak self] _ in
             self?.refreshActivity()

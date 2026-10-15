@@ -2,9 +2,10 @@ import AppKit
 import Combine
 import SwiftUI
 
-/// A companion window never takes the keyboard focus from the app being used.
+/// Reading the companion preserves focus. An explicitly opened composer can accept typing.
 final class DesktopPetPanel: NSPanel {
-    override var canBecomeKey: Bool { false }
+    var allowsKeyboard = false
+    override var canBecomeKey: Bool { allowsKeyboard }
     override var canBecomeMain: Bool { false }
 }
 
@@ -259,6 +260,7 @@ final class DesktopPetController: NSObject {
     private var compactOrigin: CGPoint?
     private var isShowingCatch = false
     private var wasResident = false
+    private(set) var dockController: DesktopDockController!
 
     init(state: AppState, mascot: MascotController = MascotController(),
          showPanel: @escaping () -> Void = {}, showSettings: @escaping () -> Void = {}) {
@@ -268,6 +270,7 @@ final class DesktopPetController: NSObject {
         panel = DesktopPetPanel(contentRect: CGRect(origin: .zero, size: DesktopPetView.size(showsStatus: state.desktopPetShowsStatus, petSize: state.desktopPetSize)),
                                 styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         super.init()
+        dockController = DesktopDockController(state: state, showSettings: showSettings)
         panel.isOpaque = false; panel.backgroundColor = .clear; panel.hasShadow = false
         panel.isReleasedWhenClosed = false; panel.hidesOnDeactivate = false
         panel.level = NSWindow.Level(rawValue: NSWindow.Level.floating.rawValue + 1)
@@ -308,6 +311,7 @@ final class DesktopPetController: NSObject {
     }
 
     private func refresh() {
+        panel.appearance = state.desktopCompanionAppearance.native
         let celebration = state.celebrationSerial != lastCelebration
         lastCelebration = state.celebrationSerial
         let count = state.activeSessionCount
@@ -331,11 +335,11 @@ final class DesktopPetController: NSObject {
         isShowingCatch = presentedCatch != nil
         let residentChanged = wasResident != state.desktopPetEnabled
         wasResident = state.desktopPetEnabled
-        guard state.desktopPetEnabled || isShowingCatch else {
+        guard (state.desktopPetEnabled && state.desktopPetPresentation == .companion) || isShowingCatch else {
             panel.orderOut(nil); mascot.setActive(false)
             pointerTimer?.invalidate(); pointerTimer = nil
             content.cancelDrag()
-            if state.desktopPetShowsStatus { state.desktopPetShowsStatus = false }
+            if !state.desktopPetEnabled && state.desktopPetShowsStatus { state.desktopPetShowsStatus = false }
             return
         }
         let showsDetails = state.desktopPetShowsStatus && !isShowingCatch
@@ -383,7 +387,7 @@ final class DesktopPetController: NSObject {
     }
 
     func dismissOutsideClick(at screenPoint: CGPoint? = nil) {
-        guard state.desktopPetShowsStatus, panel.isVisible else { return }
+        guard state.desktopPetPresentation == .companion, state.desktopPetShowsStatus, panel.isVisible else { return }
         let local = panel.convertPoint(fromScreen: screenPoint ?? NSEvent.mouseLocation)
         if !content.containsInteraction(local) { state.desktopPetShowsStatus = false }
     }
@@ -437,6 +441,8 @@ final class DesktopPetController: NSObject {
             menu.addItem(item)
         }
         menu.addItem(.separator())
+        let dockItem = NSMenuItem(title: "切换为贴边猫条", action: #selector(showDock), keyEquivalent: "")
+        dockItem.target = self; menu.addItem(dockItem)
         for (title, action) in [("摸摸小猫", #selector(pet)), ("打开菜单栏面板", #selector(openPanel)),
                                 (state.desktopPetShowsStatus ? "收起 AI 工作详情" : "展开 AI 工作详情", #selector(toggleStatus)),
                                 ("回到屏幕角落", #selector(resetPosition)), ("设置…", #selector(openSettings)),
@@ -447,6 +453,7 @@ final class DesktopPetController: NSObject {
         return menu
     }
     @objc private func pet() { mascot.pet() }
+    @objc private func showDock() { state.desktopPetPresentation = .dock }
     @objc private func openPanel() { showPanel() }
     @objc private func openSettings() { showSettings() }
     @objc private func toggleStatus() { state.desktopPetShowsStatus.toggle() }

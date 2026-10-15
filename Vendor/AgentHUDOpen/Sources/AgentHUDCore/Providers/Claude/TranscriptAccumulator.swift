@@ -1,0 +1,230 @@
+import AgentHUDSupport
+import Foundation
+
+/// Mutable builder that ingests events (possibly in several batches) and produces a `TranscriptSession`.
+/// Codable so the transcript store can persist it between runs; token events themselves go to the usage ledger.
+public struct TranscriptAccumulator: Hashable, Sendable, Codable {
+    public let path: String
+    public let isSubagent: Bool
+    private var sessionId: String?
+    private var cwd: String?
+    private var startedAt: Date?
+    private var lastActivityAt: Date?
+    /// The first prompt's title, the latest name the user or the desktop app gave the session, and the latest title
+    /// Claude Code generated for it.
+    private var task: String?
+    private var customTitle: String?
+    private var generatedTitle: String?
+    private var tokensIn = 0
+    private var tokensOut = 0
+    private var cacheReadTokens = 0
+    private var outputByAgent: [String: Int] = [:]
+    /// Keys of recently counted responses. Claude Code writes the lines of one response back to back.
+    private var recentUsageKeys: [String] = []
+    /// Usage lines without a response id, numbered so each keeps its own ledger key.
+    private var unkeyedUsage = 0
+    private var modelsSeen: [String: Date] = [:]
+    private var entrypoint: String?
+    private struct Turn: Hashable, Sendable, Codable {
+        let startedAt: Date?
+        var state: SessionTurn.State
+        var observedAt: Date
+        /// What the agent said, kept only while the app runs: the ledger stores no conversation text.
+        var message: String?
+        enum CodingKeys: String, CodingKey { case startedAt, state, observedAt }
+    }
+    private var currentTurn: Turn?
+    private var completions: [SessionCompletion]?
+    /// Prompts and compactions read since the store last took them.
+    private var marks: [UsageLedger.Mark] = []
+
+    /// A response that neither requests a tool nor was cut off ends the turn and returns control to the user.
+    /// Interruptions leave no such line; API errors are synthetic messages without one.
+    static let completedStopReasons: Set<String> = ["end_turn", "stop_sequence"]
+    /// Enough for every turn a poll can observe; the notification tracker ignores older ones anyway.
+    static let retainedCompletions = 32
+    static let retainedUsageKeys = 512
+
+    public init(path: String, isSubagent: Bool) {
+        self.path = path
+        self.isSubagent = isSubagent
+    }
+
+    /// Takes the titles `FastTranscriptParser.titles(in:)` read from the same lines as the next events.
+    public mutating func noteTitles(custom: String?, generated: String?) {
+        if let custom = SessionTitle.named(custom) { customTitle = custom }
+        if let generated = SessionTitle.named(generated) { generatedTitle = generated }
+    }
+
+    /// Claude Code's own order: the name given to the session, then the generated title, then the first prompt.
+    private var title: String? { customTitle ?? generatedTitle ?? task }
+
+    /// The session a main log is named after; a sub-agent's log carries the session that started it. A forked session's
+    /// log begins with a copy of its parent's lines, which keep the parent's session and times: they belong to the
+    /// parent's own log, so this one skips them.
+    var ownSession: String? {
+        isSubagent ? nil : URL(fileURLWithPath: path, isDirectory: false).deletingPathExtension().lastPathComponent
+    }
+
+    /// Returns the usage these lines added, keyed by response so a repeated line never counts twice.
+    @discardableResult
+    public mutating func ingest(_ events: [TranscriptEvent]) -> [UsageLedger.Event] {
+        var added: [UsageLedger.Event] = []
+        let own = ownSession
+        for event in events {
+            if let own, let session = event.sessionId, session != own { continue }
+            if sessionId == nil { sessionId = event.sessionId }
+            if cwd == nil { cwd = event.cwd }
+            if let entrypoint = event.entrypoint { self.entrypoint = entrypoint }
+            startedAt = min(startedAt ?? event.timestamp, event.timestamp)
+            lastActivityAt = max(lastActivityAt ?? event.timestamp, event.timestamp)
+            if task == nil, event.role == .user, let text = event.text {
+                task = SessionTitle.from(text)
+            }
+            // A sub-agent's own log follows its turn too, so its session can tell that the agent is still at work; only
+            // a main log records prompts, compactions, completions and the answer.
+            if isSubagent || !event.isSidechain {
+                if !isSubagent, event.isCompaction { marks.append(.init(.compaction, at: event.timestamp)) }
+                if event.isPrompt {
+                    // Claude Code records an interruption as a user line; that turn is over without a completion.
+                    let interrupted = event.text?.hasPrefix("[Request interrupted") == true
+                    if !interrupted, !isSubagent { marks.append(.init(.prompt, at: event.timestamp)) }
+                    if event.timestamp >= (currentTurn?.observedAt ?? .distantPast) {
+                        currentTurn = Turn(startedAt: interrupted ? currentTurn?.startedAt : event.timestamp,
+                            state: interrupted ? .ended : .running, observedAt: event.timestamp)
+                    }
+                } else if event.role == .assistant, event.model != "<synthetic>" {
+                    if let reason = event.stopReason, Self.completedStopReasons.contains(reason) {
+                        var duplicate = false
+                        if !isSubagent {
+                            let completionID = RecordCoding.hash(["Claude", sessionId ?? URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent,
+                                event.messageId ?? String(RecordCoding.milliseconds(event.timestamp))])
+                            duplicate = completions?.contains { $0.id == completionID } == true
+                            recordCompletion(event)
+                        }
+                        if !duplicate, event.timestamp >= (currentTurn?.observedAt ?? .distantPast) {
+                            currentTurn = Turn(startedAt: currentTurn?.startedAt, state: .completed, observedAt: event.timestamp,
+                                               message: currentTurn?.message)
+                        }
+                    } else if isSubagent, event.returnsStructuredOutput, event.timestamp >= (currentTurn?.observedAt ?? .distantPast) {
+                        // A workflow agent hands back its result and stops without an end_turn.
+                        currentTurn = Turn(startedAt: currentTurn?.startedAt, state: .completed, observedAt: event.timestamp)
+                    } else if currentTurn == nil {
+                        // A partial legacy transcript can show work, but cannot invent a prompt start time.
+                        currentTurn = Turn(startedAt: nil, state: .running, observedAt: event.timestamp)
+                    } else if currentTurn?.state != .running, event.timestamp > currentTurn!.observedAt {
+                        // Claude Code woke the agent without a prompt: a sub-agent's report, a queued notification or a
+                        // Stop hook's feedback. The turn that stopped is being worked on again.
+                        currentTurn?.state = .running
+                    }
+                }
+                // Only the conversation dates a running turn. An attachment or queue record can carry a later time than
+                // the answer written after it, which would then look older than the turn and leave it running.
+                if currentTurn?.state == .running, event.role != .other, event.timestamp > currentTurn!.observedAt {
+                    currentTurn?.observedAt = event.timestamp
+                }
+                // The visible answer, taken from whichever block carried it last.
+                if !isSubagent, event.role == .assistant, event.model != "<synthetic>",
+                   let text = event.text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
+                    currentTurn?.message = text
+                }
+            }
+            guard event.hasUsage else { continue }
+            let key: String
+            if let usageKey = event.usageKey {
+                // Same API response written as several lines: count its usage once.
+                guard !recentUsageKeys.contains(usageKey) else { continue }
+                recentUsageKeys.append(usageKey)
+                if recentUsageKeys.count > Self.retainedUsageKeys { recentUsageKeys.removeFirst(recentUsageKeys.count - Self.retainedUsageKeys) }
+                key = usageKey
+            } else {
+                unkeyedUsage += 1
+                key = "n:\(unkeyedUsage)"
+            }
+            let mapped = ClaudeModelMapper.agentId(for: event.model) ?? "claude-model:Unknown"
+            tokensIn += event.tokensIn
+            tokensOut += event.outputTokens
+            cacheReadTokens += event.cacheReadTokens
+            outputByAgent[mapped, default: 0] += event.outputTokens
+            let model = String(mapped.dropFirst("claude-model:".count))
+            if (modelsSeen[model] ?? .distantPast) < event.timestamp {
+                modelsSeen[model] = event.timestamp
+            }
+            added.append(UsageLedger.Event(key: key, timestamp: event.timestamp, agentId: mapped, tokensIn: event.tokensIn,
+                                           tokensOut: event.outputTokens, cacheReadTokens: event.cacheReadTokens,
+                                           cacheWriteTokens: event.cacheCreationTokens, reasoningTokens: event.thinkingTokens))
+        }
+        return added
+    }
+
+    public var isEmpty: Bool { startedAt == nil }
+
+    /// Hands over the prompts and compactions read since the last call.
+    public mutating func drainMarks() -> [UsageLedger.Mark] {
+        defer { marks = [] }
+        return marks
+    }
+
+    private mutating func recordCompletion(_ event: TranscriptEvent) {
+        let fileName = URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent
+        let completion = SessionCompletion(
+            sessionID: sessionId ?? fileName, vendor: "Claude",
+            turnID: event.messageId ?? String(RecordCoding.milliseconds(event.timestamp)),
+            task: title ?? cwd.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "Claude Code",
+            model: event.model.map { ClaudeModelInfo.parse($0)?.displayName ?? $0 } ?? "Claude",
+            startedAt: currentTurn?.state == .running ? currentTurn?.startedAt : nil, completedAt: event.timestamp
+        )
+        // Claude Code writes one line per content block, and every line carries the message's stop reason.
+        if let index = completions?.firstIndex(where: { $0.id == completion.id }), let previous = completions?[index] {
+            // Thinking and text blocks share an ID but can have timestamps tens of seconds apart.
+            // Preserve the original prompt even when later blocks arrive in a subsequent indexing batch.
+            if completion.completedAt > previous.completedAt {
+                completions?[index] = SessionCompletion(
+                    sessionID: completion.sessionID, vendor: completion.vendor,
+                    turnID: event.messageId ?? String(RecordCoding.milliseconds(event.timestamp)),
+                    task: previous.task, model: completion.model,
+                    startedAt: previous.startedAt, completedAt: completion.completedAt
+                )
+            }
+            return
+        }
+        completions = Array(((completions ?? []) + [completion]).suffix(Self.retainedCompletions))
+    }
+
+    /// Drops the recent response keys and old completions once a file can no longer receive appended lines, keeping
+    /// the persisted state of thousands of finished sessions small.
+    public mutating func compactIfFinished(now: Date, idleFor interval: TimeInterval = 86400) {
+        guard let lastActivityAt, now.timeIntervalSince(lastActivityAt) > interval,
+              !recentUsageKeys.isEmpty || completions != nil else { return }
+        recentUsageKeys.removeAll()
+        completions = nil
+    }
+
+    public func build() -> TranscriptSession? {
+        guard let startedAt, let lastActivityAt else { return nil }
+        let dominant = outputByAgent.max { $0.value < $1.value }?.key ?? "claude-model:Unknown"
+        let fileName = URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent
+        return TranscriptSession(
+            id: sessionId ?? fileName,
+            path: path,
+            cwd: cwd,
+            isSubagent: isSubagent,
+            startedAt: startedAt,
+            lastActivityAt: lastActivityAt,
+            task: title,
+            tokensIn: tokensIn,
+            tokensOut: tokensOut,
+            cacheReadTokens: cacheReadTokens,
+            dominantAgentId: dominant,
+            modelsSeen: modelsSeen,
+            entrypoint: entrypoint,
+            completions: completions ?? [],
+            turn: currentTurn.map { turn in
+                SessionTurn(provider: "claude", sessionID: sessionId ?? fileName,
+                    turnID: String(RecordCoding.milliseconds(turn.startedAt ?? turn.observedAt)), state: turn.state,
+                    startedAtMs: turn.startedAt.map(RecordCoding.milliseconds), observedAtMs: RecordCoding.milliseconds(turn.observedAt),
+                    message: turn.message)
+            }
+        )
+    }
+}
