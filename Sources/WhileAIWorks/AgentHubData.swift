@@ -4,6 +4,26 @@ import AgentHUDCore
 import AgentHUDSupport
 import WhileCore
 
+/// Finder does not inherit the user's terminal PATH. Extend only this app's environment;
+/// never run shell startup files or inherit interactive aliases/permission flags.
+enum AgentCommandEnvironment {
+    static func searchPath(home: URL, inherited: String) -> String {
+        var seen = Set<String>()
+        let userPaths = [".local/bin", ".npm-global/bin", ".npm/bin"].map {
+            home.appendingPathComponent($0, isDirectory: true).path
+        }
+        return (inherited.split(separator: ":").map(String.init) + userPaths +
+                ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"])
+            .filter { seen.insert($0).inserted }.joined(separator: ":")
+    }
+
+    static func configure() {
+        let path = searchPath(home: FileManager.default.homeDirectoryForCurrentUser,
+                              inherited: ProcessInfo.processInfo.environment["PATH"] ?? "")
+        setenv("PATH", path, 1)
+    }
+}
+
 /// Owns only the two requested providers. No hooks, remote relay or demo assembly.
 @MainActor
 final class AgentHubDataController {

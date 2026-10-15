@@ -192,6 +192,11 @@ final class AppState: ObservableObject {
     var installClaudeInteraction: (Bool) -> Void = { _ in }
     var installCodexInteraction: (Bool) -> Void = { _ in }
     var refreshAgentData: () -> Void = {}
+    @Published var canCheckForUpdates = false
+    @Published var automaticallyChecksForUpdates = false
+    @Published var lastUpdateCheck: Date?
+    var checkForUpdates: () -> Void = {}
+    var setAutomaticUpdateChecks: (Bool) -> Void = { _ in }
     var showAgentReplyPreview: (AgentDockSession, NSView) -> Void = { _, _ in }
     var hideAgentReplyPreview: () -> Void = {}
     var openAgentSession: (AgentDockSession) -> Void = { _ in }

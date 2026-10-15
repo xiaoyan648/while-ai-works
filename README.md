@@ -82,7 +82,7 @@ Agent 还没开工，渔业部先把竿架好。
 
 ## 下载开玩
 
-[下载 Mac 版 · 0.17.0](https://github.com/xiaoyan648/while-ai-works/releases/tag/v0.17.0)
+[下载 Mac 版 · 0.17.1](https://github.com/xiaoyan648/while-ai-works/releases/tag/v0.17.1)
 
 适用于 **macOS 14 或更新版本**，请按芯片选择安装包：
 
@@ -96,6 +96,8 @@ Intel 包已通过 Rosetta 下的运行与资源检查，尚未完成 Intel 真�
 3. 按 **⌘⇧空格** 随时收起桌面效果，回去看看 AI 干得怎么样。
 
 如果首次打开被系统拦住，确认是从本仓库下载后，在「系统设置 → 隐私与安全性」中选择「仍要打开」。也可参照 [Apple 的操作说明](https://support.apple.com/zh-cn/102445)。
+
+0.17.1 起可在「设置 → 关于」或菜单栏右键菜单中「检查更新」，也可关闭自动检查。默认由用户确认安装，更新清单与安装包均验证签名。0.17.0 及更早版本需先手动安装本版一次。Sparkle 更新签名不代替 Apple 公证，当前安装包仍为 ad-hoc 签名。
 
 ## 和你的 AI 一起上班
 
@@ -124,7 +126,7 @@ Qoder / WorkBuddy 的连接还需要更多真实使用反馈；如果状态没�
 本项目代码采用 [MIT License](LICENSE) 开源，第三方目录保留其原许可。欢迎阅读、修改和贡献。
 图片、纹理、三维模型和品牌素材的来源与许可范围见 [资源说明](ASSETS.md)，这些素材不属于代码的 MIT 授权范围。
 
-需要 macOS 14+、Apple Command Line Tools（Swift 6.1+）和 Python 3。第三方依赖包括 [Rive](https://github.com/rive-app/rive-ios) 运行时（MIT）和固定版本的 [Agent HUD Core](Vendor/AgentHUDOpen/README.md)（Apache-2.0）。Rive 用于小猫动画，首次构建时下载官方发布包并校验 SHA-256；Agent HUD Core 源码随仓库提供，用于 Codex / Claude 用量及会话接入。依赖就绪后可离线构建，不需要生成服务 API Key 或 Blender。
+需要 macOS 14+、Apple Command Line Tools（Swift 6.1+）和 Python 3。第三方依赖包括 [Rive](https://github.com/rive-app/rive-ios) 运行时（MIT）、[Sparkle 2.10.0](https://github.com/sparkle-project/Sparkle) 更新框架（MIT 及其第三方声明）和固定版本的 [Agent HUD Core](Vendor/AgentHUDOpen/README.md)（Apache-2.0）。Rive 与 Sparkle 首次构建时下载官方发布包并校验 SHA-256；Agent HUD Core 源码随仓库提供，用于 Codex / Claude 用量及会话接入。依赖就绪后可离线构建，不需要生成服务 API Key 或 Blender。更新发布流程与派生项目配置见 [应用更新](docs/updates.md)。
 
 ```sh
 git clone https://github.com/xiaoyan648/while-ai-works.git

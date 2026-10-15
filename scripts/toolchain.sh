@@ -41,3 +41,5 @@ fi
 rive_flags=(-F "$rive_frameworks" -framework RiveRuntime -Xlinker -rpath -Xlinker "$rive_frameworks")
 source "$task_root/scripts/build-agent-hud.sh"
 rive_flags+=("${agent_hud_flags[@]}")
+source "$task_root/scripts/sparkle.sh"
+rive_flags+=("${sparkle_flags[@]}" -Xlinker -rpath -Xlinker "$sparkle_root")

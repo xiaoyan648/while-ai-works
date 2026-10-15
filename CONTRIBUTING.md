@@ -26,6 +26,8 @@ bash scripts/package-release.sh
 
 Apple Silicon 上交叉编译的 Intel 应用位于 `dist/x86_64`。运行 x86_64 程序需要 Rosetta 或 Intel Mac；交叉编译通过不代表 Intel 真机验收。`package-release.sh` 同时生成 DMG、ZIP 与 SHA256SUMS.txt，校验两个辅助程序架构，并挂载 DMG 检查 Applications 快捷入口、应用逐文件一致性及签名。
 
+应用内更新采用 Sparkle。两种架构打包后运行 `bash scripts/generate-appcast.sh`，将签名清单与安装包一同上传 Release；具体流程、钥匙串签名账户和测试边界见 [应用更新](docs/updates.md)。
+
 ## 检查边界
 
 `check.sh` 和 `check-hooks.sh` 应顺序执行，它们共用 `.build/native`。原生渲染检查需要可用的 macOS 图形环境。测试使用隔离偏好域和临时 Hooks 目录；自动化协议测试不能代替每个 AI 客户端版本的真实任务验收。

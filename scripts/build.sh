@@ -5,7 +5,7 @@ xcrun swiftc "${swift_flags[@]}" -O -parse-as-library -emit-module -emit-library
     -module-name WhileCore Sources/WhileCore/*.swift \
     -emit-module-path "$build_dir/WhileCore.swiftmodule" -o "$build_dir/libWhileCore.a"
 xcrun swiftc "${swift_flags[@]}" -O -parse-as-library -I "$build_dir" -L "$build_dir" \
-    -lWhileCore "${agent_hud_flags[@]}" -F "$rive_frameworks" -framework RiveRuntime -Xlinker -rpath -Xlinker @executable_path/../Frameworks \
+    -lWhileCore "${agent_hud_flags[@]}" "${sparkle_flags[@]}" -F "$rive_frameworks" -framework RiveRuntime -Xlinker -rpath -Xlinker @executable_path/../Frameworks \
     Sources/WhileAIWorks/*.swift -o "$build_dir/WhileAIWorks"
 app_path="$task_root/dist/While AI Works.app"
 if [[ "$target_arch" != "$(uname -m)" ]]; then app_path="$task_root/dist/$target_arch/While AI Works.app"; fi
@@ -18,6 +18,7 @@ xcrun swiftc "${swift_flags[@]}" -O -parse-as-library "${agent_hud_flags[@]}" \
     scripts/AgentInteractionHook.swift Sources/WhileAIWorks/AgentInteractionJSON.swift -o "$app_path/Contents/Resources/while-ai-works-agent-interaction"
 codesign --force --sign - "$app_path/Contents/Resources/while-ai-works-agent-interaction"
 cp assets/Info.plist "$app_path/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set SUFeedURL https://github.com/xiaoyan648/while-ai-works/releases/latest/download/appcast-$target_arch.xml" "$app_path/Contents/Info.plist"
 cp -R Sources/WhileAIWorks/Resources/FishAssets "$app_path/Contents/Resources/"
 cp -R Sources/WhileAIWorks/Resources/AquariumAssets "$app_path/Contents/Resources/"
 cp -R Sources/WhileAIWorks/Resources/AgentMarks "$app_path/Contents/Resources/"
@@ -27,6 +28,9 @@ cp Vendor/AgentHUDOpen/LICENSE "$app_path/Contents/Resources/Licenses/AgentHUDOp
 mkdir -p "$app_path/Contents/Frameworks"
 rm -rf "$app_path/Contents/Frameworks/RiveRuntime.framework"
 ditto "$rive_frameworks/RiveRuntime.framework" "$app_path/Contents/Frameworks/RiveRuntime.framework"
+rm -rf "$app_path/Contents/Frameworks/Sparkle.framework"
+ditto "$sparkle_root/Sparkle.framework" "$app_path/Contents/Frameworks/Sparkle.framework"
+cp "$sparkle_root/LICENSE" "$app_path/Contents/Resources/Licenses/Sparkle-LICENSE.txt"
 # Keep editable JSON in the project; the app uses the validated binary streams.
 python3 - "$app_path/Contents/Resources/AquariumAssets" <<'PYASSETS'
 import hashlib, json, sys, shutil

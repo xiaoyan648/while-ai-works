@@ -7,6 +7,22 @@ import WhileCore
 struct AgentDockDataChecks {
     @MainActor static func main() throws {
         L10n.setLanguage(.zhHans)
+        let fixtureHome = URL(fileURLWithPath: "/fixture/User With Spaces")
+        let finderPath = "/usr/bin:/bin"
+        let extendedPath = AgentCommandEnvironment.searchPath(home: fixtureHome, inherited: finderPath)
+        let cli = fixtureHome.appendingPathComponent(".npm-global/bin/claude")
+        precondition(!ClaudeEngineLocator.candidates(home: fixtureHome, path: finderPath).contains(cli),
+                     "Finder's original PATH misses npm's custom user prefix")
+        precondition(ClaudeEngineLocator.candidates(home: fixtureHome, path: extendedPath).contains(cli),
+                     "GUI command discovery includes user npm installs without interpreting spaces as shell syntax")
+        precondition(extendedPath.hasPrefix(finderPath + ":") && !extendedPath.contains("::"))
+        precondition(AgentCommandEnvironment.searchPath(home: fixtureHome, inherited: extendedPath) == extendedPath,
+                     "preparing command discovery twice must not grow PATH")
+        AgentCommandEnvironment.configure()
+        if CommandLine.arguments.contains("--claude-path-probe") {
+            guard let executable = ClaudeEngineLocator.find() else { preconditionFailure("Claude command not found") }
+            print("Claude command discovered: \(executable.path)")
+        }
         let now = Date(), id = "00000000-0000-0000-0000-000000000001"
         let agent = AgentDescriptor(id: "codex", vendor: "Codex", model: "5 小时", source: "fixture", enabled: true)
         let session = LiveSession(id: id, agentId: "codex", task: "修改导航", terminal: "cat-hud", startedAt: now,

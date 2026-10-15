@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 import Combine
 
-final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemValidation {
     let state: AppState = {
         guard ProcessInfo.processInfo.environment["WHILE_AI_WORKS_CAT_PREVIEW"] == "1" else { return AppState() }
         // A runnable review build reads real local work state, but never changes
@@ -22,6 +22,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var panel: MenuBarPanelController!
     private var desktopPet: DesktopPetController!
     private var agentHub: AgentHubDataController!
+    private var updater: AppUpdater!
     private let mascot = MascotController()
     private let quickMenu = NSMenu()
     private var subscriptions: Set<AnyCancellable> = []
@@ -34,6 +35,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             NSApp.terminate(nil);return
         }
         NSApp.setActivationPolicy(.accessory)
+        AgentCommandEnvironment.configure()
+        updater = AppUpdater(state: state)
         DistributedNotificationCenter.default().addObserver(self,selector:#selector(showPanel),name:Notification.Name("whileaiworks.showSettings"),object:Bundle.main.bundleIdentifier)
         interactionShortcut = InteractionShortcut(state: state)
         overlay = DesktopOverlay(state: state)
@@ -54,6 +57,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }.store(in: &subscriptions)
         if DebugSnapshots.directory != nil { runSnapshots(); return }
         if ProcessInfo.processInfo.environment["WHILE_AI_WORKS_CAT_PREVIEW"] == "1" { return }
+        updater.start()
         // Greet with the panel so a first launch never looks like nothing happened.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in self?.showPanel() }
     }
@@ -86,6 +90,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let item = NSMenuItem()
         let appMenu = NSMenu()
         appMenu.addItem(withTitle: "关于 AI 干活时我们干什么", action: #selector(about), keyEquivalent: "")
+        add(appMenu, "检查更新…", #selector(checkForUpdates))
         add(appMenu, "设置…", #selector(showSettings), key: ",")
         add(appMenu, "渔获", #selector(showCollection), key: "y")
         appMenu.addItem(.separator())
@@ -142,7 +147,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(.separator())
         add(menu, "渔获…", #selector(showCollection))
         add(menu, "设置…", #selector(showSettings))
+        add(menu, "检查更新…", #selector(checkForUpdates))
         add(menu, "退出", #selector(quit), key: "q")
+    }
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(checkForUpdates) { return state.canCheckForUpdates }
+        return true
     }
 
     @discardableResult private func add(_ menu: NSMenu, _ title: String, _ action: Selector, key: String = "") -> NSMenuItem {
@@ -165,6 +176,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         panel.show(from: button)
     }
     @objc private func showSettings() { panel.close(); windows.showSettings() }
+    @objc private func checkForUpdates() { panel.close(); state.checkForUpdates() }
     @objc private func showCollection() { panel.close(); windows.showCollection() }
     @objc private func closeWindow() { NSApp.keyWindow?.performClose(nil) }
     @objc private func toggleDesktop() { state.desktopEnabled.toggle() }

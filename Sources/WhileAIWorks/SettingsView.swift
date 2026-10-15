@@ -220,6 +220,17 @@ struct SettingsView: View {
     private var about: some View {
         Section("关于") {
             LabeledContent("版本", value: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "开发版")
+            LabeledContent("软件更新") {
+                Button("检查更新…", action: state.checkForUpdates)
+                    .disabled(!state.canCheckForUpdates)
+                    .accessibilityIdentifier("check-for-updates")
+            }
+            Toggle("自动检查更新", isOn: Binding(get: { state.automaticallyChecksForUpdates },
+                                                   set: { state.setAutomaticUpdateChecks($0) }))
+                .accessibilityIdentifier("automatically-checks-for-updates")
+            if let date = state.lastUpdateCheck {
+                LabeledContent("上次检查") { Text(date, format: .dateTime.month().day().hour().minute()).foregroundStyle(.secondary) }
+            }
             LabeledContent("项目主页") {
                 Link("GitHub", destination: Self.projectURL)
             }
