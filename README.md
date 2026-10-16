@@ -19,11 +19,11 @@
 
 ## 视频演示
 
-[![57 秒认识 While AI Works：猫条、工作卡片与小猫陪玩，点击播放完整视频](images/promo-0.17.png)](https://github.com/xiaoyan648/while-ai-works/releases/download/v0.17.3/While-AI-Works-0.17-Promo.mp4)
+https://github.com/user-attachments/assets/db49fc4e-1adf-49a4-b173-da68e032c6b1
 
 <p align="center">
-  <a href="https://github.com/xiaoyan648/while-ai-works/releases/download/v0.17.3/While-AI-Works-0.17-Promo.mp4">▶ 观看 / 下载完整视频</a><br>
-  <sub>57 秒 · 1080p60 · 配乐、音效与小猫配音 · 会话与额度使用演示数据</sub>
+  <sub>57 秒 · 点击播放器直接观看 · 配乐、音效与小猫配音 · 会话与额度使用演示数据</sub><br>
+  <a href="https://github.com/xiaoyan648/while-ai-works/releases/download/v0.17.3/While-AI-Works-0.17-Promo.mp4">下载原画质视频 · 1080p60</a>
 </p>
 
 ## 主要功能
