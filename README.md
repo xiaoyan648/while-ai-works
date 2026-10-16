@@ -1,144 +1,119 @@
-# AI 干活时我们干什么
+<h1 align="center">While AI Works</h1>
 
-**AI 负责写代码，我负责不闲着。**
+<p align="center"><strong>AI 干活时我们干什么</strong></p>
 
-某天下午，我把需求交给了 Codex。它开始看代码、改文件、跑测试。我盯着屏幕，突然发现自己没什么事可干了。
+<p align="center">
+  一只住在 Mac 桌面的小猫，帮你留意 AI 的工作，也陪你打发等待。<br>
+  收成猫条，看会话、查额度、处理提问与授权；展开来，陪你擦污渍、捏气泡、敲木鱼、钓鱼。
+</p>
 
-于是，我给自己找了份新工作。
+<p align="center">
+  <a href="https://github.com/xiaoyan648/while-ai-works/releases/latest"><strong>下载 Mac 版</strong></a> ·
+  <a href="#视频演示">视频演示</a> ·
+  <a href="#主要功能">主要功能</a> ·
+  <a href="#最近迭代">最近迭代</a> ·
+  <a href="#下载开玩">安装指南</a>
+</p>
 
-我做了个监听 Codex 工作的小工具。它一开工，桌面就开始长污渍，我拿着小抹布去擦。它解决代码里的问题，我解决屏幕上的问题。
+<p align="center"><sub>macOS 14+ · Apple Silicon / Intel · Swift 原生应用</sub></p>
 
-从程序员转岗桌面保洁，只用了一个下午。
+## 视频演示
 
-**但我没有离开项目，只是换了个部门。**
+[![57 秒认识 While AI Works：猫条、工作卡片与小猫陪玩，点击播放完整视频](images/promo-0.17.png)](https://github.com/xiaoyan648/while-ai-works/releases/download/v0.17.3/While-AI-Works-0.17-Promo.mp4)
 
-后来，部门逐渐扩张：捏气泡、敲木鱼，以及最重要的——钓鱼。选了「跟随 AI」，它开工，鱼才开始来；它忙得越起劲，水面就越热闹。
+<p align="center">
+  <a href="https://github.com/xiaoyan648/while-ai-works/releases/download/v0.17.3/While-AI-Works-0.17-Promo.mp4">▶ 观看 / 下载完整视频</a><br>
+  <sub>57 秒 · 1080p60 · 配乐、音效与小猫配音 · 会话与额度使用演示数据</sub>
+</p>
 
-以前盯着 AI 干活，是怕它出错。现在盯着 AI 干活，是怕它提前下班。
+## 主要功能
 
-毕竟这边刚上鱼。
+### 贴边猫条，AI 的进度抬眼可见
 
-如今也能跟随 Claude Code、Qoder 和 WorkBuddy。无论哪个 Agent 在埋头工作，人类这边总有点事忙。
+小猫收成屏幕边缘的一条工作台。悬停预览，点击固定卡片；需要你处理的请求排在前面。
 
-**主打一个：人和 AI 都有事做。**
+- **会话与回复**：查看工作状态和最近会话，按可用入口回到原会话；回复预览可在设置中开启。
+- **提问与授权**：接入 Codex / Claude Code 的交互监听后，在卡片里回答问题、审阅操作并决定是否允许。只有你主动提交，选择才会送回原客户端。
+- **额度与 Token**：查看 Codex / Claude 的账户剩余额度、重置时间，以及本机最近会话的 Token 用量和缓存命中率。
+- **四边停靠**：拖到屏幕任意一边，横竖自动切换；支持浅色、深色，以及悬浮或贴边形态。
 
-v0.16.0 还给人类这边添了一位同事：小猫住在桌面，帮你留意 AI 的工作状态，也陪你擦污渍、捏气泡、敲木鱼。钓到鱼，它会举起来一起庆祝。
+<img src="images/0.17-cat-dock-approval.png" alt="演示数据：猫条中的 Claude 工具授权卡片，先审阅命令，再选择拒绝或允许一次" width="960">
 
-v0.17.0 新增「猫条」：小猫可以收成屏幕边缘的 AI 工作台，留意会话、查看额度，在对应卡片处理提问与授权。猫条与宠物模式可在设置中切换。
+[查看额度界面](images/0.17-cat-dock-quota.png) · [查看停靠形态](images/0.17-cat-dock-edges.png) · [猫条与工作卡片详解](docs/cat-dock.md)
 
-<img src="images/cat-dock-0.17.0.png" alt="猫条与额度卡片示例，使用演示数据" width="480">
+### 桌面小猫，陪你一起等
 
-猫条界面示例，账户与会话均为演示数据。
+切到「宠物」模式，小猫就自由地住在桌面上。工作时陪着你，空闲时打个盹，钓到鱼时举起小鱼一起庆祝。
 
-## 57 秒，看小猫收成一条
+- 拖动换位置，点击摸摸；墨 / 雪两种毛色和三种尺寸可选。
+- 猫爪压布擦污渍、肉垫捏气泡、握槌敲木鱼，陪你一起玩。
+- 收起小游戏，小猫仍能独立关注 AI；猫条与宠物模式可随时切换。
 
-猫条、工作卡片、提问与授权、额度与 Token，以及猫爪小游戏和举鱼庆祝，都在这支 v0.17 宣传片里。小猫还会叽里咕噜地跟你说话。
+### 四种小游戏，给人类安排点事
 
-[![v0.17 宣传片：猫条与工作卡片，点击查看完整视频](images/promo-0.17.png)](https://github.com/xiaoyan648/while-ai-works/releases/download/v0.17.3/While-AI-Works-0.17-Promo.mp4)
+选「跟随 AI」，Codex、Claude Code、Qoder、WorkBuddy 开工时，桌面也跟着热闹；选「随时开启」，想玩就玩。
 
-[查看 / 下载完整宣传片 · 57 秒 · 1080p60 · 含配乐、音效与小猫配音](https://github.com/xiaoyan648/while-ai-works/releases/download/v0.17.3/While-AI-Works-0.17-Promo.mp4)
+<img src="images/0.17-games-with-cat.png" alt="小猫陪玩的四种桌面小游戏：擦污渍、捏气泡、敲木鱼和钓鱼" width="960">
 
-**提问和授权，就地处理 · 看清命令再决定，不点就不批**
+| 玩法 | 人类这边的工作 |
+| --- | --- |
+| **擦污渍** | AI 埋头写代码，你拿起小抹布，把桌面擦干净。 |
+| **捏气泡** | 点一下捏一个，划过去捏一排。 |
+| **敲木鱼** | 代码它来写，功德你来补。AI 工作时每 5 秒 −1，你敲一下 +1。 |
+| **钓鱼与收藏** | 蓄力抛竿、等鱼咬钩、提竿收鱼；累计鱼获解锁四阶钓竿，收集尺寸奖牌与鱼种图鉴。 |
 
-<img src="images/0.17-cat-dock-approval.png" alt="猫条工作卡片中的 Claude 工具授权请求，小猫提示是否批准" width="960">
+钓到的鱼还能放进水下世界，慢慢看它们游。首次开启水下观赏时按需下载鱼缸资源，之后可离线使用；鱼获、图鉴和纪录都保存在自己的 Mac 上。
 
-**额度和 Token，心里有数 · 剩余额度、重置时间、缓存命中率**
+## 最近迭代
 
-<img src="images/0.17-cat-dock-quota.png" alt="猫条额度页签：当前会话与每周额度、Token 用量和缓存命中率" width="960">
+| 版本 | 这次带来了什么 |
+| --- | --- |
+| [**0.17.3**](docs/releases/0.17.3.md) | **更轻的安装包**：鱼缸资源改为按需下载；工作卡片更宽敞，运行中的 Agent 图标更清晰。 |
+| [**0.17.2**](docs/releases/0.17.2.md) | **回到原会话**：修复会话跳转入口，Claude 终端会话可复制恢复命令。 |
+| [**0.17.1**](docs/releases/0.17.1.md) | **应用内更新**：新增签名更新检查，修复从 Finder 启动时的 Claude 命令检测。 |
+| [**0.17.0**](docs/releases/0.17.0.md) | **小猫收成一条**：加入贴边猫条、工作卡片、提问与授权，以及额度和 Token 展示。 |
 
-**四边停靠，浅色或墨黑 · 拖到屏幕任意一边，横竖自动切换**
-
-<img src="images/0.17-cat-dock-edges.png" alt="浅色猫条分别停靠在屏幕右侧和底部" width="960">
-
-视频与截图中的会话、额度均为演示数据，不包含真实任务内容。
-
-## 人类这边的工作现场
-
-**配置页面 · 给自己安排一个岗位**
-
-玩法、声音、快捷键，以及今天的渔业成果，都在这里。
-
-<img src="images/settings.png" alt="配置页面 · 给自己安排一个岗位" width="720">
-
-**钓鱼 · 等 AI 开工，也等鱼上钩**
-
-Agent 还没开工，渔业部先把竿架好。
-
-<img src="images/fishing.png" alt="钓鱼 · 等 AI 开工，也等鱼上钩" width="960">
-
-**擦污渍 · 从程序员转岗桌面保洁**
-
-它埋头写代码，我顺手擦桌面。谁也没闲着。
-
-<img src="images/wipe.png" alt="擦污渍 · 从程序员转岗桌面保洁" width="960">
-
-**敲木鱼 · 代码它来写，功德你来补**
-
-代码那边还在跑，人类这边也有自己的进度条。
-
-<img src="images/woodfish.png" alt="敲木鱼 · 代码它来写，功德你来补" width="520">
-
-## 给自己找点事做
-
-- **桌面保洁**：拿起小抹布，把 AI 干活时冒出来的污渍擦干净。
-- **气泡解压**：点一下，捏一个；划过去，捏一排。
-- **精神支持**：AI 工作时木鱼数值每 5 秒 −1，你敲一下 +1。代码它来写，功德你来补。
-- **渔业生产**：蓄力抛竿，等鱼咬钩，提竿收鱼。它越忙，来鱼越勤。
-- **钓竿成长**：累计钓获解锁青竹、听雨、逐浪、沧澜四阶钓竿，更大的判定块带来更多容错。
-- **奖牌与成就**：按鱼种尺寸收集银牌、金牌，挑战首次金牌和全金牌图鉴；历史鱼获自动继承。
-- **下班观赏**：钓到的鱼有自己的图鉴和纪录，也能放进水下世界，慢慢看它们游。首次开启水下观赏时提示下载鱼缸资源，下载后可离线使用。
-- **桌面小猫**：在菜单栏右上角开启「桌面猫」，小猫会独立常驻，显示 Codex、Claude Code、Qoder、WorkBuddy 各自的工作状态。拖动可移动，点击可摸摸，右键可收起状态卡或小猫；位置与开关会记住。收起小游戏不影响小猫关注 AI。工作详情默认收起为会话数字气泡，点击展开；设置里可选小、中、大三种尺寸。
-- **小猫陪玩**：猫爪压布擦污渍、肉垫捏气泡、握槌敲木鱼；钓到鱼后，小猫在钓鱼区域上方举起卡通小鱼庆祝，并播放轻柔的收获音效。
-
-想自己安静玩一会儿，也可以选「随时开启」。不必等 AI 上班。
+[查看全部版本与下载](https://github.com/xiaoyan648/while-ai-works/releases) · [0.16.0：桌面小猫与陪玩](docs/releases/0.16.0.md)
 
 ## 下载开玩
 
-[下载 Mac 版 · 0.17.3](https://github.com/xiaoyan648/while-ai-works/releases/tag/v0.17.3)
+**[下载最新 Mac 版](https://github.com/xiaoyan648/while-ai-works/releases/latest)** · 需要 macOS 14 或更新版本，暂不支持 Windows。
 
-适用于 **macOS 14 或更新版本**，请按芯片选择安装包：
+| 你的 Mac | 选择安装包 |
+| --- | --- |
+| M 系列（Apple Silicon） | 文件名带 `arm64` 的 `.dmg` |
+| Intel | 文件名带 `x86_64` 的 `.dmg` |
 
-- **M 系列 Mac**：下载文件名带 `arm64` 的 DMG。
-- **Intel Mac**：下载文件名带 `x86_64` 的 DMG。
-
-Intel 包已通过 Rosetta 下的运行与资源检查，尚未完成 Intel 真机验收。暂不支持 Windows。
-
-1. 下载对应芯片的 `.dmg`，打开后将 **While AI Works.app** 拖到 **Applications（应用程序）**。升级前先退出旧版，再替换应用；原有设置和鱼获保留。也提供 ZIP。
-2. 打开应用，点菜单栏里的小猫，打开「开始玩」，选一种玩法。
+1. 打开 DMG，将 **While AI Works.app** 拖入 **Applications（应用程序）**。升级前先退出旧版，再替换应用；原有设置和鱼获保留。也提供 ZIP。
+2. 打开应用，点菜单栏里的小猫，在「开始玩」中选一种玩法。
 3. 按 **⌘⇧空格** 随时收起桌面效果，回去看看 AI 干得怎么样。
 
-如果首次打开被系统拦住，确认是从本仓库下载后，在「系统设置 → 隐私与安全性」中选择「仍要打开」。也可参照 [Apple 的操作说明](https://support.apple.com/zh-cn/102445)。
+<details>
+<summary>首次打开、应用内更新与 Intel 支持</summary>
 
-0.17.1 起可在「设置 → 关于」或菜单栏右键菜单中「检查更新」，也可关闭自动检查。默认由用户确认安装，更新清单与安装包均验证签名。0.17.0 及更早版本需先手动安装本版一次。Sparkle 更新签名不代替 Apple 公证，当前安装包仍为 ad-hoc 签名。
+如果首次打开被系统拦住，确认是从本仓库下载后，在「系统设置 → 隐私与安全性」中选择「仍要打开」，也可参照 [Apple 的操作说明](https://support.apple.com/zh-cn/102445)。当前安装包使用 ad-hoc 签名，尚无 Developer ID 签名或 Apple 公证。
 
-## 和你的 AI 一起上班
+0.17.1 起可在「设置 → 关于」或菜单栏右键菜单中「检查更新」，也可关闭自动检查。默认由用户确认安装，更新清单与安装包均验证签名。0.17.0 及更早版本需先手动安装一次。Sparkle 更新签名不代替 Apple 公证。
 
-在「设置 → 跟随 AI」的「什么时候」里选择「跟随 AI 工作」，勾选 **Codex、Claude Code、Qoder、WorkBuddy**，支持多选，默认全选。
+Intel 包已通过 Rosetta 下的运行与资源检查，尚未完成 Intel 真机验收。
 
-Codex 可直接跟随。Claude Code / Qoder / WorkBuddy 首次使用需要在同一处点击对应客户端的「安装监听」，再重启对应客户端；如果客户端弹出配置确认，按提示启用即可。
+</details>
 
-可以同时跟随多个客户端。只要还有一个会话在工作，玩法就会跟着变化；最后一个结束后，剩下的可以继续玩。木鱼扣减不会因多个客户端同时工作而翻倍。
+### 连接你的 AI
 
-[连接与使用说明](INTEGRATIONS.md) · [猫条与工作卡片](docs/cat-dock.md)
+在「设置 → 跟随 AI」中选择「跟随 AI 工作」，勾选想关注的客户端，支持多选。
 
-## 放心摸鱼
+**Codex** 可直接跟随工作状态；**Claude Code / Qoder / WorkBuddy** 首次需要点击对应的「安装监听」，再重启客户端。提问与授权另外通过「安装交互监听」接入 Codex / Claude Code，具体支持范围见 [连接与使用说明](INTEGRATIONS.md)。
 
-不需要注册本应用账号，不读取桌面画面。鱼获、图鉴和累计记录都留在自己的 Mac 上。启用工作卡片后，可在本机内存中预览已关注客户端的回复，默认关闭，可在设置中开启；账户额度由已登录的官方客户端查询。只有你主动提交时，回答或权限选择才通过原客户端送回对应会话。应用不把对话或代码上传到独立服务。
+多个客户端同时工作时，只要还有一个会话在运行，玩法就会跟着变化。Qoder / WorkBuddy 的连接仍需更多真实使用反馈；状态没跟上时，可先切回「随时开启」。
 
-应用住在菜单栏里：点小猫打开面板，右键打开快捷菜单。它在等你、陪你玩、盯着浮漂，AI 没开工时会打个盹；钓到鱼会跳起来，点它会蹭蹭你。显示屏幕、音量、自动轮换、快捷键和小猫毛色（墨 / 雪）都在「设置」里，支持深色模式。
+## 数据留在自己的 Mac
 
-## 一起养这个小玩具
-
-Qoder / WorkBuddy 的连接还需要更多真实使用反馈；如果状态没跟上，可以先切回「随时开启」。
-
-遇到问题或想到好玩的新玩法，欢迎 [来聊聊](https://github.com/xiaoyan648/while-ai-works/issues)。描述一下你用的 Mac、AI 客户端，以及发生了什么就好，不用贴私人对话或代码。
+不需要注册本应用账号，不读取桌面画面，也不把对话或代码上传到独立服务。回复预览默认关闭，开启后仅在本机内存中展示；账户额度通过已登录的官方客户端查询。只有你主动提交，回答或权限选择才会送回对应会话。
 
 ## 源码与构建
 
-本项目代码采用 [MIT License](LICENSE) 开源，第三方目录保留其原许可。欢迎阅读、修改和贡献。
-图片、纹理、三维模型和品牌素材的来源与许可范围见 [资源说明](ASSETS.md)，这些素材不属于代码的 MIT 授权范围。
-
-需要 macOS 14+、Apple Command Line Tools（Swift 6.1+）和 Python 3。第三方依赖包括 [Rive](https://github.com/rive-app/rive-ios) 运行时（MIT）、[Sparkle 2.10.0](https://github.com/sparkle-project/Sparkle) 更新框架（MIT 及其第三方声明）和固定版本的 [Agent HUD Core](Vendor/AgentHUDOpen/README.md)（Apache-2.0）。Rive 与 Sparkle 首次构建时下载官方发布包并校验 SHA-256；Agent HUD Core 源码随仓库提供，用于 Codex / Claude 用量及会话接入。依赖就绪后可离线构建，不需要生成服务 API Key 或 Blender。更新发布流程与派生项目配置见 [应用更新](docs/updates.md)。
+需要 macOS 14+、Apple Command Line Tools（Swift 6.1+）和 Python 3。
 
 ```sh
 git clone https://github.com/xiaoyan648/while-ai-works.git
@@ -147,21 +122,10 @@ bash scripts/build.sh
 open "dist/While AI Works.app"
 ```
 
-构建脚本生成完整应用和 Hooks 辅助程序，并使用本地 ad-hoc 签名。构建结果没有 Developer ID 签名或公证。
+首次构建下载并校验 Rive 与 Sparkle 官方依赖，Agent HUD Core 源码随仓库提供。构建结果使用本地 ad-hoc 签名；依赖就绪后可离线构建，无需生成服务 API Key 或 Blender。
 
-```sh
-# 核心玩法、音效、交互、鱼模型和图鉴检查
-bash scripts/check.sh
-# Hooks 协议、配置安装/移除与监听集成检查
-bash scripts/check-hooks.sh
-# 检查已构建的真实 Hooks 辅助程序
-python3 Tests/HookExecutableChecks.py
-# 生成工具的离线请求测试，不调用生成服务
-python3 Tests/test_volcengine_asset.py
-# 菜单栏面板、设置和收藏窗口的离屏渲染（浅色 / 深色），输出到 .build/ui-review
-bash scripts/check-ui.sh
-```
+[开发与检查](CONTRIBUTING.md) · [应用更新](docs/updates.md) · [小猫制作](design/mascot/README.md) · [这个小玩具的由来](docs/product-story.md)
 
-小猫的 Rive 源文件在 `design/mascot`，制作与修改方法见 [小猫说明](design/mascot/README.md)。
+代码采用 [MIT License](LICENSE)，第三方目录保留原许可；图片、纹理、三维模型和品牌素材的授权范围见 [资源说明](ASSETS.md)。
 
-更多目录说明、Intel 构建与打包方法见 [开发说明](CONTRIBUTING.md)。
+遇到问题或想到新玩法，欢迎 [提个 Issue](https://github.com/xiaoyan648/while-ai-works/issues)，告诉我们你的 Mac、AI 客户端和发生了什么。

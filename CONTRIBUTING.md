@@ -1,6 +1,29 @@
 # 开发说明
 
-先按 [README](README.md#源码与构建) 构建与运行检查，再提交改动。请描述可复现的问题、改动行为和实际验证范围；不要提交客户端私人日志、对话、凭据或生成服务临时下载地址。
+先按 [README](README.md#源码与构建) 构建，再运行下方检查。提交改动时请描述可复现的问题、改动行为和实际验证范围；不要提交客户端私人日志、对话、凭据或生成服务临时下载地址。
+
+## 构建依赖
+
+需要 macOS 14+、Apple Command Line Tools（Swift 6.1+）和 Python 3。第三方依赖包括 [Rive](https://github.com/rive-app/rive-ios) 运行时（MIT）、[Sparkle 2.10.0](https://github.com/sparkle-project/Sparkle) 更新框架（MIT 及其第三方声明）和固定版本的 [Agent HUD Core](Vendor/AgentHUDOpen/README.md)（Apache-2.0）。Rive 与 Sparkle 首次构建时下载官方发布包并校验 SHA-256；Agent HUD Core 源码随仓库提供，用于 Codex / Claude 用量及会话接入。
+
+依赖就绪后可离线构建，不需要生成服务 API Key 或 Blender。构建脚本生成完整应用和 Hooks 辅助程序，并使用本地 ad-hoc 签名；构建结果没有 Developer ID 签名或公证。更新发布流程与派生项目配置见 [应用更新](docs/updates.md)。
+
+## 运行检查
+
+```sh
+# 核心玩法、音效、交互、鱼模型和图鉴检查
+bash scripts/check.sh
+# Hooks 协议、配置安装/移除与监听集成检查
+bash scripts/check-hooks.sh
+# 检查已构建的真实 Hooks 辅助程序
+python3 Tests/HookExecutableChecks.py
+# 生成工具的离线请求测试，不调用生成服务
+python3 Tests/test_volcengine_asset.py
+# 菜单栏面板、设置和收藏窗口的离屏渲染（浅色 / 深色），输出到 .build/ui-review
+bash scripts/check-ui.sh
+```
+
+请按顺序执行。专项检查与运行环境限制见下方「检查边界」。
 
 ## 目录
 
