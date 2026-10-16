@@ -39,7 +39,7 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
 
 应用采用 ad-hoc 签名，尚无 Developer ID 签名或 Apple 公证。更新包和更新清单验证 Ed25519 签名；首次安装可能需要在 macOS「隐私与安全性」中允许打开。
 ]]></description>
-            <enclosure url="https://github.com/xiaoyan648/while-ai-works/releases/download/v0.17.3/While-AI-Works-0.17.3-macOS-x86_64.zip" length="32244774" type="application/octet-stream" sparkle:edSignature="KuoI2JHgMLclC1kXIZ1V2WIRfiMyIGKNlEtsWyAix8UVj8dyv/73QvyKniFkmvrDhWwYtYHb8GRq2nOPSfGSBQ=="/>
+            <enclosure url="https://github.com/xiaoyan648/while-ai-works/releases/download/v0.17.3/While-AI-Works-0.17.3-macOS-x86_64.zip" length="32244661" type="application/octet-stream" sparkle:edSignature="vwUnSYoaYXsTMyWykV9AzTDBq13yPRO+kKPEy6S3xfq7nHRU8WyUTpYlj4QpPAnm1vm7Vl7XjqvbCC05kVVNBw=="/>
         </item>
         <item>
             <title>0.17.2</title>
@@ -111,6 +111,6 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: cC26csspjQDWCy8wAlkJeRZN917pmcCTIlleKKN5Da0nIosrT0msYexwsGkzs5VmeoiBWFcp/iV2qHCjxszwBw==
+edSignature: b0vUVXEjYGrXmFF5aHejYvGDdF7iTmlvawIyqFdhdXHt/aYTaXHUKQem6KNCZkyf0KqXMVDjp68YSmrBJW21Dw==
 length: 7536
 -->
