@@ -44,6 +44,16 @@ private final class LocalTestTrust: NSObject, URLSessionDelegate {
         precondition(!AquariumPackInstaller.isInstalled(pack, in: cache))
         _ = try AquariumPackInstaller.install(archive, manifest: pack, in: cache)
         precondition(AquariumPackInstaller.isInstalled(pack, in: cache), "an incomplete cache can be repaired")
+        let realCache = fixture.appendingPathComponent("cache-target")
+        let aliasCache = fixture.appendingPathComponent("cache-alias")
+        try fm.createDirectory(at: realCache, withIntermediateDirectories: true)
+        try fm.createSymbolicLink(at: aliasCache, withDestinationURL: realCache)
+        _ = try AquariumPackInstaller.install(archive, manifest: pack, in: aliasCache)
+        precondition(AquariumPackInstaller.isInstalled(pack, in: realCache), "installation through a symlink uses canonical paths for inventory validation")
+        let systemTemporaryCache = fm.temporaryDirectory.appendingPathComponent("AquariumInstallCheck-" + UUID().uuidString)
+        defer { try? fm.removeItem(at: systemTemporaryCache) }
+        _ = try AquariumPackInstaller.install(archive, manifest: pack, in: systemTemporaryCache)
+        precondition(AquariumPackInstaller.isInstalled(pack, in: systemTemporaryCache), "the macOS /var and /private/var alias must not change the file inventory")
         reject { _ = try AquariumPackInstaller.install(archive, manifest: manifest(files: [.init(path: "different.png", bytes: original.installedBytes, sha256: original.files[0].sha256)]), in: fixture.appendingPathComponent("wrong-files")) }
         let cancelled = Task.detached { withUnsafeCurrentTask { $0?.cancel() }; return try AquariumPackInstaller.install(archive, manifest: pack, in: fixture.appendingPathComponent("cancelled-install")) }
         do { _ = try await cancelled.value; fatalError("cancelled install succeeded") } catch is CancellationError {}

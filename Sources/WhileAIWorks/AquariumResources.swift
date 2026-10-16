@@ -132,15 +132,18 @@ enum AquariumPackInstaller {
         let assets = staging.appendingPathComponent("AquariumAssets")
         let expected = Set(manifest.files.map(\.path))
         var actual = Set<String>()
-        guard let entries = manager.enumerator(at: assets, includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey, .isDirectoryKey]) else {
+        // Relative enumeration avoids Foundation's /var vs /private/var aliases.
+        // Trimming absolute URL prefixes can incorrectly reject complete packs.
+        guard let entries = manager.enumerator(atPath: assets.path) else {
             throw AquariumPackError.incomplete
         }
-        for case let file as URL in entries {
+        for case let relative as String in entries {
+            let file = assets.appendingPathComponent(relative)
             let info = try file.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .isDirectoryKey])
             guard info.isSymbolicLink != true else { throw AquariumPackError.incomplete }
             if info.isDirectory == true { continue }
             guard info.isRegularFile == true else { throw AquariumPackError.incomplete }
-            actual.insert(String(file.path.dropFirst(assets.path.count + 1)))
+            actual.insert(relative)
         }
         guard actual == expected else { throw AquariumPackError.incomplete }
         for file in manifest.files {
