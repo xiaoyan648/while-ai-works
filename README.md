@@ -30,15 +30,27 @@ v0.17.0 新增「猫条」：小猫可以收成屏幕边缘的 AI 工作台，�
 
 猫条界面示例，账户与会话均为演示数据。
 
-## 45 秒，看小猫陪你上班
+## 57 秒，看小猫收成一条
 
-新版 UI、桌面小猫、AI 运行监控，以及猫爪小游戏和举鱼庆祝，都在这支 v0.16.0 宣传片里。
+猫条、工作卡片、提问与授权、额度与 Token，以及猫爪小游戏和举鱼庆祝，都在这支 v0.17 宣传片里。小猫还会叽里咕噜地跟你说话。
 
-[![v0.16.0 宣传片：小猫举鱼庆祝，点击查看完整视频](images/promo-0.16.0.png)](https://github.com/xiaoyan648/while-ai-works/releases/download/v0.16.0/While-AI-Works-0.16.0-Promo.mp4)
+[![v0.17 宣传片：猫条与工作卡片，点击查看完整视频](images/promo-0.17.png)](https://github.com/xiaoyan648/while-ai-works/releases/download/v0.17.3/While-AI-Works-0.17-Promo.mp4)
 
-[查看 / 下载完整宣传片 · 45 秒 · 1080p · 含配乐与音效](https://github.com/xiaoyan648/while-ai-works/releases/download/v0.16.0/While-AI-Works-0.16.0-Promo.mp4)
+[查看 / 下载完整宣传片 · 57 秒 · 1080p60 · 含配乐、音效与小猫配音](https://github.com/xiaoyan648/while-ai-works/releases/download/v0.17.3/While-AI-Works-0.17-Promo.mp4)
 
-视频中的工作状态使用演示会话，不包含真实任务内容。
+**提问和授权，就地处理 · 看清命令再决定，不点就不批**
+
+<img src="images/0.17-cat-dock-approval.png" alt="猫条工作卡片中的 Claude 工具授权请求，小猫提示是否批准" width="960">
+
+**额度和 Token，心里有数 · 剩余额度、重置时间、缓存命中率**
+
+<img src="images/0.17-cat-dock-quota.png" alt="猫条额度页签：当前会话与每周额度、Token 用量和缓存命中率" width="960">
+
+**四边停靠，浅色或墨黑 · 拖到屏幕任意一边，横竖自动切换**
+
+<img src="images/0.17-cat-dock-edges.png" alt="浅色猫条分别停靠在屏幕右侧和底部" width="960">
+
+视频与截图中的会话、额度均为演示数据，不包含真实任务内容。
 
 ## 人类这边的工作现场
 
