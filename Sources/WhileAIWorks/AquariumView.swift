@@ -27,7 +27,12 @@ struct AquariumView: View {
     @State private var selected: String?
     @State private var replacement: String?
     @ObservedObject var presentation: AquariumPresentation
+    @ObservedObject private var resources = AquariumResourceDownload.shared
     var body: some View {
+        if resources.isReady { content }
+        else { AquariumResourcePrompt(resources: resources) }
+    }
+    private var content: some View {
         VStack(alignment: .leading, spacing: 14) {
             AquariumCanvas(state: state, presentation: presentation) { selected = $0 }
                 .frame(minHeight: 320).frame(maxHeight: 420)

@@ -27,6 +27,7 @@ struct FishingGuide: View {
     }
     @State var section: Section? = .book
     @StateObject private var presentation = AquariumPresentation.shared
+    @StateObject private var aquariumResources = AquariumResourceDownload.shared
 
     var body: some View {
         NavigationSplitView {
@@ -227,6 +228,7 @@ struct FishingGuide: View {
         page("水下观赏", subtitle: "只留每种最大的那一条；移出不丢纪录，更大鱼获会自动更新。") {
             Button { presentation.open() } label: { Label("独立窗口观赏", systemImage: "arrow.up.left.and.arrow.down.right") }
                 .help("打开水下观赏").accessibilityLabel("打开水下观赏")
+                .disabled(!aquariumResources.isReady)
         } content: {
             AquariumView(state: state, presentation: presentation)
         }

@@ -92,13 +92,9 @@ final class Aquarium3DScene {
         camera.camera?.exposureOffset = -0.1
         do {
             navigation = AquariumNavigation(field:AquariumCollisionField(positions:[],indices:[]))
-            #if SWIFT_PACKAGE
-            let resources = Bundle.module.resourceURL!
-            #else
-            let resources = Bundle.main.resourceURL!
-            #endif
+            guard let resources = AquariumResources.directory else { throw AquariumPackError.unavailable }
             struct Envelope: Decodable { let radius: Float; let spheres: [AquariumBall] }
-            let safety = try JSONDecoder().decode([String: Envelope].self, from: Data(contentsOf: resources.appendingPathComponent("AquariumAssets/fish-envelopes.json")))
+            let safety = try JSONDecoder().decode([String: Envelope].self, from: Data(contentsOf: resources.appendingPathComponent("fish-envelopes.json")))
             envelopes = safety.mapValues(\.radius); collisionShapes = safety.mapValues(\.spheres)
         } catch { assetError = "水下资源加载失败" }
         addTank()
@@ -114,13 +110,8 @@ final class Aquarium3DScene {
         let file: AquariumMeshFile
         if let cached = Self.meshCache[name] { file = cached }
         else {
-            #if SWIFT_PACKAGE
-            let root = Bundle.module.resourceURL
-            #else
-            let root = Bundle.main.resourceURL
-            #endif
-            guard let root else { throw CocoaError(.fileNoSuchFile) }
-            file = try JSONDecoder().decode(AquariumMeshFile.self, from: Data(contentsOf: root.appendingPathComponent("AquariumAssets/Models/\(name).json")))
+            guard let root = AquariumResources.directory else { throw AquariumPackError.unavailable }
+            file = try JSONDecoder().decode(AquariumMeshFile.self, from: Data(contentsOf: root.appendingPathComponent("Models/\(name).json")))
             guard file.version == 1 else { throw CocoaError(.fileReadCorruptFile) }
             Self.meshCache[name] = file
         }

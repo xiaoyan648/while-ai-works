@@ -31,18 +31,27 @@ import AgentHUDCore
         if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             check(active.count == 1, "only the working logo animates")
             let logoLayer = active[0].layer!.sublayers!.first!
-            check(logoLayer.anchorPoint == CGPoint(x: 0.5, y: 0.5), "logo breathing stays centered")
-            let firstScale = logoLayer.presentation()?.transform.m11
-            settle(0.3)
-            let nextScale = logoLayer.presentation()?.transform.m11
-            check(firstScale != nil && nextScale != nil && abs(firstScale! - nextScale!) > 0.001,
-                  "the visible compositor advances the logo, not only an animation registration")
+            check(logoLayer.anchorPoint == CGPoint(x: 0.5, y: 0.5), "logo motion stays centered")
+            var scales: [CGFloat] = [], angles: [CGFloat] = []
+            for _ in 0..<20 {
+                settle(0.1)
+                guard let frame = logoLayer.presentation() else { continue }
+                scales.append(hypot(frame.transform.m11, frame.transform.m12))
+                angles.append(atan2(frame.transform.m12, frame.transform.m11))
+                check(frame.position == logoLayer.position, "activity never moves the logo's center or hit target")
+            }
+            check(scales.count >= 16 && scales.max()! - scales.min()! > 0.08,
+                  "the visible logo has a noticeable breathing range")
+            check(angles.count >= 16 && angles.max()! > 0.15 && angles.min()! < -0.15,
+                  "the visible compositor rocks the logo in both directions")
             active[0].configure(source: .codex, dark: true, working: true, reduceMotion: true)
             check(!active[0].isAnimating, "reduced motion leaves a static logo")
+            check(CATransform3DIsIdentity(logoLayer.transform), "reduced motion restores an upright, full-size logo")
             active[0].configure(source: .codex, dark: true, working: true, reduceMotion: false)
             check(active[0].isAnimating)
             active[0].configure(source: .codex, dark: true, working: false, reduceMotion: false)
             check(!active[0].isAnimating, "completion stops the logo animation")
+            check(CATransform3DIsIdentity(logoLayer.transform), "completion leaves no rotation or scale behind")
             active[0].configure(source: .codex, dark: true, working: true, reduceMotion: false)
         } else { check(active.isEmpty) }
         let longReply = "已完成猫条交互与布局调整。详细检查覆盖多种状态，以及窗口切换、键盘焦点和原会话同步。Mixed English 👩🏽‍💻 内容会按真实文字宽度截断，不留额外按钮列。"

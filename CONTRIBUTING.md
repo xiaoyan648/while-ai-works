@@ -28,6 +28,8 @@ Apple Silicon 上交叉编译的 Intel 应用位于 `dist/x86_64`。运行 x86_6
 
 应用内更新采用 Sparkle。两种架构打包后运行 `bash scripts/generate-appcast.sh`，将签名清单与安装包一同上传 Release；具体流程、钥匙串签名账户和测试边界见 [应用更新](docs/updates.md)。
 
+鱼缸模型与纹理按需下载，不再放入主应用。资源包构建、独立版本、缓存和发布顺序见 [鱼缸资源](docs/aquarium-resources.md)；应先发布资源包，再发布引用它的应用。
+
 ## 检查边界
 
 `check.sh` 和 `check-hooks.sh` 应顺序执行，它们共用 `.build/native`。原生渲染检查需要可用的 macOS 图形环境。测试使用隔离偏好域和临时 Hooks 目录；自动化协议测试不能代替每个 AI 客户端版本的真实任务验收。
@@ -40,6 +42,8 @@ Apple Silicon 上交叉编译的 Intel 应用位于 `dist/x86_64`。运行 x86_6
 bash scripts/check.sh
 bash scripts/check-release-resources.sh NativeFishingGuideChecks
 ```
+
+精简应用的上述渲染检查同时读取 `dist/resource-packs` 中与应用清单匹配的独立鱼缸 ZIP，校验后仅在测试 Bundle 中挂载素材；可通过 `AQUARIUM_PACK_ARCHIVE` 指定其他已下载的 ZIP。首次未下载的提示界面由 `bash scripts/check-aquarium-resource-ui.sh` 检查，下载及缓存行为由 `bash scripts/check-aquarium-resources.sh` 检查。
 
 ## 美术工具
 

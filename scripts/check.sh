@@ -28,7 +28,7 @@ xcrun swiftc "${swift_flags[@]}" -parse-as-library -I .build/native -L .build/na
     Tests/FishingChecks.swift -o .build/native/FishingChecks
 .build/native/FishingChecks
 xcrun swiftc "${swift_flags[@]}" -parse-as-library -I .build/native -L .build/native -lWhileCore "${agent_hud_flags[@]}" \
-    Sources/WhileAIWorks/AquariumGlass.swift Sources/WhileAIWorks/AquariumNavigation.swift Sources/WhileAIWorks/PackedMesh.swift Sources/WhileAIWorks/GeneratedFish.swift Sources/WhileAIWorks/GeneratedPuffer.swift Sources/WhileAIWorks/GeneratedAquascape.swift Sources/WhileAIWorks/Aquarium3D.swift Tests/NativeGeneratedPufferChecks.swift \
+    Sources/WhileAIWorks/AquariumResources.swift Sources/WhileAIWorks/AquariumGlass.swift Sources/WhileAIWorks/AquariumNavigation.swift Sources/WhileAIWorks/PackedMesh.swift Sources/WhileAIWorks/GeneratedFish.swift Sources/WhileAIWorks/GeneratedPuffer.swift Sources/WhileAIWorks/GeneratedAquascape.swift Sources/WhileAIWorks/Aquarium3D.swift Tests/NativeGeneratedPufferChecks.swift \
     -o .build/native/NativeGeneratedPufferChecks
 .build/native/NativeGeneratedPufferChecks
 app_sources=()

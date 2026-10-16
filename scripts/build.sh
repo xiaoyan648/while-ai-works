@@ -1,6 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 source "$(dirname "$0")/toolchain.sh"
+python3 scripts/package-aquarium-assets.py --check
 xcrun swiftc "${swift_flags[@]}" -O -parse-as-library -emit-module -emit-library -static \
     -module-name WhileCore Sources/WhileCore/*.swift \
     -emit-module-path "$build_dir/WhileCore.swiftmodule" -o "$build_dir/libWhileCore.a"
@@ -20,7 +21,9 @@ codesign --force --sign - "$app_path/Contents/Resources/while-ai-works-agent-int
 cp assets/Info.plist "$app_path/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set SUFeedURL https://github.com/xiaoyan648/while-ai-works/releases/latest/download/appcast-$target_arch.xml" "$app_path/Contents/Info.plist"
 cp -R Sources/WhileAIWorks/Resources/FishAssets "$app_path/Contents/Resources/"
-cp -R Sources/WhileAIWorks/Resources/AquariumAssets "$app_path/Contents/Resources/"
+# Remove assets left by older incremental builds; aquarium data is downloaded on demand.
+rm -rf "$app_path/Contents/Resources/AquariumAssets"
+cp Sources/WhileAIWorks/Resources/AquariumPack.json "$app_path/Contents/Resources/"
 cp -R Sources/WhileAIWorks/Resources/AgentMarks "$app_path/Contents/Resources/"
 cp -R Sources/WhileAIWorks/Resources/Rive "$app_path/Contents/Resources/"
 cp -R Sources/WhileAIWorks/Resources/Licenses "$app_path/Contents/Resources/"
@@ -31,25 +34,9 @@ ditto "$rive_frameworks/RiveRuntime.framework" "$app_path/Contents/Frameworks/Ri
 rm -rf "$app_path/Contents/Frameworks/Sparkle.framework"
 ditto "$sparkle_root/Sparkle.framework" "$app_path/Contents/Frameworks/Sparkle.framework"
 cp "$sparkle_root/LICENSE" "$app_path/Contents/Resources/Licenses/Sparkle-LICENSE.txt"
-# Keep editable JSON in the project; the app uses the validated binary streams.
-python3 - "$app_path/Contents/Resources/AquariumAssets" <<'PYASSETS'
-import hashlib, json, sys, shutil
-from pathlib import Path
-root = Path(sys.argv[1])
-for metadata in root.rglob('*.meta.json'):
-    stem = metadata.name.removesuffix('.meta.json')
-    source = metadata.with_name(stem + '.json')
-    binary = metadata.with_name(stem + '.meshbin')
-    info = json.loads(metadata.read_text())
-    if not binary.is_file() or hashlib.sha256(source.read_bytes()).hexdigest() != info['_sourceSHA256']:
-        raise SystemExit('Repack stale mesh before building: ' + str(metadata))
-    source.unlink()
 # River terrain is rendered from geometry; old full-frame paintings are not shipped.
-for name in ('river-day.png', 'river-night.png'):
-    (root.parent / 'FishAssets' / 'Scenery' / name).unlink(missing_ok=True)
-# Picture scenery replaces the unused 3D prop set; editable source assets stay on disk.
-shutil.rmtree(root / 'Aquascape', ignore_errors=True)
-PYASSETS
+rm -f "$app_path/Contents/Resources/FishAssets/Scenery/river-day.png" \
+      "$app_path/Contents/Resources/FishAssets/Scenery/river-night.png"
 # Icon generation runs on the build host, even when cross-compiling the app.
 xcrun swiftc "${swift_flags[@]}" -target "$(uname -m)-apple-macosx14.0" scripts/MakeIcon.swift -o "$build_dir/MakeIcon"
 "$build_dir/MakeIcon" "$build_dir/AppIcon.iconset" "$task_root/assets/AppIcon.png"

@@ -25,6 +25,7 @@ final class AquariumPresentation: NSObject, ObservableObject, NSWindowDelegate {
         NSLayoutConstraint.activate([view.leadingAnchor.constraint(equalTo:parent.leadingAnchor),view.trailingAnchor.constraint(equalTo:parent.trailingAnchor),view.topAnchor.constraint(equalTo:parent.topAnchor),view.bottomAnchor.constraint(equalTo:parent.bottomAnchor)])
     }
     func open(show:Bool=true) {
+        guard AquariumResources.directory != nil else { return }
         if let observationWindow { observationWindow.makeKeyAndOrderFront(nil);return }
         let visible=NSScreen.main?.visibleFrame ?? NSRect(x:0,y:0,width:1200,height:900)
         let window=NSWindow(contentRect:NSRect(x:0,y:0,width:min(1040,visible.width-60),height:min(780,visible.height-60)),styleMask:[.titled,.closable,.miniaturizable,.resizable],backing:.buffered,defer:false)

@@ -177,18 +177,20 @@ enum AquariumGlass {
         }
     }
 
-    private static let textures:[String:NSImage] = {
-        #if SWIFT_PACKAGE
-        let root=Bundle.module.resourceURL
-        #else
-        let root=Bundle.main.resourceURL
-        #endif
-        guard let root else{return [:]}
-        return Dictionary(uniqueKeysWithValues:["underwater-backdrop-v2.png","underwater-foreground-v2.png","underwater-backdrop.png"].compactMap {name in
-            NSImage(contentsOf:root.appendingPathComponent("AquariumAssets/"+name)).map {(name,$0)}
-        })
-    }()
-    private static func texture(_ name:String)->NSImage? {textures[name]}
+    private static let textureLock = NSLock()
+    private static var textureRoot: URL?
+    private static var textures: [String:NSImage] = [:]
+    private static func texture(_ name:String)->NSImage? {
+        guard let root = AquariumResources.directory else { return nil }
+        textureLock.lock(); defer { textureLock.unlock() }
+        if textureRoot != root {
+            textures = Dictionary(uniqueKeysWithValues:["underwater-backdrop-v2.png","underwater-foreground-v2.png","underwater-backdrop.png"].compactMap { name in
+                NSImage(contentsOf:root.appendingPathComponent(name)).map { (name,$0) }
+            })
+            textureRoot = root
+        }
+        return textures[name]
+    }
 
     /// Cached scene texture, built once; no full-frame image is used by the fishing field.
     private static func backdrop() -> NSImage {

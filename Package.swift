@@ -16,7 +16,8 @@ let package = Package(
         .executableTarget(name: "WhileAIWorks",
                           dependencies: ["WhileCore", "AgentHUDCore", "AgentHUDSupport", .product(name: "RiveRuntime", package: "rive-ios"),
                                          .product(name: "Sparkle", package: "Sparkle")],
-                          resources: [.copy("Resources/FishAssets"), .copy("Resources/AquariumAssets"), .copy("Resources/Rive"), .copy("Resources/AgentMarks"), .copy("Resources/Licenses")]),
+                          exclude: ["Resources/AquariumAssets"],
+                          resources: [.copy("Resources/FishAssets"), .copy("Resources/AquariumPack.json"), .copy("Resources/Rive"), .copy("Resources/AgentMarks"), .copy("Resources/Licenses")]),
         .executableTarget(name: "CoreChecks", dependencies: ["WhileCore"], path: "Tests/WhileCoreTests")
     ]
 )

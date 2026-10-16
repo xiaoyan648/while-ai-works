@@ -232,10 +232,13 @@ private struct DockReviewComposition: View {
         DesktopDockSurface(state: state)
     }
     private var card: some View {
-        ZStack(alignment: .topLeading) {
-            DesktopDockDetailView(state: state).frame(width: 344, height: 310).offset(x: 26, y: 80)
-            PerchedReviewSnapshot(mascot: perch).frame(width: 180, height: 120).offset(x: 4, y: 0)
-        }.frame(width: 380, height: 400, alignment: .topLeading)
+        let size = DesktopDockGeometry.detailSize
+        let card = DesktopDockGeometry.cardFrame(in: size)
+        let cat = DesktopDockGeometry.perchedCatFrame(in: size)
+        return ZStack(alignment: .topLeading) {
+            DesktopDockDetailView(state: state).frame(width: card.width, height: card.height).offset(x: card.minX, y: card.minY)
+            PerchedReviewSnapshot(mascot: perch).frame(width: cat.width, height: cat.height).offset(x: cat.minX, y: cat.minY)
+        }.frame(width: size.width, height: size.height, alignment: .topLeading)
     }
     var body: some View {
         Group {

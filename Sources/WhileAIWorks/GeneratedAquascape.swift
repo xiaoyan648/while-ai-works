@@ -80,12 +80,7 @@ final class GeneratedAquascape {
     }
     static func makeNode() throws -> SCNNode {
         if !geometryCache.isEmpty {return decorate()}
-        #if SWIFT_PACKAGE
-        let root=Bundle.module.resourceURL
-        #else
-        let root=Bundle.main.resourceURL
-        #endif
-        guard let folder=root?.appendingPathComponent("AquariumAssets/Aquascape") else {throw CocoaError(.fileNoSuchFile)}
+        guard let folder=AquariumResources.directory?.appendingPathComponent("Aquascape") else {throw AquariumPackError.unavailable}
         let props=try JSONDecoder().decode(Props.self,from:Data(contentsOf:folder.appendingPathComponent("props.json")))
         guard props.version==1,Set(props.parts.map(\.id))==Set(["driftwood","rocks"]) else {throw CocoaError(.fileReadCorruptFile)}
         var prepared:[(String,SCNGeometry)]=[]

@@ -99,12 +99,7 @@ final class GeneratedPuffer {
         cacheLock.lock()
         if let cached { cacheLock.unlock(); return cached }
         cacheLock.unlock()
-        #if SWIFT_PACKAGE
-        let root = Bundle.module.resourceURL
-        #else
-        let root = Bundle.main.resourceURL
-        #endif
-        guard let folder = root?.appendingPathComponent("AquariumAssets/Puffer") else { throw CocoaError(.fileNoSuchFile) }
+        guard let folder = AquariumResources.directory?.appendingPathComponent("Puffer") else { throw AquariumPackError.unavailable }
         let a = try PackedMesh.decode(Asset.self, from: folder.appendingPathComponent("puffer.json"))
         let count = a.positions.count / 3
         guard a.version == 1, count > 0, a.positions.count % 3 == 0,

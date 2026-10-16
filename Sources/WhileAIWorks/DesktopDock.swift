@@ -26,6 +26,7 @@ enum DesktopDockGeometry {
     static let foot: CGFloat = 40
     static let tile: CGFloat = 50
     static let thickness: CGFloat = 52
+    static let detailSize = CGSize(width: 460, height: 520)
 
     static func size(orientation: DesktopDockOrientation, sources: Int) -> CGSize {
         let length = head + CGFloat(max(1, sources)) * tile + foot
@@ -89,8 +90,8 @@ enum DesktopDockGeometry {
     }
     static func detailFrame(dock: CGRect, anchor: CGPoint, edge: DesktopDockEdge, visible: CGRect) -> CGRect {
         let size = CGSize(
-            width: min(380, visible.width - margin * 2 - (edge.orientation == .vertical ? dock.width + 2 : 0)),
-            height: min(400, visible.height - margin * 2 - (edge.orientation == .horizontal ? dock.height + 2 : 0)))
+            width: min(detailSize.width, visible.width - margin * 2 - (edge.orientation == .vertical ? dock.width + 2 : 0)),
+            height: min(detailSize.height, visible.height - margin * 2 - (edge.orientation == .horizontal ? dock.height + 2 : 0)))
         var origin: CGPoint
         switch edge {
         case .right: origin = CGPoint(x: dock.minX - size.width - 2, y: anchor.y - size.height * 0.55)
@@ -379,8 +380,8 @@ private struct DesktopDockTile: View {
     }
 }
 
-/// Only the logo moves. A slow, small scale cycle leaves the quota ring and
-/// surrounding surface still, and never publishes animation frames to AppState.
+/// The logo rocks gently and breathes so work is visible at a glance. The quota
+/// ring stays still, and animation frames never pass through AppState.
 struct AgentActivityMark: NSViewRepresentable {
     let source: WorkSource
     let working: Bool
@@ -459,11 +460,20 @@ final class AgentActivityMarkView: NSView {
             mark.removeAnimation(forKey: "working-icon"); return
         }
         guard !isAnimating else { return }
-        let breath = CABasicAnimation(keyPath: "transform.scale")
-        breath.fromValue = 0.96; breath.toValue = 1.04; breath.duration = 1.8
-        breath.autoreverses = true; breath.repeatCount = .infinity
-        breath.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        mark.add(breath, forKey: "working-icon")
+        let duration = 1.8
+        let times: [NSNumber] = [0, 0.25, 0.5, 0.75, 1]
+        let easing = Array(repeating: CAMediaTimingFunction(name: .easeInEaseOut), count: 4)
+        let rock = CAKeyframeAnimation(keyPath: "transform.rotation.z")
+        let angle = 12.0 * Double.pi / 180
+        rock.values = [0, angle, 0, -angle, 0]
+        rock.keyTimes = times; rock.timingFunctions = easing; rock.duration = duration
+        let breath = CAKeyframeAnimation(keyPath: "transform.scale")
+        breath.values = [1, 1.08, 1.12, 1.08, 1]
+        breath.keyTimes = times; breath.timingFunctions = easing; breath.duration = duration
+        let activity = CAAnimationGroup()
+        activity.animations = [rock, breath]
+        activity.duration = duration; activity.repeatCount = .infinity
+        mark.add(activity, forKey: "working-icon")
     }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }

@@ -118,12 +118,7 @@ final class GeneratedFish {
             cacheLock.unlock(); return cached
         }
         cacheLock.unlock()
-        #if SWIFT_PACKAGE
-        let root = Bundle.module.resourceURL
-        #else
-        let root = Bundle.main.resourceURL
-        #endif
-        guard let folder = root?.appendingPathComponent("AquariumAssets/Generated/\(id)") else { throw CocoaError(.fileNoSuchFile) }
+        guard let folder = AquariumResources.directory?.appendingPathComponent("Generated/\(id)") else { throw AquariumPackError.unavailable }
         let a = try PackedMesh.decode(Asset.self, from: folder.appendingPathComponent("fish.json"))
         let count = a.positions.count / 3
         let influences = a.influenceCount ?? 3

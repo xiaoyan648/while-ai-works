@@ -1,0 +1,480 @@
+{
+  "schema": 1,
+  "version": 1,
+  "url": "https://github.com/xiaoyan648/while-ai-works/releases/download/aquarium-assets-v1/While-AI-Works-Aquarium-v1.zip",
+  "archiveBytes": 195533132,
+  "sha256": "a78b0657fded3662995540fdde429d10e5e5a91e9c3db193e2b76c90c8eef635",
+  "installedBytes": 233030423,
+  "files": [
+    {
+      "path": "Generated/arapaima/color.png",
+      "bytes": 1187230,
+      "sha256": "53072b7f3fa30277b0c2b00c1fa624629184ad1167cb8c64c6b9cefadc8f6dd0"
+    },
+    {
+      "path": "Generated/arapaima/fish.meshbin",
+      "bytes": 228420,
+      "sha256": "49551b281906184e61b9e44df83c541cea6a4c2fb587d0f3fba7f17f91702e4c"
+    },
+    {
+      "path": "Generated/arapaima/fish.meta.json",
+      "bytes": 15495,
+      "sha256": "25e1b8258de015a36080a3eb8adbfd08a6414f7a86c97b8204206847e36cdf0a"
+    },
+    {
+      "path": "Generated/carp/color.png",
+      "bytes": 4721755,
+      "sha256": "39b1b547a749a0f0a1b8f28028242adb62fae4adbc88c9c23bac1e2be80e294b"
+    },
+    {
+      "path": "Generated/carp/fish.meshbin",
+      "bytes": 2247060,
+      "sha256": "ac9ece840f08e93e901810416539621cc6525302c3cfbd38c43ee39c956fcace"
+    },
+    {
+      "path": "Generated/carp/fish.meta.json",
+      "bytes": 14997,
+      "sha256": "38e606a61bb77250e9d59ff3bf2814b8929082ba3ada2be603b9a106c5aea32c"
+    },
+    {
+      "path": "Generated/carp/normal.png",
+      "bytes": 4371621,
+      "sha256": "48d302cc2a78805556cd9f4f7294919dd7dd6cf80655aeea05a7cd849833421a"
+    },
+    {
+      "path": "Generated/carp/surface.png",
+      "bytes": 2950384,
+      "sha256": "60d43e826b878422fc5a480be256af66365667af4d9fb4f012bfedca4c728b18"
+    },
+    {
+      "path": "Generated/catfish/color.png",
+      "bytes": 4595348,
+      "sha256": "51d6b0ee27ae0ceae0240e07401a613cee5f6f246ffaab5bb7b0f56a7c43c303"
+    },
+    {
+      "path": "Generated/catfish/fish.meshbin",
+      "bytes": 2306400,
+      "sha256": "8cc352c22a49a6e7cb66bffb0f92e91935aa9a5fcd00fb223e1574932fd471f4"
+    },
+    {
+      "path": "Generated/catfish/fish.meta.json",
+      "bytes": 14997,
+      "sha256": "40933d843fb5f49fdea6e1c3d44aa528d66ecebf227437d01db5ea85691ff26b"
+    },
+    {
+      "path": "Generated/catfish/normal.png",
+      "bytes": 2923117,
+      "sha256": "217b3440b8ec123eaa5725910765243dc25fa222f91962199aae2234c5337587"
+    },
+    {
+      "path": "Generated/catfish/surface.png",
+      "bytes": 2899759,
+      "sha256": "262584d734c333895d900d9bdaf694e9734bc3267184f1b02b00d1a036dd5ca5"
+    },
+    {
+      "path": "Generated/crucian/color.png",
+      "bytes": 5737040,
+      "sha256": "b9df4dfcc757d49a8adb513d32f7cb228a4c1dfe9250115b8ff68c508acf8aad"
+    },
+    {
+      "path": "Generated/crucian/fish.meshbin",
+      "bytes": 3496980,
+      "sha256": "696ccd5bf71edbd82f0bf9415040e72fd4e2b96993153a2b5e0ed45349f2d895"
+    },
+    {
+      "path": "Generated/crucian/fish.meta.json",
+      "bytes": 15002,
+      "sha256": "b2dc78043e439404a4cf27bcbe8f7913439967b9701bc442c1660ed0fdaa4f98"
+    },
+    {
+      "path": "Generated/crucian/normal.png",
+      "bytes": 4229657,
+      "sha256": "1bc10d8b42b145718c29d2623ac6fa17f7dcb77ee3ed58813a4cb5cab053f75d"
+    },
+    {
+      "path": "Generated/crucian/surface.png",
+      "bytes": 3613010,
+      "sha256": "bf9088d9d001202e9b06240493cc71c79e908532c461e63cdeb8e6ce03df861c"
+    },
+    {
+      "path": "Generated/dragon/color.png",
+      "bytes": 5994103,
+      "sha256": "78586f3b59d14dacef74ba693f7d6c3b37efb1e24b51603d9b134e63ad28dff6"
+    },
+    {
+      "path": "Generated/dragon/fish.meshbin",
+      "bytes": 2602464,
+      "sha256": "1d5bdf3081cca8f6c06355ae87620bebe57848b998309ad20fcc106a45d58543"
+    },
+    {
+      "path": "Generated/dragon/fish.meta.json",
+      "bytes": 15083,
+      "sha256": "5257e34e2ade4d27c2bdc5acbe634cf0979d09b3db485510340580cbc6ebad11"
+    },
+    {
+      "path": "Generated/dragon/normal.png",
+      "bytes": 4321504,
+      "sha256": "8507b16e606e7f5d62c8c5200a67190fa0b65a04bf389b97c0946e683e41515f"
+    },
+    {
+      "path": "Generated/dragon/surface.png",
+      "bytes": 4469729,
+      "sha256": "03efd91149f79843c89a365b2a53162ad8ecc0b767e4afd9ce95558d3702b131"
+    },
+    {
+      "path": "Generated/eel/color.png",
+      "bytes": 3914968,
+      "sha256": "0566a9cff8b8878d281b5fddf4895ea334df20216feb5586d6657b48ac783dea"
+    },
+    {
+      "path": "Generated/eel/fish.meshbin",
+      "bytes": 2515632,
+      "sha256": "8f68a87bba7b366858afd8a0fc3e63201e149ef18fba5e066c010120ba013ca3"
+    },
+    {
+      "path": "Generated/eel/fish.meta.json",
+      "bytes": 39327,
+      "sha256": "5ee657510c09e1800a844083a717ece3a232d6614d312d431d976b27ccfeb056"
+    },
+    {
+      "path": "Generated/eel/normal.png",
+      "bytes": 2888823,
+      "sha256": "adb6cc5736cfb364fa7dd7594feed90a625ef1f35539823df93e5187a7ad1293"
+    },
+    {
+      "path": "Generated/eel/surface.png",
+      "bytes": 4109066,
+      "sha256": "b45fecf85a04956477d3a5e1f2408eeccfbd19ee19f8d76995d9d8e3d7e9074c"
+    },
+    {
+      "path": "Generated/koi/color.png",
+      "bytes": 4316758,
+      "sha256": "2f8216b1db0fd9abeb0a615d6665b0d424259a4262f7975153f4ce180c8b11fc"
+    },
+    {
+      "path": "Generated/koi/fish.meshbin",
+      "bytes": 2242860,
+      "sha256": "ea807471c631ca07dcaa9006229ad1de23bcf9569601594b29003793f9b3e9a2"
+    },
+    {
+      "path": "Generated/koi/fish.meta.json",
+      "bytes": 14997,
+      "sha256": "984d229711f104bfb40722eaa1e54c940e85d1280fdaf67377444a6eba025f15"
+    },
+    {
+      "path": "Generated/koi/normal.png",
+      "bytes": 3195602,
+      "sha256": "ea2d19c4aeefcbcffc9f39547fc0968b623881973a95137aaace7b46b2498675"
+    },
+    {
+      "path": "Generated/koi/surface.png",
+      "bytes": 2924738,
+      "sha256": "af144fd7de7f5cf3969dea86e23babf9ed595f6691e2758fc5fc96bf90be0905"
+    },
+    {
+      "path": "Generated/moonfish/color.png",
+      "bytes": 4893915,
+      "sha256": "ffa8ae079878b28b6c2f764dd2f4b507d638ec9811f5f590a79dbe7c31e43e23"
+    },
+    {
+      "path": "Generated/moonfish/fish.meshbin",
+      "bytes": 2592084,
+      "sha256": "75d76f5c08233543f630dc88113f97e2e52a77e14f6113f264092680c81b9f14"
+    },
+    {
+      "path": "Generated/moonfish/fish.meta.json",
+      "bytes": 15083,
+      "sha256": "55dcf5a7a471f1435cbd449155018302965cc21d70ff4c8a30a61d0d314e4d1d"
+    },
+    {
+      "path": "Generated/moonfish/normal.png",
+      "bytes": 3297416,
+      "sha256": "b6a21cf545eb91ab41a4b8ecac252857c590273f4423b6fe4df7b5a8985964cb"
+    },
+    {
+      "path": "Generated/moonfish/surface.png",
+      "bytes": 3019251,
+      "sha256": "f1058b265532a7ea10275da6665ebdf9bbf6617d1b1abd970514c04491f3ea7c"
+    },
+    {
+      "path": "Generated/oarfish/color.png",
+      "bytes": 4979608,
+      "sha256": "f92fe6eebe8a290067798fc8ae9581014060ac6a1077309b88a8078cfc04744d"
+    },
+    {
+      "path": "Generated/oarfish/fish.meshbin",
+      "bytes": 2599512,
+      "sha256": "36277cb442b8a1972e6d5b6f737644ea90cf48d39936078de91b45dd97f0352b"
+    },
+    {
+      "path": "Generated/oarfish/fish.meta.json",
+      "bytes": 38935,
+      "sha256": "965a62ae15497f29e6e566512ec1512e86ffa5a922823165fb23370d3be728ca"
+    },
+    {
+      "path": "Generated/oarfish/normal.png",
+      "bytes": 2890624,
+      "sha256": "f224269acf9b8115b661f994e8979a38072d4f1f434a522c42bfe9a8799e170e"
+    },
+    {
+      "path": "Generated/oarfish/surface.png",
+      "bytes": 4494010,
+      "sha256": "affe3a8d8ae289159954d270c146d6bef3c81cb9d0780f5182776a0771b8d6f4"
+    },
+    {
+      "path": "Generated/perch/color.png",
+      "bytes": 5141530,
+      "sha256": "5830446134525d5fe2fea3dc9b9b363e33ab803256bf8e625c76c906ca226018"
+    },
+    {
+      "path": "Generated/perch/fish.meshbin",
+      "bytes": 2217660,
+      "sha256": "f6730b9c9f0e0f2a82bcee6f3d76b7784db7bfa568a18b648926abd6d100a839"
+    },
+    {
+      "path": "Generated/perch/fish.meta.json",
+      "bytes": 14997,
+      "sha256": "a7aba940ff354ca0c62ada849b9907603e23685493a061b3f31b9c687257f8cd"
+    },
+    {
+      "path": "Generated/perch/normal.png",
+      "bytes": 3915149,
+      "sha256": "80b2a9eff2a2ea8f6f0a4b1831ee76c42081f7e26792fab28cafde1ac3edb131"
+    },
+    {
+      "path": "Generated/perch/surface.png",
+      "bytes": 3038611,
+      "sha256": "124f2aed73ceaf601a0c7d5f607ddd2913de19061a0258a6477d729ec71f67ee"
+    },
+    {
+      "path": "Generated/salmon/color.png",
+      "bytes": 4897214,
+      "sha256": "8e39866a555857c4392e5f9a60708131c7cafd1de3f57741eada2d867a678405"
+    },
+    {
+      "path": "Generated/salmon/fish.meshbin",
+      "bytes": 2236980,
+      "sha256": "ed18f864a1773b5fd264fcb89d76dc6196fb0767cdec36b16ca1c4150c6a8722"
+    },
+    {
+      "path": "Generated/salmon/fish.meta.json",
+      "bytes": 14996,
+      "sha256": "14546a8c9c4dd7b2aa3010bb0714901b18f4c54ed42bb44f4f32d9cf9018fb3c"
+    },
+    {
+      "path": "Generated/salmon/normal.png",
+      "bytes": 3327222,
+      "sha256": "38d18721eea790d770d6fc673e5d4f227537e39e92cc9cab1e2c22207017bd3f"
+    },
+    {
+      "path": "Generated/salmon/surface.png",
+      "bytes": 2857125,
+      "sha256": "cee93ae9109c841fa1d350ff1e945797dff6422f9ce2b5e11be35b16989c0e30"
+    },
+    {
+      "path": "Generated/sardine/color.png",
+      "bytes": 5175014,
+      "sha256": "39a63fa3e463033d26da0bb1b2bb5ba5ea588349353ab414e11d713f6fc34bb0"
+    },
+    {
+      "path": "Generated/sardine/fish.meshbin",
+      "bytes": 2236020,
+      "sha256": "96faed1440977d718741efad87feef864e8325dc19460705bcdfda0704b924bf"
+    },
+    {
+      "path": "Generated/sardine/fish.meta.json",
+      "bytes": 14997,
+      "sha256": "01805fdc9e563fd9fab8ca6ffd60a856dac9aada55b236a09cd5213be97f7510"
+    },
+    {
+      "path": "Generated/sardine/normal.png",
+      "bytes": 3878351,
+      "sha256": "e2efaa5760f2822f6dd0a5a5d1689bab33a86f479f6637ef93895198d03929a8"
+    },
+    {
+      "path": "Generated/sardine/surface.png",
+      "bytes": 2768996,
+      "sha256": "31f20869e0b3892b6823d263e0d9b12a1644364e9b87631835d89f267e2d2b19"
+    },
+    {
+      "path": "Generated/trout/color.png",
+      "bytes": 5506100,
+      "sha256": "fcebaad9a6c382486c76ce0450b57331f21f13e2708f5aba6a7135c67b200909"
+    },
+    {
+      "path": "Generated/trout/fish.meshbin",
+      "bytes": 2265540,
+      "sha256": "55a0c5dda3269ac3ea78ca9ed0a7cb4d23e18f9eff36d7dd6fa106231cde3432"
+    },
+    {
+      "path": "Generated/trout/fish.meta.json",
+      "bytes": 14997,
+      "sha256": "3beaa558b855ef934040cbcabfb37d8b7fb7b66838b012d0d7181951b0c4add4"
+    },
+    {
+      "path": "Generated/trout/normal.png",
+      "bytes": 2642669,
+      "sha256": "eddf8b05b675efead3f35551ec76911c24aac75edecd1c4212a118ebed5d75ee"
+    },
+    {
+      "path": "Generated/trout/surface.png",
+      "bytes": 3037104,
+      "sha256": "0bebc87ea542041ffd7aaa2f8bdc95f48cdef012c9e5cd62a91030f20cd243e3"
+    },
+    {
+      "path": "Generated/tuna/color.png",
+      "bytes": 4630868,
+      "sha256": "17a741417546391cb2af5404435b17addcc65bc709338302a7fb9df757a72fa2"
+    },
+    {
+      "path": "Generated/tuna/fish.meshbin",
+      "bytes": 2287200,
+      "sha256": "4102eadc39b00c76a488e20c3ab5f4151903fe20d59659c6391252ca33b3c83a"
+    },
+    {
+      "path": "Generated/tuna/fish.meta.json",
+      "bytes": 14997,
+      "sha256": "01f33873dd6998530e7f7c5970f993fc052527f80ba014ecf4643bf8fe021620"
+    },
+    {
+      "path": "Generated/tuna/normal.png",
+      "bytes": 2371685,
+      "sha256": "e82d4ae2d2b03c81ed1fddd9c6a979ef56470bc50d6059638805f4b068b42ba4"
+    },
+    {
+      "path": "Generated/tuna/surface.png",
+      "bytes": 4258924,
+      "sha256": "3a103f73fbe59fc4a0f755a8d56fb05e6dbcf411d9562395e3134566e42f0691"
+    },
+    {
+      "path": "Models/environment.json",
+      "bytes": 1465149,
+      "sha256": "9edff55b52fc8861002f24582f2a7f490b322a2557bba936e2c68221eda50de3"
+    },
+    {
+      "path": "Models/fish-carp.json",
+      "bytes": 1362554,
+      "sha256": "3230c99bab676bcb607d77a2404abed5631fcf2b0406e0107a49372229308cd4"
+    },
+    {
+      "path": "Models/fish-catfish.json",
+      "bytes": 1362995,
+      "sha256": "d8fd1086da1662b083a2fe4102dc2cc9e56b14b042c0a0264c8ae6ff8403072d"
+    },
+    {
+      "path": "Models/fish-crucian.json",
+      "bytes": 1352397,
+      "sha256": "977a095d201ad523288220efef6a3a180edd6bd9e1494494be6c84b40fd67f4d"
+    },
+    {
+      "path": "Models/fish-dragon.json",
+      "bytes": 1363044,
+      "sha256": "215c52636a3a9e83b00dd3f4d2a83ac515e0475c012b8e2698c9728a5ba406d0"
+    },
+    {
+      "path": "Models/fish-eel.json",
+      "bytes": 1363863,
+      "sha256": "6440381df9ca7c0acac3f222ac1d6fab6df1a443a2c0b7065a056a05c92683e2"
+    },
+    {
+      "path": "Models/fish-koi.json",
+      "bytes": 1350308,
+      "sha256": "616fad2c6d8f6884f968be88307eeb72ff88f930c488764761aff4bb2660d90f"
+    },
+    {
+      "path": "Models/fish-moonfish.json",
+      "bytes": 1351347,
+      "sha256": "42b2ea902086c2c839e297841e58cd870a663002da7a0a0836f985a20246dbc0"
+    },
+    {
+      "path": "Models/fish-oarfish.json",
+      "bytes": 1366601,
+      "sha256": "6d1a6dfecff4647ca687126d8711a7d597d45f5d154308226faade0b7b039dbf"
+    },
+    {
+      "path": "Models/fish-perch.json",
+      "bytes": 1350497,
+      "sha256": "253394898b453c23981a896e03cd707b2224868a937ae71199bd41a20f268cce"
+    },
+    {
+      "path": "Models/fish-puffer.json",
+      "bytes": 1420324,
+      "sha256": "3fb123a44d2f7eaf98f7884aa0f74840acf59e474319df9644cd3824776e2ad0"
+    },
+    {
+      "path": "Models/fish-salmon.json",
+      "bytes": 1351257,
+      "sha256": "80e8aa9a2838f2dd106f79c6879bb191d010d2d7bce91e03460da9ecc78d7e27"
+    },
+    {
+      "path": "Models/fish-sardine.json",
+      "bytes": 1353518,
+      "sha256": "2032ea6005b8263cac144254728a540d241fdb92d9a63c4f14fa6ee485837cd6"
+    },
+    {
+      "path": "Models/fish-trout.json",
+      "bytes": 1350920,
+      "sha256": "1aa927493d64415a9b2113de62b8907ea0c16930860c7b12e013badb9882b3d1"
+    },
+    {
+      "path": "Models/fish-tuna.json",
+      "bytes": 1352496,
+      "sha256": "3a643d3f1db31dceb2a1d09e6eb0b45736be4d0c17b4e5f28c6ac466a9526b60"
+    },
+    {
+      "path": "Models/plants-back.json",
+      "bytes": 2341248,
+      "sha256": "9db31d6af4f98e23784031437f20fb86f2f4e13c69d3642ce4cf49d69ac69b1c"
+    },
+    {
+      "path": "Models/plants-front.json",
+      "bytes": 856687,
+      "sha256": "a3ce6e406ceb27d2d365f9863fe11b257cd2b03efd9cffd27426c586e820b27e"
+    },
+    {
+      "path": "Puffer/color.png",
+      "bytes": 6681441,
+      "sha256": "5f49a19733c9978ca9d4d3ce4c10b4293a3fae781e9f1ebd668b09c203e7c36f"
+    },
+    {
+      "path": "Puffer/puffer.meshbin",
+      "bytes": 4263992,
+      "sha256": "377294a721096332290f4fc9f4528f0408e018b8d87aea93bf8d44998ece3d7b"
+    },
+    {
+      "path": "Puffer/puffer.meta.json",
+      "bytes": 14730,
+      "sha256": "a547f76e1d085c3df55678b95cd74c38569cca8b394ea06b5b48c9011403a6d3"
+    },
+    {
+      "path": "Puffer/surface.png",
+      "bytes": 3424624,
+      "sha256": "7bbfbd75ff5a565c1cdf3fe9f83623087376d9db1f7a001486fee93d8ee36588"
+    },
+    {
+      "path": "aquascape-v1.png",
+      "bytes": 2668037,
+      "sha256": "449c03bfc83a65c18338505941356e5c2ce87e07209313e09ce292bfe8237500"
+    },
+    {
+      "path": "fish-envelopes.json",
+      "bytes": 50972,
+      "sha256": "dd4c9b0afbfb9e3c9121129f73a27a923ee3ea482314db7078f9c9eb2ec8dabd"
+    },
+    {
+      "path": "underwater-backdrop-v2.png",
+      "bytes": 2182792,
+      "sha256": "be699424ba56c0aec8e3a115c2edb6f01c16cc785420dda5cb329d3bb6fae642"
+    },
+    {
+      "path": "underwater-backdrop.png",
+      "bytes": 2086300,
+      "sha256": "7dd7f66faf35f0bc0eb7a9dadb60374600e3de19ce99df33bccf95667837c00b"
+    },
+    {
+      "path": "underwater-foreground-v2.png",
+      "bytes": 1223020,
+      "sha256": "3bb4cb1a348951df618e4ad85a9935de77e32dc1bd3ce80a61036b954bb329a5"
+    }
+  ]
+}
