@@ -2,45 +2,45 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>CFBundleDisplayName</key>
+	<string>AI 干活时我们干什么</string>
 	<key>CFBundleExecutable</key>
 	<string>WhileAIWorks</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
 	<string>local.whileaiworks.mac</string>
 	<key>CFBundleName</key>
 	<string>While AI Works</string>
-	<key>CFBundleDisplayName</key>
-	<string>AI 干活时我们干什么</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.17.3</string>
+	<string>0.18.0</string>
 	<key>CFBundleVersion</key>
-	<string>31</string>
+	<string>32</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSHumanReadableCopyright</key>
+	<string>AI 干活时我们干什么</string>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
+	<key>SUAutomaticallyUpdate</key>
+	<false/>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUEnableSystemProfiling</key>
+	<false/>
 	<key>SUFeedURL</key>
 	<string>https://github.com/xiaoyan648/while-ai-works/releases/latest/download/appcast-arm64.xml</string>
 	<key>SUPublicEDKey</key>
 	<string>sYbPb4vEJxiv94e0uhXqfWJ7VdW9IuhwtF+ZRJ67+jU=</string>
-	<key>SUEnableAutomaticChecks</key>
-	<true/>
-	<key>SUAutomaticallyUpdate</key>
-	<false/>
-	<key>SUEnableSystemProfiling</key>
-	<false/>
-	<key>SUVerifyUpdateBeforeExtraction</key>
-	<true/>
 	<key>SURequireSignedFeed</key>
 	<true/>
-	<key>CFBundleIconFile</key>
-	<string>AppIcon</string>
-	<key>LSUIElement</key>
+	<key>SUVerifyUpdateBeforeExtraction</key>
 	<true/>
-	<key>LSMinimumSystemVersion</key>
-	<string>14.0</string>
-	<key>NSHighResolutionCapable</key>
-	<true/>
-	<key>NSPrincipalClass</key>
-	<string>NSApplication</string>
-	<key>NSHumanReadableCopyright</key>
-	<string>AI 干活时我们干什么</string>
 </dict>
 </plist>

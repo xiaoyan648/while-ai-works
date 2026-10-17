@@ -68,6 +68,7 @@ https://github.com/user-attachments/assets/db49fc4e-1adf-49a4-b173-da68e032c6b1
 
 | 版本 | 这次带来了什么 |
 | --- | --- |
+| [**0.18.0**](docs/releases/0.18.0.md) | **干完盖个章**：Agent 完成时小猫盖下爪印；动效更丝滑，回答按钮跟着问题走，额度页提示消耗节奏，切换 Agent 更流畅。 |
 | [**0.17.3**](docs/releases/0.17.3.md) | **更轻的安装包**：鱼缸资源改为按需下载；工作卡片更宽敞，运行中的 Agent 图标更清晰。 |
 | [**0.17.2**](docs/releases/0.17.2.md) | **回到原会话**：修复会话跳转入口，Claude 终端会话可复制恢复命令。 |
 | [**0.17.1**](docs/releases/0.17.1.md) | **应用内更新**：新增签名更新检查，修复从 Finder 启动时的 Claude 命令检测。 |
