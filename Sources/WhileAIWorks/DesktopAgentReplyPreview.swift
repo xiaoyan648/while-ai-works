@@ -90,7 +90,11 @@ final class ReplySummaryView: NSView {
     private let anchor = ReplyEllipsisAnchor()
     private var pointerInside = false
     private(set) var ellipsisRect: CGRect?
-    private var summary: String { (session.reply ?? "").split(whereSeparator: \.isNewline).joined(separator: " ") }
+    /// The reply as typeset text, built once per reply. Its characters live in a native
+    /// CFString, so CoreText reads them by offset in constant time.
+    private var text: NSAttributedString?
+    /// Lines for the last width asked; SwiftUI measures, lays out and draws repeatedly.
+    private var typeset: (width: CGFloat, lines: [CTLine])?
     private var lineHeight: CGFloat { ceil(font.ascender - font.descender + font.leading) }
     override var isFlipped: Bool { true }
     init(session: AgentDockSession, show: @escaping (AgentDockSession, NSView) -> Void, hide: @escaping () -> Void) {
@@ -102,21 +106,42 @@ final class ReplySummaryView: NSView {
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     func configure(session: AgentDockSession, show: @escaping (AgentDockSession, NSView) -> Void, hide: @escaping () -> Void) {
-        if self.session.reply != session.reply || self.session.id != session.id || self.session.source != session.source {
-            if pointerInside { hide(); pointerInside = false }
-        }
+        let changed = self.session.reply != session.reply || self.session.id != session.id || self.session.source != session.source
+        if changed, pointerInside { hide(); pointerInside = false }
         self.session = session; self.show = show; self.hide = hide
+        if changed || text == nil { invalidateText() } else { return }
         setAccessibilityValue(session.reply ?? "")
         anchor.press = { [weak self] in guard let self, self.ellipsisRect != nil else { return false }
             self.show(self.session, self.anchor); return true
         }
         needsDisplay = true; needsLayout = true; invalidateIntrinsicContentSize()
     }
+    private var attributes: [NSAttributedString.Key: Any] {
+        var color = NSColor.gray
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            color = NSColor.secondaryLabelColor.usingColorSpace(.deviceRGB) ?? .gray
+        }
+        return [.font: font, .foregroundColor: color]
+    }
+    private func invalidateText() {
+        let summary = (session.reply ?? "").split(whereSeparator: \.isNewline).joined(separator: " ")
+        let built = NSMutableAttributedString()
+        built.mutableString.append(summary)
+        built.setAttributes(attributes, range: NSRange(location: 0, length: built.length))
+        text = built; typeset = nil
+    }
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        invalidateText(); needsDisplay = true
+    }
     private func lines(width: CGFloat) -> [CTLine] {
-        guard width > 0, !summary.isEmpty else { return [] }
-        let color = NSColor.secondaryLabelColor.usingColorSpace(.deviceRGB) ?? .gray
-        let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color]
-        let text = NSAttributedString(string: summary, attributes: attributes)
+        if let typeset, typeset.width == width { return typeset.lines }
+        let lines = typesetLines(width: width)
+        typeset = (width, lines)
+        return lines
+    }
+    private func typesetLines(width: CGFloat) -> [CTLine] {
+        guard width > 0, let text, text.length > 0 else { return [] }
         let typesetter = CTTypesetterCreateWithAttributedString(text)
         let count = text.length
         let firstCount = max(1, CTTypesetterSuggestLineBreak(typesetter, 0, Double(width)))

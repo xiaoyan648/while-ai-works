@@ -12,7 +12,7 @@ final class MenuBarPanel: NSPanel {
 }
 
 final class MenuBarPanelController: NSObject {
-    static let cornerRadius: CGFloat = 14
+    static let cornerRadius = Theme.panelCornerRadius
     let panel: MenuBarPanel
     private let host: NSView
     private var frameObserver: NSObjectProtocol?

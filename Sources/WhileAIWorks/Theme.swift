@@ -5,22 +5,55 @@ import WhileCore
 /// Shared colours, type and small controls for the menu bar panel and windows.
 /// Everything adapts to light and dark appearance; system colours carry the rest.
 enum Theme {
-    static let accent = Color(nsColor: .adaptive(light: 0x2F7A63, dark: 0x6CC6A5))
+    /// The one green. Text, selection, quota rings, the Codex mark and "working" all use it.
+    static let accentColor = NSColor.adaptive(light: 0x237E60, dark: 0x8EDCC1)
+    static let accent = Color(nsColor: accentColor)
+    /// Paper and ink surfaces shared by the dock, its card, the panel and settings.
+    static let surfaceColor = NSColor.adaptive(light: 0xFAFAFC, dark: 0x060708)
+    static let surface = Color(nsColor: surfaceColor)
     static let gold = Color(nsColor: .adaptive(light: 0xA66F1C, dark: 0xE5B75C))
     static let attention = Color(nsColor: .adaptive(light: 0x94601C, dark: 0xE5B75C))
     static let attentionBadge = Color(nsColor: .adaptive(light: 0xF0CC83, dark: 0xE5B75C))
+    /// Request badge glyphs ("?", "!", counts) on `attentionBadge`.
+    static let badgeInk = Color(rgb: 0x211B0D)
+    /// Completion badge and its paw print.
+    static let accentBadge = Color(rgb: 0x8EDCC1)
+    static let accentBadgeInk = Color(rgb: 0x0F3B2C)
+    /// Secondary glyphs drawn outside native controls, such as the dock's three dots.
+    static let inkSecondary = Color(nsColor: .adaptive(light: 0x505660, dark: 0xCDD2DA))
     static let silver = Color(nsColor: .adaptive(light: 0x8B939C, dark: 0xC3CAD2))
-    static let working = Color(nsColor: .adaptive(light: 0x2F9A6C, dark: 0x5FD39A))
+    static let working = accent
     /// A quiet fill for grouped rows sitting on window or panel material.
     static let well = Color(nsColor: .adaptive(light: 0x000000, dark: 0xFFFFFF, lightAlpha: 0.045, darkAlpha: 0.06))
     static let wellStrong = Color(nsColor: .adaptive(light: 0x000000, dark: 0xFFFFFF, lightAlpha: 0.075, darkAlpha: 0.1))
     static let heroEdge = Color(nsColor: .adaptive(light: 0xFFFFFF, dark: 0xFFFFFF, lightAlpha: 0.7, darkAlpha: 0.08))
 
-    static let spring = Animation.spring(duration: 0.38, bounce: 0.22)
-    static let quick = Animation.spring(duration: 0.25, bounce: 0.15)
+    static let panelCornerRadius: CGFloat = 14
+
+    static let spring = Motion.base
+    static let quick = Motion.snap
 
     static func number(_ size: CGFloat, weight: Font.Weight = .semibold) -> Font {
         .system(size: size, weight: weight, design: .rounded).monospacedDigit()
+    }
+}
+
+/// One set of timings for SwiftUI and Core Animation: a light spring, a little
+/// cat-like bounce. With Reduce Motion every spring becomes the short fade.
+enum Motion {
+    static let fast = Animation.easeOut(duration: 0.15)
+    static let snap = Animation.spring(duration: 0.25, bounce: 0.15)
+    static let base = Animation.spring(duration: 0.38, bounce: 0.22)
+    static let slow = Animation.easeInOut(duration: 0.6)
+    /// One full left-right-left swing of a working client mark.
+    static let swingPeriod: CFTimeInterval = 2.4
+
+    static func resolved(_ animation: Animation, reduceMotion: Bool) -> Animation { reduceMotion ? fast : animation }
+    static func springAnimation(keyPath: String, base: Bool = true) -> CASpringAnimation {
+        let spring = CASpringAnimation(perceptualDuration: base ? 0.38 : 0.25, bounce: base ? 0.22 : 0.15)
+        spring.keyPath = keyPath
+        spring.duration = spring.settlingDuration
+        return spring
     }
 }
 
@@ -30,6 +63,15 @@ extension NSColor {
             let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
             return NSColor(rgb: isDark ? dark : light, alpha: isDark ? darkAlpha : lightAlpha)
         }
+    }
+
+    /// A dynamic colour pinned to light or dark, for drawing outside a view's appearance.
+    func resolved(dark: Bool) -> NSColor {
+        var color = self
+        NSAppearance(named: dark ? .darkAqua : .aqua)?.performAsCurrentDrawingAppearance {
+            color = self.usingColorSpace(.sRGB) ?? self
+        }
+        return color
     }
 
     convenience init(rgb: UInt32, alpha: CGFloat = 1) {
@@ -62,6 +104,28 @@ struct PressableButtonStyle: ButtonStyle {
                 .animation(Theme.quick, value: configuration.isPressed)
                 .animation(.easeOut(duration: 0.12), value: hovering)
                 .onHover { hovering = $0 }
+                .contentShape(Rectangle())
+        }
+    }
+}
+
+/// The one filled action in a request: mint with ink that reads in both appearances.
+struct DockPrimaryButtonStyle: ButtonStyle {
+    static let ink = Color(nsColor: .adaptive(light: 0xFFFFFF, dark: 0x0F3B2C))
+    func makeBody(configuration: Configuration) -> some View {
+        DockPrimaryBody(configuration: configuration)
+    }
+    private struct DockPrimaryBody: View {
+        let configuration: ButtonStyleConfiguration
+        @Environment(\.isEnabled) private var enabled
+        var body: some View {
+            configuration.label
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(DockPrimaryButtonStyle.ink)
+                .padding(.horizontal, 11).padding(.vertical, 5)
+                .background(Theme.accent.opacity(enabled ? 1 : 0.35), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                .scaleEffect(configuration.isPressed ? 0.96 : 1)
+                .animation(Motion.snap, value: configuration.isPressed)
                 .contentShape(Rectangle())
         }
     }
@@ -103,7 +167,7 @@ struct ForestBackdrop: View {
                 startPoint: .zero, endPoint: CGPoint(x: 0, y: h)))
             let centre = CGPoint(x: w * focus, y: h * 0.55)
             context.fill(Path(ellipseIn: CGRect(x: centre.x - h, y: centre.y - h, width: 2 * h, height: 2 * h)), with: .radialGradient(
-                Gradient(colors: dark ? [Color(rgb: 0x6FDCC6).opacity(0.16), Color(rgb: 0x6FDCC6).opacity(0)]
+                Gradient(colors: dark ? [Color(rgb: 0x8EDCC1).opacity(0.16), Color(rgb: 0x8EDCC1).opacity(0)]
                                       : [Color.white.opacity(0.75), Color.white.opacity(0)]),
                 center: centre, startRadius: 0, endRadius: h))
             let trunk = dark ? Color(rgb: 0x0C1A20).opacity(0.85) : Color(rgb: 0xD0DFDA).opacity(0.45)
@@ -154,6 +218,20 @@ struct ActivityDot: View {
         .frame(width: 6, height: 6)
         .onAppear { withAnimation(.easeOut(duration: 1.4).repeatForever(autoreverses: false)) { pulse = true } }
         .accessibilityHidden(true)
+    }
+}
+
+/// The panel's own background: the dock's solid paper/ink, or frosted glass when
+/// chosen, in which case the window's vibrancy shows through.
+struct PanelSurface: ViewModifier {
+    let material: PanelMaterial
+    var radius: CGFloat = Theme.panelCornerRadius
+    func body(content: Content) -> some View {
+        content.background {
+            if material == .solid {
+                RoundedRectangle(cornerRadius: radius, style: .continuous).fill(Theme.surface)
+            }
+        }
     }
 }
 

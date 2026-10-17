@@ -27,6 +27,10 @@ enum DesktopDockGeometry {
     static let tile: CGFloat = 50
     static let thickness: CGFloat = 52
     static let detailSize = CGSize(width: 460, height: 520)
+    /// The card window grows with its content between these heights.
+    static let minDetailHeight: CGFloat = 300
+    /// Window height around the card itself: room for the perched cat above, shadow below.
+    static let cardChrome: CGFloat = 90
 
     static func size(orientation: DesktopDockOrientation, sources: Int) -> CGSize {
         let length = head + CGFloat(max(1, sources)) * tile + foot
@@ -88,10 +92,11 @@ enum DesktopDockGeometry {
         case .bottom: return point.y <= visible.minY + 8
         }
     }
-    static func detailFrame(dock: CGRect, anchor: CGPoint, edge: DesktopDockEdge, visible: CGRect) -> CGRect {
+    static func detailFrame(dock: CGRect, anchor: CGPoint, edge: DesktopDockEdge, visible: CGRect, height: CGFloat? = nil) -> CGRect {
+        let wanted = height.map { min(detailSize.height, max(minDetailHeight, $0)) } ?? detailSize.height
         let size = CGSize(
             width: min(detailSize.width, visible.width - margin * 2 - (edge.orientation == .vertical ? dock.width + 2 : 0)),
-            height: min(detailSize.height, visible.height - margin * 2 - (edge.orientation == .horizontal ? dock.height + 2 : 0)))
+            height: min(wanted, visible.height - margin * 2 - (edge.orientation == .horizontal ? dock.height + 2 : 0)))
         var origin: CGPoint
         switch edge {
         case .right: origin = CGPoint(x: dock.minX - size.width - 2, y: anchor.y - size.height * 0.55)
@@ -117,7 +122,7 @@ struct CompanionMaterial: View {
     @Environment(\.colorScheme) private var scheme
     var body: some View {
         RoundedRectangle(cornerRadius: radius, style: .continuous)
-            .fill(scheme == .dark ? Color(rgb: 0x060708) : Color(rgb: 0xFAFAFC))
+            .fill(Theme.surface)
             .overlay {
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
                     .strokeBorder(scheme == .dark ? .white.opacity(0.07) : .black.opacity(0.06), lineWidth: 0.5)
@@ -133,6 +138,26 @@ struct CatDockContour: Shape {
     var orientation: DesktopDockOrientation
     var edge: DesktopDockEdge
     var attachment: DesktopDockAttachment
+    var ears = true
+    /// The body and tail alone, for drawing beneath separately animated ears.
+    var withoutEars: CatDockContour { var copy = self; copy.ears = false; return copy }
+    /// One ear in the vertical layout's coordinates, turned about its root.
+    static func ear(width: CGFloat, left: Bool, angle: Double) -> Path {
+        let base: CGFloat = left ? 10 : width - 10, sign: CGFloat = left ? 1 : -1
+        var ear = Path()
+        ear.move(to: CGPoint(x: base + sign * 3, y: 29))
+        ear.addLine(to: CGPoint(x: base + sign * 5, y: 6))
+        ear.addQuadCurve(to: CGPoint(x: base + sign * 11, y: 3), control: CGPoint(x: base + sign * 6, y: 0))
+        ear.addLine(to: CGPoint(x: base + sign * 25, y: 23))
+        ear.closeSubpath()
+        guard angle != 0 else { return ear }
+        // Ears turn outward together: "back" for the left ear is anticlockwise.
+        let root = CGPoint(x: base + sign * 14, y: 26)
+        let turn = CGAffineTransform(translationX: root.x, y: root.y)
+            .rotated(by: CGFloat(angle) * .pi / 180 * sign)
+            .translatedBy(x: -root.x, y: -root.y)
+        return ear.applying(turn)
+    }
     func path(in rect: CGRect) -> Path {
         let vertical = orientation == .vertical
         let width = vertical ? rect.width : rect.height
@@ -157,14 +182,10 @@ struct CatDockContour: Shape {
             path = contactRight ? body : body.applying(CGAffineTransform(a: -1, b: 0, c: 0, d: 1, tx: width, ty: 0))
         }
         // These native contour extensions share the capsule fill, with no seams.
-        for (base, sign) in [(l, CGFloat(1)), (r, CGFloat(-1))] {
-            var ear = Path()
-            ear.move(to: CGPoint(x: base + sign * 3, y: 29))
-            ear.addLine(to: CGPoint(x: base + sign * 5, y: 6))
-            ear.addQuadCurve(to: CGPoint(x: base + sign * 11, y: 3), control: CGPoint(x: base + sign * 6, y: 0))
-            ear.addLine(to: CGPoint(x: base + sign * 25, y: 23))
-            ear.closeSubpath()
-            path = Path(path.cgPath.union(ear.cgPath))
+        if ears {
+            for left in [true, false] {
+                path = Path(path.cgPath.union(Self.ear(width: width, left: left, angle: 0).cgPath))
+            }
         }
         // A narrow curl begins inside the rounded base and turns inward.
         var tail = Path()
@@ -177,6 +198,66 @@ struct CatDockContour: Shape {
         tail.closeSubpath(); path = Path(path.cgPath.union(tail.cgPath))
         if !vertical { path = path.applying(CGAffineTransform(a: 0, b: 1, c: 1, d: 0, tx: 0, ty: 0)) }
         return path.applying(CGAffineTransform(translationX: rect.minX, y: rect.minY))
+    }
+}
+
+/// Content for one client swaps in place: the new content fades in from 6 pt
+/// along the dock while the old fades out, without re-running the card's entrance.
+final class CardHeightMeter {
+    var card: CGFloat = 0
+    var viewport: CGFloat = 0
+    var content: CGFloat = 0
+    var reported: CGFloat = 0
+}
+
+private struct DockCardHeight: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+}
+private struct DockViewportHeight: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+}
+
+private struct SourceSwap: ViewModifier {
+    let source: WorkSource?
+    let offset: CGSize
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    func body(content: Content) -> some View {
+        ZStack(alignment: .topLeading) {
+            content.id(source)
+                .transition(.asymmetric(insertion: .offset(offset).combined(with: .opacity), removal: .opacity))
+        }
+        // Scoped to this swap: the rest of the card does not animate with it.
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: source)
+    }
+}
+
+/// A dock ear drawn on its own, matching the contour's ear when `angle` is zero.
+struct CatDockEar: Shape {
+    var orientation: DesktopDockOrientation
+    var left: Bool
+    var angle: Double
+    var animatableData: Double {
+        get { angle }
+        set { angle = newValue }
+    }
+    func path(in rect: CGRect) -> Path {
+        let vertical = orientation == .vertical
+        var ear = CatDockContour.ear(width: vertical ? rect.width : rect.height, left: left, angle: angle)
+        if !vertical { ear = ear.applying(CGAffineTransform(a: 0, b: 1, c: 1, d: 0, tx: 0, ty: 0)) }
+        return ear.applying(CGAffineTransform(translationX: rect.minX, y: rect.minY))
+    }
+}
+
+/// Ears flick back 8°, overshoot 4° and settle; the second ear follows 40 ms later.
+struct EarTwitch {
+    var left = 0.0
+    var right = 0.0
+    @KeyframeTrackContentBuilder<Double> static var flick: some KeyframeTrackContent<Double> {
+        CubicKeyframe(-8, duration: 0.12)
+        CubicKeyframe(4, duration: 0.1)
+        SpringKeyframe(0, duration: 0.2, spring: .snappy)
     }
 }
 
@@ -208,8 +289,7 @@ struct AgentMark: View {
         Group {
             if let mark = AgentMarkAssets.image(name) {
                 if source == .codex {
-                    Image(nsImage: mark).resizable().renderingMode(.template)
-                        .foregroundStyle(scheme == .dark ? Color(rgb: 0x8EDCC1) : Color(rgb: 0x237E60))
+                    Image(nsImage: mark).resizable().renderingMode(.template).foregroundStyle(Theme.accent)
                 } else { Image(nsImage: mark).resizable() }
             } else { Image(systemName: source.dockSymbol).resizable().scaledToFit() }
         }.scaledToFit().frame(width: size, height: size).accessibilityHidden(true)
@@ -222,6 +302,8 @@ struct DesktopDockSurface: View {
     var hover: (WorkSource, Bool) -> Void = { _, _ in }
     var settings: () -> Void = {}
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ObservedObject private var stamps = DockStampCenter.shared
     @State private var optionsHovered = false
     private var vertical: Bool { state.desktopDockOrientation == .vertical }
     var sources: [WorkSource] { WorkSource.dockOrder.filter { state.selectedSources.contains($0) } }
@@ -247,11 +329,36 @@ struct DesktopDockSurface: View {
         }
         .padding(DesktopDockGeometry.padding)
         .frame(width: size.width, height: size.height)
+        .background { selectionWell }
         .background {
-            contour.fill(scheme == .dark ? Color(rgb: 0x060708) : Color(rgb: 0xFAFAFC))
+            // The ears are drawn apart from the body so they can twitch when a
+            // stamp lands; the contour (with ears) still defines hit testing.
+            KeyframeAnimator(initialValue: EarTwitch(), trigger: reduceMotion ? 0 : stamps.earTwitch) { twitch in
+                ZStack {
+                    contour.withoutEars.fill(Theme.surface)
+                    CatDockEar(orientation: state.desktopDockOrientation, left: true, angle: twitch.left).fill(Theme.surface)
+                    CatDockEar(orientation: state.desktopDockOrientation, left: false, angle: twitch.right).fill(Theme.surface)
+                }
+                .compositingGroup()
                 .shadow(color: .black.opacity(scheme == .dark ? 0.24 : 0.12), radius: 5, x: 0, y: 2)
+            } keyframes: { _ in
+                KeyframeTrack(\.left) { EarTwitch.flick }
+                KeyframeTrack(\.right) { LinearKeyframe(0, duration: 0.04); EarTwitch.flick }
+            }
         }
         .contentShape(contour)
+    }
+    /// One well behind the tiles slides to the shown agent. Only it animates: an
+    /// animation on the whole rail would recompute every tile on every frame.
+    private var selectionWell: some View {
+        let index = state.desktopDockSource.flatMap { sources.firstIndex(of: $0) }
+        let tile = DesktopDockGeometry.tileFrame(index: index ?? 0, orientation: state.desktopDockOrientation)
+        return Circle().fill(Theme.wellStrong).frame(width: 44, height: 44)
+            .position(x: tile.midX, y: tile.midY)
+            .animation(reduceMotion ? nil : Motion.snap, value: index)
+            .opacity(index != nil && state.desktopPetShowsStatus ? 1 : 0)
+            .animation(reduceMotion ? nil : Motion.fast, value: state.desktopPetShowsStatus)
+            .allowsHitTesting(false).accessibilityHidden(true)
     }
     private var head: some View {
         // The native host handles this region as an overview button and drag grip.
@@ -302,7 +409,7 @@ struct DesktopDockSurface: View {
         .overlay {
             HStack(spacing: 3) {
                 ForEach(0..<3) { _ in
-                    Circle().fill(scheme == .dark ? Color(rgb: 0xCDD2DA) : Color(rgb: 0x505660))
+                    Circle().fill(Theme.inkSecondary)
                         .frame(width: 3, height: 3)
                 }
             }
@@ -325,13 +432,18 @@ private struct DesktopDockTile: View {
     let action: () -> Void
     let hover: (Bool) -> Void
     @State private var hovered = false
+    @State private var pawShown = false
+    @State private var following = false
+    @State private var stamps = 0
+    @State private var requestDrops = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private var count: Int { state.agentRunningCount(for: source) }
     private var selected: Bool { state.desktopPetShowsStatus && state.desktopDockSource == source }
     private var quota: AgentDockQuota? { state.dockQuota(for: source) }
+    private var completion: Date? { state.unseenCompletion(for: source) }
     private var ringColor: Color {
         guard let quota, !quota.stale else { return .secondary.opacity(0.4) }
-        return (quota.remaining ?? 100) <= 15 ? .orange : Theme.accent
+        return (quota.remaining ?? 100) <= 15 ? Theme.attention : Theme.accent
     }
     private var quotaHint: String {
         guard let quota, let remaining = quota.remaining else {
@@ -345,61 +457,242 @@ private struct DesktopDockTile: View {
             Circle().trim(from: 0, to: CGFloat(min(1, max(0, remaining / 100))))
                 .stroke(ringColor, style: StrokeStyle(lineWidth: 2, lineCap: .round))
                 .rotationEffect(.degrees(-90)).frame(width: 36, height: 36)
+                .animation(reduceMotion ? nil : Motion.slow, value: remaining)
         }
     }
     private var spokenLabel: String { "\(source.clientName)，\(state.desktopPetStatus(for: source))，\(quotaHint)" }
     private var waiting: [AgentInteraction] { state.interactions(for: source) }
+    private var requestGlyph: String? {
+        waiting.isEmpty ? nil : waiting.count > 1 ? String(min(99, waiting.count)) : waiting[0].request.isQuestion ? "?" : "!"
+    }
     private var attentionLabel: String { waiting.isEmpty ? "" : "，\(waiting.count) 个待处理请求" }
-    private var tooltip: String { "\(source.clientName) · \(state.desktopPetStatus(for: source))\(attentionLabel)\n\(quotaHint)\n点击固定工作卡片；拖动猫头可换边" }
+    private var completionLabel: String { pawShown ? "，有新完成" : "" }
+    private var completionHint: String {
+        completion.map { "\n已完成 · " + $0.formatted(date: .omitted, time: .shortened) } ?? ""
+    }
+    private var tooltip: String {
+        "\(source.clientName) · \(state.desktopPetStatus(for: source))\(attentionLabel)\(completionHint)\n\(quotaHint)\n点击固定工作卡片；拖动猫头可换边"
+    }
     var body: some View {
         Button(action: action) {
             ZStack {
-                Circle().fill(selected || hovered ? Theme.wellStrong : Color.clear).frame(width: 44, height: 44)
+                Circle().fill(Theme.wellStrong).frame(width: 44, height: 44).opacity(hovered && !selected ? 1 : 0)
                 ring
-                AgentActivityMark(source: source, working: count > 0).frame(width: 24, height: 24)
+                AgentActivityMark(source: source, working: count > 0, stamp: stamps).frame(width: 24, height: 24)
                     .allowsHitTesting(false).accessibilityHidden(true)
-                if !waiting.isEmpty {
-                    Text(waiting.count > 1 ? String(min(99, waiting.count)) : waiting[0].request.isQuestion ? "?" : "!")
-                        .font(.system(size: 9, weight: .bold)).foregroundStyle(Color(rgb: 0x211B0D))
-                        .frame(width: 15, height: 15).background(Theme.attentionBadge, in: Circle())
-                        .overlay(Circle().stroke(Color(nsColor: .adaptive(light: 0xFAFAFC, dark: 0x060708)), lineWidth: 1.5))
-                        .offset(x: 16, y: -16).accessibilityHidden(true)
-                }
+                DockTileBadges(request: requestGlyph, paw: pawShown, fanned: hovered,
+                               clockwise: state.desktopDockEdge == .left || state.desktopDockEdge == .top,
+                               stamps: stamps, requestDrops: requestDrops)
             }
             .frame(width: vertical ? DesktopDockGeometry.thickness : DesktopDockGeometry.tile,
                    height: vertical ? DesktopDockGeometry.tile : DesktopDockGeometry.thickness)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(DockTilePressStyle())
         .onHover { hovered = $0; hover($0) }
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: hovered)
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: selected)
-        .accessibilityLabel(spokenLabel + attentionLabel)
+        .animation(reduceMotion ? nil : Motion.fast, value: hovered)
+        .task(id: completion) { await follow(completion) }
+        .onChange(of: requestGlyph == nil) { wasEmpty, isEmpty in
+            if wasEmpty && !isEmpty && !reduceMotion { requestDrops += 1 }
+        }
+        .accessibilityLabel(spokenLabel + attentionLabel + completionLabel)
         .accessibilityIdentifier("cat-dock-" + source.rawValue)
         .help(tooltip)
     }
+    /// A completion that arrives while the dock is up is stamped: the swing comes to
+    /// rest first, then the paw falls. One already waiting at launch is just shown.
+    @MainActor private func follow(_ completion: Date?) async {
+        guard following else { following = true; pawShown = completion != nil; return }
+        guard completion != nil else {
+            if pawShown { withAnimation(Motion.fast) { pawShown = false } }
+            return
+        }
+        guard !pawShown else { return }
+        let delay = (reduceMotion ? 0 : 0.35) + DockStampCenter.shared.claim()
+        try? await Task.sleep(for: .seconds(delay))
+        guard !Task.isCancelled else { return }
+        if reduceMotion { withAnimation(Motion.fast) { pawShown = true } } else { pawShown = true; stamps += 1 }
+        try? await Task.sleep(for: .seconds(reduceMotion ? 0 : AgentActivityMarkView.stampContact))
+        DockStampCenter.shared.contact(sound: state.soundEnabled)
+    }
 }
 
-/// The logo rocks gently and breathes so work is visible at a glance. The quota
-/// ring stays still, and animation frames never pass through AppState.
+/// The selection well slides between tiles in the surface; the tile itself only
+/// answers a press.
+private struct DockTilePressStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.94 : 1)
+            .animation(Motion.snap, value: configuration.isPressed)
+    }
+}
+
+/// Coordinates completion stamps across the dock: stamps within 1.5 s fall one
+/// after another, and only the first sounds and twitches the cat's ears.
+final class DockStampCenter: ObservableObject {
+    static let shared = DockStampCenter()
+    static let batchWindow: TimeInterval = 1.5
+    static let stagger: TimeInterval = 0.08
+    @Published private(set) var earTwitch = 0
+    private var batchStart = -TimeInterval.infinity
+    private var batchCount = 0
+    private var lastContact = -TimeInterval.infinity
+    /// Extra delay before this stamp falls.
+    func claim(now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> TimeInterval {
+        if now - batchStart > Self.batchWindow { batchStart = now; batchCount = 0 }
+        defer { batchCount += 1 }
+        return Double(batchCount) * Self.stagger
+    }
+    /// Called at a stamp's contact frame. Returns whether it sounded.
+    @discardableResult
+    func contact(sound: Bool, now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> Bool {
+        guard now - lastContact > Self.batchWindow else { return false }
+        lastContact = now
+        if sound { PlayAudio.shared.stamp() }
+        earTwitch += 1
+        return true
+    }
+}
+
+/// Badges share one spot on the ring (top-right, 45°). A request needs the user,
+/// so it stays in front; a completion paw tucks behind it, showing a sliver, and
+/// fans out along the ring toward the screen's interior while the tile is hovered.
+private struct DockTileBadges: View {
+    static let radius: CGFloat = 22.6
+    let request: String?
+    let paw: Bool
+    let fanned: Bool
+    let clockwise: Bool
+    let stamps: Int
+    let requestDrops: Int
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private var both: Bool { request != nil && paw }
+    var pawAngle: Double { both ? (fanned ? (clockwise ? 71 : 19) : 54) : 45 }
+    var requestAngle: Double { both && fanned ? (clockwise ? 41 : 49) : 45 }
+    var body: some View {
+        ZStack {
+            ZStack {
+                if !reduceMotion {
+                    KeyframeAnimator(initialValue: StampRipple(), trigger: stamps) { ripple in
+                        Circle().stroke(Theme.accentBadge, lineWidth: 1.2).frame(width: 15, height: 15)
+                            .scaleEffect(ripple.scale).opacity(ripple.opacity)
+                    } keyframes: { _ in
+                        KeyframeTrack(\.opacity) {
+                            LinearKeyframe(0, duration: AgentActivityMarkView.stampContact)
+                            MoveKeyframe(0.55); LinearKeyframe(0, duration: 0.5, timingCurve: .easeOut)
+                        }
+                        KeyframeTrack(\.scale) {
+                            LinearKeyframe(1, duration: AgentActivityMarkView.stampContact)
+                            LinearKeyframe(2.1, duration: 0.5, timingCurve: .easeOut)
+                        }
+                    }
+                }
+                badge(fill: Theme.accentBadge) {
+                    Image(systemName: "pawprint.fill").font(.system(size: 7.5, weight: .bold))
+                        .foregroundStyle(Theme.accentBadgeInk)
+                }
+                .stampDrop(trigger: stamps, amplitude: 1)
+                .scaleEffect(paw ? 1 : 0.6).opacity(paw ? 1 : 0)
+            }
+            .modifier(RingPosition(angle: pawAngle))
+            badge(fill: Theme.attentionBadge) {
+                Text(request ?? "?").font(.system(size: 9, weight: .bold)).foregroundStyle(Theme.badgeInk)
+            }
+            .stampDrop(trigger: requestDrops, amplitude: 0.5)
+            .opacity(request == nil ? 0 : 1)
+            .animation(Motion.fast, value: request == nil)
+            .modifier(RingPosition(angle: requestAngle))
+        }
+        .animation(Motion.resolved(Motion.snap, reduceMotion: reduceMotion), value: pawAngle)
+        .animation(Motion.resolved(Motion.snap, reduceMotion: reduceMotion), value: requestAngle)
+        .allowsHitTesting(false).accessibilityHidden(true)
+    }
+    private func badge<Glyph: View>(fill: Color, @ViewBuilder glyph: () -> Glyph) -> some View {
+        Circle().fill(fill).frame(width: 15, height: 15)
+            .overlay { glyph() }
+            .overlay(Circle().stroke(Theme.surface, lineWidth: 1.5))
+    }
+}
+
+private struct StampRipple { var scale = 1.0; var opacity = 0.0 }
+private struct StampFrame { var scale = 1.0; var angle = 0.0; var opacity = 1.0 }
+
+extension View {
+    /// A stamp falls from above, tilted, presses in on contact and springs to rest.
+    /// `amplitude` 1 is the completion paw; requests use a gentler 0.5.
+    fileprivate func stampDrop(trigger: Int, amplitude: Double) -> some View {
+        keyframeAnimator(initialValue: StampFrame(), trigger: trigger) { content, frame in
+            content.scaleEffect(frame.scale).rotationEffect(.degrees(frame.angle)).opacity(frame.opacity)
+        } keyframes: { _ in
+            KeyframeTrack(\.scale) {
+                MoveKeyframe(1 + 0.9 * amplitude)
+                CubicKeyframe(1 - 0.16 * amplitude, duration: AgentActivityMarkView.stampContact)
+                CubicKeyframe(1 + 0.07 * amplitude, duration: 0.15)
+                SpringKeyframe(1, duration: 0.1, spring: .snappy)
+            }
+            KeyframeTrack(\.angle) {
+                MoveKeyframe(-16 * amplitude)
+                CubicKeyframe(0, duration: AgentActivityMarkView.stampContact)
+            }
+            KeyframeTrack(\.opacity) {
+                MoveKeyframe(0)
+                LinearKeyframe(1, duration: 0.12)
+            }
+        }
+    }
+}
+
+/// Places a badge on the circle around a tile, measured clockwise from the top,
+/// so a change of angle travels along the ring rather than cutting across it.
+private struct RingPosition: ViewModifier, Animatable {
+    var angle: Double
+    var animatableData: Double {
+        get { angle }
+        set { angle = newValue }
+    }
+    func body(content: Content) -> some View {
+        let radians = angle * .pi / 180
+        content.offset(x: DockTileBadges.radius * sin(radians), y: -DockTileBadges.radius * cos(radians))
+    }
+}
+
+/// A working mark swings in one continuous sine (±8°) and breathes, fullest as it
+/// passes upright, so work is visible at a glance without the old stop at every
+/// keyframe. Each client keeps its own phase, so several marks never swing in
+/// lockstep. The quota ring stays still, and animation frames never pass through
+/// AppState.
 struct AgentActivityMark: NSViewRepresentable {
     let source: WorkSource
     let working: Bool
+    /// Bumped when a completion stamp lands on this mark; the mark dips under it.
+    var stamp = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var scheme
     func makeNSView(context: Context) -> AgentActivityMarkView { AgentActivityMarkView() }
     func updateNSView(_ view: AgentActivityMarkView, context: Context) {
         view.configure(source: source, dark: scheme == .dark, working: working, reduceMotion: reduceMotion)
+        view.press(stamp)
     }
 }
 
 final class AgentActivityMarkView: NSView {
+    static let swingAngle = 8.0 * Double.pi / 180
+    static let breath = 0.06
+    static let rampDuration: CFTimeInterval = 0.6
+    /// When a stamp's contact frame lands after the stamp starts to fall.
+    static let stampContact: CFTimeInterval = 0.17
     private let mark = CALayer()
     private var observer: NSObjectProtocol?
     private var reduceMotion = false
     private var working = false
+    private var phase: CFTimeInterval = 0
     private var assetKey: String?
-    var isAnimating: Bool { mark.animation(forKey: "working-icon") != nil }
+    private var stamp = 0
+    private(set) var source: WorkSource?
+    var isAnimating: Bool { mark.animation(forKey: "working-swing") != nil }
+    /// The angle on screen right now, in radians.
+    var presentedAngle: Double { (mark.presentation()?.value(forKeyPath: "transform.rotation.z") as? NSNumber)?.doubleValue ?? 0 }
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true; mark.contentsGravity = .resizeAspect
@@ -410,7 +703,9 @@ final class AgentActivityMarkView: NSView {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     deinit { if let observer { NotificationCenter.default.removeObserver(observer) } }
     func configure(source: WorkSource, dark: Bool, working: Bool, reduceMotion: Bool) {
-        self.working = working; self.reduceMotion = reduceMotion
+        self.working = working; self.reduceMotion = reduceMotion; self.source = source
+        // A quarter period apart in dock order: neighbours are never in step.
+        phase = CFTimeInterval(WorkSource.dockOrder.firstIndex(of: source) ?? 0) * Motion.swingPeriod / 4
         let name: String
         switch source {
         case .codex: name = "chatgpt"
@@ -424,7 +719,7 @@ final class AgentActivityMarkView: NSView {
             if let image = AgentMarkAssets.image(name) ?? NSImage(systemSymbolName: source.dockSymbol, accessibilityDescription: nil) {
                 let rendered: NSImage
                 if source == .codex {
-                    let tint = NSColor(rgb: dark ? 0x8EDCC1 : 0x237E60)
+                    let tint = Theme.accentColor.resolved(dark: dark)
                     rendered = NSImage(size: image.size, flipped: false) { rect in
                         image.draw(in: rect); tint.setFill(); rect.fill(using: .sourceIn); return true
                     }
@@ -435,6 +730,18 @@ final class AgentActivityMarkView: NSView {
             }
         }
         updateActivity()
+    }
+    /// The mark is pressed down by a landing stamp, then springs back.
+    func press(_ token: Int) {
+        guard token != stamp else { return }
+        stamp = token
+        guard !reduceMotion, window != nil else { return }
+        let dip = CAKeyframeAnimation(keyPath: "transform.scale")
+        dip.values = [0, -0.08, 0]; dip.keyTimes = [0, 0.4, 1]; dip.isAdditive = true
+        dip.timingFunctions = [CAMediaTimingFunction(name: .easeOut), CAMediaTimingFunction(name: .easeInEaseOut)]
+        dip.duration = 0.28
+        dip.beginTime = mark.convertTime(CACurrentMediaTime(), from: nil) + Self.stampContact
+        mark.add(dip, forKey: "stamp-dip")
     }
     override func layout() {
         super.layout()
@@ -456,24 +763,59 @@ final class AgentActivityMarkView: NSView {
         updateActivity()
     }
     private func updateActivity() {
-        guard working, !reduceMotion, bounds.width > 0, let window, window.isVisible, window.occlusionState.contains(.visible) else {
-            mark.removeAnimation(forKey: "working-icon"); return
+        let visible = bounds.width > 0 && window.map { $0.isVisible && $0.occlusionState.contains(.visible) } ?? false
+        if working && !reduceMotion && visible {
+            if !isAnimating { startSwing() }
+        } else if isAnimating {
+            // Work ended: come to rest upright. Hidden or reduced motion: stop at once.
+            settle(animated: working == false && !reduceMotion && visible)
         }
-        guard !isAnimating else { return }
-        let duration = 1.8
-        let times: [NSNumber] = [0, 0.25, 0.5, 0.75, 1]
-        let easing = Array(repeating: CAMediaTimingFunction(name: .easeInEaseOut), count: 4)
-        let rock = CAKeyframeAnimation(keyPath: "transform.rotation.z")
-        let angle = 12.0 * Double.pi / 180
-        rock.values = [0, angle, 0, -angle, 0]
-        rock.keyTimes = times; rock.timingFunctions = easing; rock.duration = duration
+    }
+    /// The swing eases in from rest over its first moments, then hands over to the
+    /// loop with matching angle and speed.
+    private func startSwing() {
+        let now = mark.convertTime(CACurrentMediaTime(), from: nil)
+        mark.removeAnimation(forKey: "working-settle"); mark.removeAnimation(forKey: "working-settle-scale")
+        let ramp = swingTrack(start: 0, duration: Self.rampDuration, ramp: true)
+        ramp.beginTime = now; ramp.fillMode = .forwards; ramp.isRemovedOnCompletion = false
+        let loop = swingTrack(start: Self.rampDuration, duration: Motion.swingPeriod, ramp: false)
+        loop.beginTime = now + Self.rampDuration; loop.repeatCount = .infinity
+        mark.add(ramp, forKey: "working-ramp")
+        mark.add(loop, forKey: "working-swing")
+    }
+    private func settle(animated: Bool) {
+        let presented = mark.presentation()
+        let angle = (presented?.value(forKeyPath: "transform.rotation.z") as? NSNumber)?.doubleValue ?? 0
+        let scale = (presented?.value(forKeyPath: "transform.scale") as? NSNumber)?.doubleValue ?? 1
+        mark.removeAnimation(forKey: "working-ramp"); mark.removeAnimation(forKey: "working-swing")
+        guard animated else { return }
+        let rotation = Motion.springAnimation(keyPath: "transform.rotation.z")
+        rotation.fromValue = angle; rotation.toValue = 0
+        let breath = Motion.springAnimation(keyPath: "transform.scale")
+        breath.fromValue = scale; breath.toValue = 1
+        mark.add(rotation, forKey: "working-settle"); mark.add(breath, forKey: "working-settle-scale")
+    }
+    /// Sampled sine keyframes: angle θ = A·sin(2πt/T); scale is largest at θ = 0.
+    /// The ramp multiplies both by a smoothstep from rest.
+    private func swingTrack(start: CFTimeInterval, duration: CFTimeInterval, ramp: Bool) -> CAAnimationGroup {
+        let steps = ramp ? 18 : 48
+        var angles: [NSNumber] = [], scales: [NSNumber] = [], times: [NSNumber] = []
+        for step in 0...steps {
+            let progress = Double(step) / Double(steps)
+            let t = start + duration * progress + phase
+            let weight = ramp ? progress * progress * (3 - 2 * progress) : 1
+            angles.append(NSNumber(value: weight * Self.swingAngle * sin(2 * .pi * t / Motion.swingPeriod)))
+            scales.append(NSNumber(value: 1 + weight * Self.breath / 2 * (1 + cos(4 * .pi * t / Motion.swingPeriod))))
+            times.append(NSNumber(value: progress))
+        }
+        let rotation = CAKeyframeAnimation(keyPath: "transform.rotation.z")
+        rotation.values = angles; rotation.keyTimes = times; rotation.calculationMode = .cubic
         let breath = CAKeyframeAnimation(keyPath: "transform.scale")
-        breath.values = [1, 1.08, 1.12, 1.08, 1]
-        breath.keyTimes = times; breath.timingFunctions = easing; breath.duration = duration
-        let activity = CAAnimationGroup()
-        activity.animations = [rock, breath]
-        activity.duration = duration; activity.repeatCount = .infinity
-        mark.add(activity, forKey: "working-icon")
+        breath.values = scales; breath.keyTimes = times; breath.calculationMode = .cubic
+        let group = CAAnimationGroup()
+        group.animations = [rotation, breath]; group.duration = duration
+        rotation.duration = duration; breath.duration = duration
+        return group
     }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
@@ -482,37 +824,65 @@ struct DesktopDockDetailView: View {
     @ObservedObject var state: AppState
     var close: () -> Void = {}
     var settings: () -> Void = {}
+    /// The card's height with all of its content in view, for sizing the window.
+    var idealHeight: (CGFloat) -> Void = { _ in }
     @State private var moreBelow = false
+    /// Card, viewport and content heights. A reference, so measuring never re-renders.
+    @State private var meter = CardHeightMeter()
+    /// The open request's actions ran below the view: show them pinned at the bottom.
+    @State private var pinActions = false
+    /// Clients whose lists are kept alive while the card is open.
+    @State private var keptSources: Set<WorkSource> = []
+    /// Clients whose lists are complete. A first visit builds a screenful at once and the
+    /// rest once the pointer settles, so sweeping across agents never builds whole lists.
+    @State private var fullSources: Set<WorkSource> = []
+    static let firstRows = 6
+    /// The client shown before the latest switch, for the direction of the swap.
+    @State private var lastSource: WorkSource?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Switching agents slides the new content 6 pt in the pointer's direction of travel.
+    private var swapOffset: CGSize {
+        let order = WorkSource.dockOrder
+        let from = lastSource.flatMap { order.firstIndex(of: $0) } ?? -1
+        let to = state.desktopDockSource.flatMap { order.firstIndex(of: $0) } ?? -1
+        let distance: CGFloat = to > from ? 6 : to < from ? -6 : 0
+        return state.desktopDockOrientation == .vertical ? CGSize(width: 0, height: distance) : CGSize(width: distance, height: 0)
+    }
     private var sources: [WorkSource] {
         if let source = state.desktopDockSource { return [source] }
         return WorkSource.dockOrder.filter { state.selectedSources.contains($0) }
     }
-    private var rows: [AgentDockSessionRow] { state.sessionRows(for: sources) }
-    private var requests: [AgentInteraction] { rows.flatMap(\.requests) }
-    private var selectedRequest: AgentInteraction? {
-        requests.first { $0.id == state.agentInteractionSelectionID } ?? requests.first
-    }
     private var title: String { state.desktopDockSource?.dockName ?? "AI 工作台" }
-    private var subtitle: String {
+    private func subtitle(_ requests: [AgentInteraction]) -> String {
         if !requests.isEmpty { return "\(requests.count) 个请求等你处理" }
         let count = sources.reduce(0) { $0 + state.agentRunningCount(for: $1) }
         if count > 0 { return "\(count) 个会话进行中" }
         return state.desktopDockSource.map { state.desktopPetStatus(for: $0) } ?? "陪你等开工"
     }
+    /// Rows, requests and the selection are derived once per update and passed down:
+    /// as computed properties they were rebuilt (filtered and sorted) for every row.
     var body: some View {
+        let rows = state.sessionRows(for: sources)
+        let requests = rows.flatMap(\.requests)
+        let selectedRequest = requests.first { $0.id == state.agentInteractionSelectionID } ?? requests.first
+        return card(rows: rows, requests: requests, selectedRequest: selectedRequest)
+    }
+    private func card(rows: [AgentDockSessionRow], requests: [AgentInteraction], selectedRequest: AgentInteraction?) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
-                Group {
-                    if let source = state.desktopDockSource { AgentMark(source: source, size: 18) }
-                    else { Image(systemName: "pawprint.fill").font(.system(size: 16)).foregroundStyle(Theme.accent) }
-                }.frame(width: 22, height: 24)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(title).font(.system(size: 13, weight: .semibold)).lineLimit(1)
-                    Text(subtitle).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
-                }
+                HStack(spacing: 8) {
+                    Group {
+                        if let source = state.desktopDockSource { AgentMark(source: source, size: 18) }
+                        else { Image(systemName: "pawprint.fill").font(.system(size: 16)).foregroundStyle(Theme.accent) }
+                    }.frame(width: 22, height: 24)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(title).font(.system(size: 13, weight: .semibold)).lineLimit(1)
+                        Text(subtitle(requests)).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                }.modifier(SourceSwap(source: state.desktopDockSource, offset: swapOffset))
                 Spacer(minLength: 2)
                 HStack(spacing: 2) {
-                    tab(.sessions, title: "会话", symbol: "bubble.left.and.bubble.right")
+                    tab(.sessions, title: "会话", symbol: "bubble.left.and.bubble.right", hasRequests: !requests.isEmpty)
                     tab(.quota, title: "额度", symbol: "chart.bar.xaxis")
                 }.padding(3).background(Theme.well, in: RoundedRectangle(cornerRadius: 8))
                     .accessibilityElement(children: .contain).accessibilityLabel("工作卡片页签")
@@ -521,22 +891,34 @@ struct DesktopDockDetailView: View {
                 }.buttonStyle(.plain).foregroundStyle(.secondary).accessibilityLabel("收起工作卡片")
             }.padding(.top, 7)
             Divider().opacity(0.35)
-            PetDetailScroll(hasMoreBelow: $moreBelow) {
+            PetDetailScroll(hasMoreBelow: $moreBelow, contentHeight: { meter.content = $0; reportIdealHeight() }, pinActions: $pinActions) {
                 VStack(alignment: .leading, spacing: 0) {
                     if sources.isEmpty {
                         Text("让小猫帮你留意 AI 的工作。").font(.system(size: 12)).foregroundStyle(.secondary)
                         Button("选择要关注的 AI", action: settings).buttonStyle(.plain).foregroundStyle(Theme.accent)
                     } else if state.desktopDockTab == .quota {
                         ForEach(sources) { source in quotaRows(source) }
+                        AgentDockTopSessions(sessions: state.agentDashboard.sessions.filter { sources.contains($0.source) },
+                                             showSource: state.desktopDockSource == nil)
+                    } else if let current = state.desktopDockSource {
+                        // One list per client seen while the card is open stays alive, so a
+                        // switch shows another list instead of building one. Hidden lists take
+                        // no height and skip updates (their rows are equatable values).
+                        ZStack(alignment: .topLeading) {
+                            ForEach(WorkSource.dockOrder.filter { $0 == current || keptSources.contains($0) }) { source in
+                                let shown = source == current
+                                sessionList(shown ? rows : state.sessionRows(for: [source]), sources: [source],
+                                            limit: fullSources.contains(source) ? .max : Self.firstRows,
+                                            selectedRequestID: shown ? selectedRequest?.id : nil)
+                                    .offset(shown ? .zero : swapOffset)
+                                    .opacity(shown ? 1 : 0)
+                                    .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: shown)
+                                    .frame(height: shown ? nil : 0, alignment: .top).clipped()
+                                    .allowsHitTesting(shown).accessibilityHidden(!shown)
+                            }
+                        }
                     } else {
-                        ForEach(rows) { row in
-                            AgentDockSessionView(state: state, row: row, selectedRequestID: selectedRequest?.id,
-                                                 showSource: state.desktopDockSource == nil)
-                            Divider().opacity(0.25)
-                        }
-                        ForEach(sources.filter { source in !rows.contains { $0.session.source == source } }) { source in
-                            fallbackRows(source)
-                        }
+                        sessionList(rows, sources: sources, limit: .max, selectedRequestID: selectedRequest?.id)
                     }
                 }.frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -546,6 +928,7 @@ struct DesktopDockDetailView: View {
                     LinearGradient(colors: [.black, moreBelow ? .clear : .black], startPoint: .top, endPoint: .bottom).frame(height: 16)
                 }
             }
+            .background(GeometryReader { Color.clear.preference(key: DockViewportHeight.self, value: $0.size.height) })
             if state.desktopDockTab == .quota {
                 let sessions = state.agentDashboard.sessions.filter { sources.contains($0.source) }
                 if !sessions.isEmpty {
@@ -554,12 +937,33 @@ struct DesktopDockDetailView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            if state.desktopDockTab == .sessions, let selectedRequest {
-                Divider().opacity(0.35)
-                AgentInteractionActionsView(state: state, interaction: selectedRequest)
+            if state.desktopDockTab == .sessions, pinActions, let selectedRequest {
+                VStack(alignment: .leading, spacing: 8) {
+                    Divider().opacity(0.35)
+                    AgentInteractionActionsView(state: state, interaction: selectedRequest)
+                }.transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
+        .animation(reduceMotion ? Motion.fast : Motion.snap, value: pinActions)
         .padding(14).background(CompanionMaterial(radius: 22))
+        .background(GeometryReader { Color.clear.preference(key: DockCardHeight.self, value: $0.size.height) })
+        .onPreferenceChange(DockCardHeight.self) { meter.card = $0; reportIdealHeight() }
+        .onPreferenceChange(DockViewportHeight.self) { meter.viewport = $0; reportIdealHeight() }
+        .onAppear { lastSource = state.desktopDockSource }
+        .onChange(of: state.desktopDockSource) { _, source in lastSource = source }
+        .task(id: state.desktopDockSource) {
+            guard let source = state.desktopDockSource else { return }
+            keptSources.insert(source)
+            guard !fullSources.contains(source) else { return }
+            // Build the rest of the list once the pointer has settled on this client.
+            try? await Task.sleep(for: .milliseconds(150))
+            guard !Task.isCancelled else { return }
+            fullSources.insert(source)
+        }
+        .onChange(of: state.desktopPetShowsStatus) { _, shown in
+            // A closed card keeps nothing alive; the next opening starts fresh.
+            if !shown { keptSources = []; fullSources = [] }
+        }
         .accessibilityIdentifier("cat-dock-detail")
         .environment(\.locale, Locale(identifier: "zh_CN"))
         .onChange(of: requests.map(\.id)) { old, new in
@@ -569,7 +973,63 @@ struct DesktopDockDetailView: View {
             }
         }
     }
-    private func tab(_ tab: DesktopDockTab, title: String, symbol: String) -> some View {
+    /// Rows keep their priority order; headings name the groups once there is more than one.
+    @ViewBuilder private func sessionList(_ rows: [AgentDockSessionRow], sources: [WorkSource], limit: Int,
+                                          selectedRequestID: String?) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            let groups = sessionGroups(rows, limit: limit)
+            ForEach(groups, id: \.priority) { group in
+                if groups.count > 1 {
+                    Text("\(Self.groupTitle(group.priority)) · \(group.rows.count)")
+                        .font(.system(size: 9, weight: .medium)).foregroundStyle(.secondary)
+                        .padding(.top, group.priority == groups[0].priority ? 2 : 12)
+                        .accessibilityAddTraits(.isHeader)
+                }
+                ForEach(group.rows) { row in
+                    sessionView(row, selectedRequestID: selectedRequestID)
+                    Divider().opacity(0.25)
+                }
+            }
+            ForEach(sources.filter { source in !rows.contains { $0.session.source == source } }) { source in
+                fallbackRows(source)
+            }
+        }
+    }
+    private func sessionGroups(_ rows: [AgentDockSessionRow], limit: Int) -> [(priority: Int, rows: [AgentDockSessionRow])] {
+        let now = Date()
+        var groups: [(priority: Int, rows: [AgentDockSessionRow])] = []
+        for row in rows.prefix(limit) {
+            let priority = row.requests.isEmpty ? row.priority(at: now) : 0
+            if let index = groups.firstIndex(where: { $0.priority == priority }) { groups[index].rows.append(row) }
+            else { groups.append((priority, [row])) }
+        }
+        return groups
+    }
+    private func sessionView(_ row: AgentDockSessionRow, selectedRequestID: String?) -> some View {
+        let session = row.session
+        let phase = row.requests.isEmpty && row.event == .working
+            ? state.desktopWorkSessions.first { $0.id == session.id && $0.source == session.source }?.phase : nil
+        return AgentDockSessionView(state: state, row: row, selectedRequestID: selectedRequestID,
+                                    showSource: state.desktopDockSource == nil, phase: phase,
+                                    replyPreviews: state.agentReplyPreviews, messageStatus: state.agentMessageStatus[session.id],
+                                    delivery: state.agentInteractionDelivery[session.source]).equatable()
+    }
+    static func groupTitle(_ priority: Int) -> String {
+        switch priority {
+        case 0: return "待你处理"
+        case 1: return "刚完成"
+        case 2: return "进行中"
+        default: return "较早"
+        }
+    }
+    private func reportIdealHeight() {
+        guard meter.card > 0, meter.viewport > 0, meter.content > 0 else { return }
+        let ideal = meter.card - meter.viewport + meter.content
+        guard abs(ideal - meter.reported) > 1 else { return }
+        meter.reported = ideal
+        idealHeight(ideal)
+    }
+    private func tab(_ tab: DesktopDockTab, title: String, symbol: String, hasRequests: Bool = false) -> some View {
         Button {
             state.desktopDockTab = tab
             state.agentInteractionInputID = nil
@@ -580,7 +1040,7 @@ struct DesktopDockDetailView: View {
                 .foregroundStyle(state.desktopDockTab == tab ? Color.primary : .secondary)
                 .background(state.desktopDockTab == tab ? Theme.wellStrong : .clear, in: RoundedRectangle(cornerRadius: 5))
                 .overlay(alignment: .topTrailing) {
-                    if tab == .sessions, !requests.isEmpty {
+                    if tab == .sessions, hasRequests {
                         Circle().fill(Theme.attentionBadge).frame(width: 4, height: 4).padding(3)
                     }
                 }
@@ -640,8 +1100,12 @@ final class PerchedMascotHost: NSView {
         mascotView.frame = CGRect(x: 0, y: -17, width: bounds.width, height: bounds.width)
         var visible = Path(CGRect(x: 0, y: 0, width: bounds.width, height: rim.y))
         visible.addRect(CGRect(x: 0, y: rim.y, width: rim.x, height: bounds.height - rim.y))
-        visible.addEllipse(in: CGRect(x: 66, y: 77, width: 14, height: 12))
-        visible.addRect(CGRect(x: 106, y: rim.y, width: 26, height: 20))
+        // The two front legs hooked over the rim, matching their Rive columns: artboard
+        // x 97 and 143 ± 8.5, ending at y 144 when perched, at 0.75 scale and 17 pt up.
+        for x in [97.0, 143.0] {
+            visible.addRoundedRect(in: CGRect(x: (x - 8.5) * 0.75, y: 123 * 0.75 - 17, width: 17 * 0.75, height: 21 * 0.75),
+                                   cornerSize: CGSize(width: 8.5 * 0.75, height: 8.5 * 0.75))
+        }
         let mask = CAShapeLayer(); mask.frame = bounds; mask.path = visible.cgPath
         wantsLayer = true; layer?.mask = mask
     }
@@ -673,6 +1137,13 @@ final class DesktopDockController: NSObject {
     private var catchTimer: Timer?
     private var pointerTimer: Timer?
     private var refreshScheduled = false
+    /// The card is leaving: its window lingers only for the exit animation.
+    private var closingCard = false
+    /// Clients the open card is showing; leaving them marks their completions seen.
+    private var cardShown: [WorkSource]?
+    /// The card's height with everything in view, reported by its content.
+    private var idealCardHeight: CGFloat?
+    var cardVisible: Bool { detailPanel.isVisible && !closingCard }
 
     init(state: AppState, mascot: MascotController = MascotController(), cardMascot: MascotController = MascotController(),
          showSettings: @escaping () -> Void = {}) {
@@ -707,6 +1178,11 @@ final class DesktopDockController: NSObject {
         detailContent = DesktopDockCardContent(state: state, mascot: cardMascot,
             close: { [weak self] in self?.dismiss() }, settings: { [weak self] in self?.dismiss(); showSettings() })
         detailContent.onHover = { [weak self] entered in self?.hoverCard(entered: entered) }
+        detailContent.onIdealHeight = { [weak self] height in
+            guard let self, abs((self.idealCardHeight ?? 0) - height.rounded(.up)) > 1 else { return }
+            self.idealCardHeight = height.rounded(.up)
+            if self.cardVisible { self.refresh() }
+        }
         detailPanel.contentView = detailContent
         subscription = state.objectWillChange.sink { [weak self] _ in
             guard let self, !self.refreshScheduled else { return }
@@ -763,16 +1239,18 @@ final class DesktopDockController: NSObject {
             replyPreview.dismiss()
             if state.agentComposeSessionID != nil { state.agentComposeSessionID = nil }
             if state.agentInteractionInputID != nil { state.agentInteractionInputID = nil }
-            panel.orderOut(nil); detailPanel.orderOut(nil)
-            mascot.setActive(false); cardMascot.setActive(false)
+            panel.orderOut(nil); hideCard(animated: false)
+            mascot.setActive(false)
             cancelHover(); pinned = false
             pointerTimer?.invalidate(); pointerTimer = nil
             content.cancelDrag(); dragEdge = nil; dragPosition = nil
             return
         }
         if let source = state.desktopDockSource, !state.selectedSources.contains(source) { state.desktopDockSource = nil }
-        panel.appearance = state.desktopCompanionAppearance.native
-        detailPanel.appearance = state.desktopCompanionAppearance.native
+        // Reassigning an equal appearance still invalidates every view in the window.
+        let appearance = state.desktopCompanionAppearance.native
+        if panel.appearance?.name != appearance?.name { panel.appearance = appearance }
+        if detailPanel.appearance?.name != appearance?.name { detailPanel.appearance = appearance }
         detailPanel.allowsKeyboard = state.agentComposeSessionID != nil || state.agentInteractionInputID != nil
         if !detailPanel.allowsKeyboard && detailPanel.isKeyWindow { detailPanel.resignKey() }
         let size = DesktopDockGeometry.size(orientation: state.desktopDockOrientation, sources: sources.count)
@@ -795,33 +1273,62 @@ final class DesktopDockController: NSObject {
         updateHitRegions()
         guard state.desktopPetShowsStatus else {
             replyPreview.dismiss()
-            detailPanel.orderOut(nil); cardMascot.setActive(false); pinned = false
+            hideCard(animated: true); pinned = false
             return
         }
         let index = state.desktopDockSource.flatMap { sources.firstIndex(of: $0) }
         let entry = index.map { DesktopDockGeometry.tileFrame(index: $0, orientation: state.desktopDockOrientation) }
             ?? DesktopDockGeometry.catFrame(orientation: state.desktopDockOrientation)
         let anchor = CGPoint(x: origin.x + entry.midX, y: origin.y + size.height - entry.midY)
-        let frame = DesktopDockGeometry.detailFrame(dock: panel.frame, anchor: anchor, edge: state.desktopDockEdge, visible: screen.visibleFrame)
-        let alreadyVisible = detailPanel.isVisible
+        let frame = DesktopDockGeometry.detailFrame(dock: panel.frame, anchor: anchor, edge: state.desktopDockEdge, visible: screen.visibleFrame,
+                                                    height: idealCardHeight.map { $0 + DesktopDockGeometry.cardChrome })
+        let alreadyVisible = cardVisible
+        if closingCard { closingCard = false; detailContent.resetMotion() }
         if !alreadyVisible && state.desktopDockTab != .sessions { state.desktopDockTab = .sessions }
         let cardSizeChanged = detailPanel.frame.size != frame.size || detailContent.frame.size != frame.size
-        if detailPanel.frame != frame { detailPanel.setFrame(frame, display: true) }
-        if cardSizeChanged {
+        // Following the pointer between agents only moves the window: a move needs no
+        // layout or redraw. A size change resizes once, never in animated steps.
+        if detailPanel.frame.size == frame.size {
+            if detailPanel.frame.origin != frame.origin { detailPanel.setFrameOrigin(frame.origin) }
+        } else {
+            detailPanel.setFrame(frame, display: true)
+        }
+        if cardSizeChanged && !alreadyVisible {
             detailContent.frame = CGRect(origin: .zero, size: frame.size); detailContent.needsLayout = true
             detailContent.layoutSubtreeIfNeeded()
         }
         cardMascot.set(mood: .curious, coat: state.mascotCoat)
         if !alreadyVisible {
-            detailContent.alphaValue = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 1 : 0
             detailPanel.orderFrontRegardless()
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.12
-                detailContent.animator().alphaValue = 1
-            }
+            detailContent.animateEntrance(edge: state.desktopDockEdge,
+                                          anchor: CGPoint(x: anchor.x - frame.minX, y: anchor.y - frame.minY),
+                                          reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+        }
+        let showing = state.desktopDockSource.map { [$0] } ?? sources
+        if cardShown != showing {
+            if let shown = cardShown { state.markCompletionSeen(shown.filter { !showing.contains($0) }) }
+            cardShown = showing
         }
         cardMascot.setActive(detailPanel.occlusionState.contains(.visible))
         updateHitRegions()
+    }
+    /// Collapses the card. Leaving it marks what it showed as seen; the window stays
+    /// up only while it shrinks away, and can be reclaimed by a new opening.
+    private func hideCard(animated: Bool) {
+        if let shown = cardShown { state.markCompletionSeen(shown) }
+        cardShown = nil
+        guard animated, detailPanel.isVisible, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+            closingCard = false; detailContent.resetMotion()
+            detailPanel.orderOut(nil); cardMascot.setActive(false)
+            return
+        }
+        guard !closingCard else { return }
+        closingCard = true; detailPanel.ignoresMouseEvents = true
+        detailContent.animateExit { [weak self] in
+            guard let self, self.closingCard else { return }
+            self.closingCard = false; self.detailContent.resetMotion()
+            self.detailPanel.orderOut(nil); self.cardMascot.setActive(false)
+        }
     }
     func select(_ source: WorkSource?) {
         cancelHover()
@@ -902,18 +1409,18 @@ final class DesktopDockController: NSObject {
     private func updateHitRegions() {
         let point = NSEvent.mouseLocation
         panel.ignoresMouseEvents = !content.hasActiveGesture && !content.containsInteraction(panel.convertPoint(fromScreen: point))
-        detailPanel.ignoresMouseEvents = !detailContent.containsInteraction(detailPanel.convertPoint(fromScreen: point))
+        detailPanel.ignoresMouseEvents = closingCard || !detailContent.containsInteraction(detailPanel.convertPoint(fromScreen: point))
         mascot.setActive(false)
         cardMascot.setActive(detailPanel.isVisible && detailPanel.occlusionState.contains(.visible))
     }
     func dismiss() {
         replyPreview.dismiss()
         cancelHover(); pinned = false; state.agentComposeSessionID = nil; state.agentInteractionInputID = nil
-        state.desktopPetShowsStatus = false; detailPanel.orderOut(nil); cardMascot.setActive(false)
+        state.desktopPetShowsStatus = false; hideCard(animated: true)
     }
     private func contains(_ point: CGPoint) -> Bool {
         (panel.isVisible && content.containsInteraction(panel.convertPoint(fromScreen: point))) ||
-            (detailPanel.isVisible && detailContent.containsInteraction(detailPanel.convertPoint(fromScreen: point))) ||
+            (cardVisible && detailContent.containsInteraction(detailPanel.convertPoint(fromScreen: point))) ||
             (replyPreview.panel.isVisible && replyPreview.panel.frame.contains(point))
     }
     func dismissOutsideClick(at point: CGPoint? = nil) {
@@ -1039,12 +1546,16 @@ private final class DesktopDockCardContent: NSView {
     private let cat: PerchedMascotHost
     private let mascot: MascotController
     var onHover: ((Bool) -> Void)?
+    var onIdealHeight: ((CGFloat) -> Void)?
     private var tracking: NSTrackingArea?
     init(state: AppState, mascot: MascotController, close: @escaping () -> Void, settings: @escaping () -> Void) {
-        card = NSHostingView(rootView: DesktopDockDetailView(state: state, close: close, settings: settings))
+        var report: (CGFloat) -> Void = { _ in }
+        card = NSHostingView(rootView: DesktopDockDetailView(state: state, close: close, settings: settings,
+                                                             idealHeight: { report($0) }))
         cat = PerchedMascotHost(mascot: mascot)
         self.mascot = mascot
         super.init(frame: .zero)
+        report = { [weak self] height in self?.onIdealHeight?(height) }
         wantsLayer = true; layer?.backgroundColor = NSColor.clear.cgColor; clipsToBounds = true
         addSubview(card); addSubview(cat)
     }
@@ -1068,6 +1579,70 @@ private final class DesktopDockCardContent: NSView {
     override func mouseExited(with event: NSEvent) { onHover?(false) }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     override func mouseDown(with event: NSEvent) { mascot.pet() }
+    /// The card grows out of the entry that opened it: it starts at 92%, nudged
+    /// 8 pt toward the dock, and springs into place; the cat climbs on 0.1 s later.
+    /// `anchor` is the entry's centre in window points, measured from the bottom left.
+    func animateEntrance(edge: DesktopDockEdge, anchor: CGPoint, reduceMotion: Bool) {
+        guard let layer else { return }
+        resetMotion()
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = 0; fade.toValue = 1; fade.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        fade.duration = reduceMotion ? 0.15 : 0.2
+        layer.add(fade, forKey: "card-enter-fade")
+        guard !reduceMotion else { return }
+        var origin = anchor, nudge = CGPoint.zero
+        switch edge {
+        case .right: origin.x = bounds.width; nudge.x = 8
+        case .left: origin.x = 0; nudge.x = -8
+        case .bottom: origin.y = 0; nudge.y = -8
+        case .top: origin.y = bounds.height; nudge.y = 8
+        }
+        let grow = Motion.springAnimation(keyPath: "transform")
+        grow.fromValue = NSValue(caTransform3D: Self.scale(layer, by: 0.92, about: origin, nudge: nudge))
+        grow.toValue = NSValue(caTransform3D: CATransform3DIdentity)
+        layer.add(grow, forKey: "card-enter")
+        if let perch = cat.layer {
+            let down: CGFloat = perch.superlayer?.contentsAreFlipped() == true ? 6 : -6
+            let climb = Motion.springAnimation(keyPath: "transform.translation.y")
+            climb.fromValue = down; climb.toValue = 0
+            climb.beginTime = perch.convertTime(CACurrentMediaTime(), from: nil) + 0.1
+            climb.fillMode = .backwards
+            let show = CABasicAnimation(keyPath: "opacity")
+            show.fromValue = 0; show.toValue = 1; show.duration = 0.2
+            show.beginTime = climb.beginTime; show.fillMode = .backwards
+            perch.add(climb, forKey: "card-cat-climb"); perch.add(show, forKey: "card-cat-show")
+        }
+    }
+    func animateExit(completion: @escaping () -> Void) {
+        guard let layer else { completion(); return }
+        CATransaction.begin()
+        CATransaction.setCompletionBlock(completion)
+        let shrink = CABasicAnimation(keyPath: "transform")
+        shrink.toValue = NSValue(caTransform3D: Self.scale(layer, by: 0.96, about: CGPoint(x: bounds.midX, y: bounds.midY), nudge: .zero))
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.toValue = 0
+        for animation in [shrink, fade] {
+            animation.duration = 0.18; animation.timingFunction = CAMediaTimingFunction(name: .easeIn)
+            animation.fillMode = .forwards; animation.isRemovedOnCompletion = false
+        }
+        layer.add(shrink, forKey: "card-exit"); layer.add(fade, forKey: "card-exit-fade")
+        CATransaction.commit()
+    }
+    func resetMotion() {
+        for key in ["card-enter", "card-enter-fade", "card-exit", "card-exit-fade"] { layer?.removeAnimation(forKey: key) }
+        for key in ["card-cat-climb", "card-cat-show"] { cat.layer?.removeAnimation(forKey: key) }
+    }
+    /// A transform that scales the layer about a point given in bottom-left window
+    /// points, then nudges it, whatever the layer's anchor and flip.
+    private static func scale(_ layer: CALayer, by factor: CGFloat, about point: CGPoint, nudge: CGPoint) -> CATransform3D {
+        let flipped = layer.superlayer?.contentsAreFlipped() == true
+        let size = layer.bounds.size
+        let pivot = CGPoint(x: point.x - layer.anchorPoint.x * size.width,
+                            y: (flipped ? size.height - point.y : point.y) - layer.anchorPoint.y * size.height)
+        var transform = CATransform3DMakeTranslation(pivot.x + nudge.x, pivot.y + (flipped ? -nudge.y : nudge.y), 0)
+        transform = CATransform3DScale(transform, factor, factor, 1)
+        return CATransform3DTranslate(transform, -pivot.x, -pivot.y, 0)
+    }
     override func hitTest(_ point: NSPoint) -> NSView? {
         let local = convert(point, from: superview)
         if card.frame.contains(local) { return card.hitTest(local) }
@@ -1087,29 +1662,23 @@ struct AgentDockUsageView: View {
                     .font(.system(size: 9)).foregroundStyle(.secondary).help(scope)
             }
             if usage.total > 0 {
-                HStack(spacing: 12) {
-                    metric("输入", symbol: "arrow.down", value: usage.input, tint: .secondary)
-                    metric("输出", symbol: "arrow.up", value: usage.output, tint: .primary)
-                    metric("缓存读取", symbol: "arrow.triangle.2.circlepath", value: usage.cached, tint: Theme.accent)
-                }
-                GeometryReader { geometry in
-                    HStack(spacing: 0) {
-                        segment(usage.input, color: .secondary, width: geometry.size.width)
-                        segment(usage.output, color: .primary.opacity(0.75), width: geometry.size.width)
-                        segment(usage.cached, color: Theme.accent, width: geometry.size.width)
-                    }.clipShape(Capsule())
-                }.frame(height: 3).accessibilityHidden(true)
-                    .help("Token 构成：输入、输出、缓存读取；绿色部分来自缓存。")
-                HStack(spacing: 4) {
-                    Text("缓存命中").foregroundStyle(.secondary)
-                    if usage.cacheHitRate != nil {
-                        Text(TokenFormat.share(usage.cached, of: usage.input + usage.cached)).foregroundStyle(Theme.accent).monospacedDigit()
-                    } else { Text("—").foregroundStyle(.secondary) }
-                    Spacer(minLength: 8)
-                    Text("总计 " + TokenFormat.short(usage.total) + " tok").foregroundStyle(.secondary).monospacedDigit()
-                        .help("总计 " + exact(usage.total) + " Token，包含输入、输出和缓存读取。\n" + scope)
-                }.font(.system(size: 9))
+                // The hit rate leads; a composition bar would be almost all cache.
+                HStack(alignment: .bottom, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("缓存命中").font(.system(size: 9)).foregroundStyle(.secondary)
+                        Text(usage.cacheHitRate != nil ? TokenFormat.share(usage.cached, of: usage.input + usage.cached) : "—")
+                            .font(.system(size: 22, weight: .semibold, design: .rounded)).monospacedDigit()
+                            .foregroundStyle(usage.cacheHitRate != nil ? Theme.accent : .secondary)
+                    }
+                    .frame(minWidth: 84, alignment: .leading)
                     .help("缓存命中 = 缓存读取 ÷（输入 + 缓存读取），按输入 Token 计算，并非请求次数。\n没有缓存读取记录时不估算。")
+                    .accessibilityElement(children: .combine)
+                    metric("输入", symbol: "arrow.down", value: usage.input, tint: .secondary)
+                    metric("输出", symbol: "arrow.up", value: usage.output, tint: .secondary)
+                    metric("缓存读取", symbol: "arrow.triangle.2.circlepath", value: usage.cached, tint: .secondary)
+                }
+                Text("总计 " + TokenFormat.short(usage.total) + " tok").font(.system(size: 9)).foregroundStyle(.secondary).monospacedDigit()
+                    .help("总计 " + exact(usage.total) + " Token，包含输入、输出和缓存读取。\n" + scope)
             } else {
                 Text("客户端尚未记录 Token 用量").font(.system(size: 10)).foregroundStyle(.secondary)
             }
@@ -1119,16 +1688,11 @@ struct AgentDockUsageView: View {
     private func metric(_ title: String, symbol: String, value: Int, tint: Color) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Label(title, systemImage: symbol).font(.system(size: 9)).foregroundStyle(tint)
-            Text(TokenFormat.short(value)).font(.system(size: 15, weight: .medium)).monospacedDigit()
+            Text(TokenFormat.short(value)).font(.system(size: 13, weight: .medium)).monospacedDigit()
                 .foregroundStyle(.primary).lineLimit(1).minimumScaleFactor(0.85)
         }.frame(maxWidth: .infinity, alignment: .leading)
             .help(title + "：" + exact(value) + " Token" + (title == "输入" ? "（不含缓存读取）" : "") + "\n" + scope)
             .accessibilityElement(children: .ignore).accessibilityLabel(title).accessibilityValue(exact(value) + " Token")
-    }
-    @ViewBuilder private func segment(_ value: Int, color: Color, width: CGFloat) -> some View {
-        if value > 0 {
-            Rectangle().fill(color).frame(width: width * CGFloat(Double(value) / Double(usage.total)))
-        }
     }
 }
 
@@ -1143,7 +1707,14 @@ private struct AgentDockQuotaView: View {
     private func tooltip(_ quota: AgentDockQuota) -> String {
         let reading = quota.remaining.map { String(Int($0.rounded())) + "%" } ?? "未知"
         let reset = quota.resetAt.map { " · 重置于 " + $0.formatted() } ?? ""
-        return "\(quota.title) · 剩余 \(reading)\(reset)" + (quota.stale ? " · 上次读数" : "")
+        let pace = quota.paceRemaining().map { "\n竖线：按时间平均消耗，此刻应剩 \(Int($0.rounded()))%" } ?? ""
+        return "\(quota.title) · 剩余 \(reading)\(reset)" + (quota.stale ? " · 上次读数" : "") + pace
+    }
+    static func updatedLabel(_ updated: Date, now: Date) -> String {
+        let minutes = Int(max(0, now.timeIntervalSince(updated)) / 60)
+        if minutes < 1 { return "刚刚更新" }
+        if minutes < 60 { return "\(minutes) 分钟前更新" }
+        return "\(minutes / 60) 小时前更新"
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -1153,6 +1724,12 @@ private struct AgentDockQuotaView: View {
                     Text("· " + plan).font(.system(size: 9)).foregroundStyle(.secondary).lineLimit(1).help(plan)
                 }
                 Spacer()
+                if let updated = state.agentDashboard.updatedAt {
+                    TimelineView(.periodic(from: .now, by: 30)) { context in
+                        Text(Self.updatedLabel(updated, now: context.date)).font(.system(size: 9)).foregroundStyle(.secondary)
+                            .help("读数更新于 " + updated.formatted(date: .omitted, time: .standard))
+                    }
+                }
                 Button(action: state.refreshAgentData) {
                     Image(systemName: "arrow.clockwise").font(.system(size: 10, weight: .medium)).frame(width: 24, height: 24)
                 }.buttonStyle(.plain).foregroundStyle(.secondary).help("刷新已登录客户端的用量")
@@ -1178,19 +1755,37 @@ private struct AgentDockQuotaView: View {
                             .font(.system(size: primary ? 17 : 11, weight: .medium)).monospacedDigit()
                             .foregroundStyle(primary ? tint : .secondary)
                     }
+                    // A thin 3 pt bar centred in a 9 pt band, so the pace marker never
+                    // thickens the bar or crowds the line below.
                     GeometryReader { geometry in
                         ZStack(alignment: .leading) {
-                            Capsule().fill(Theme.wellStrong)
+                            Capsule().fill(Theme.wellStrong).frame(height: 3)
                             if let remaining = quota.remaining {
-                                Capsule().fill(tint).frame(width: geometry.size.width * min(100, max(0, remaining)) / 100)
+                                Capsule().fill(tint).frame(width: geometry.size.width * min(100, max(0, remaining)) / 100, height: 3)
                             }
-                        }
-                    }.frame(height: 3)
+                            // The pace marker: what would remain now if the window were spent evenly.
+                            if !quota.stale, quota.remaining != nil, let pace = quota.paceRemaining() {
+                                RoundedRectangle(cornerRadius: 0.75).fill(Color.primary.opacity(0.55))
+                                    .frame(width: 1.5, height: 9)
+                                    .offset(x: max(0, geometry.size.width * pace / 100 - 0.75))
+                            }
+                        }.frame(width: geometry.size.width, height: 9, alignment: .leading)
+                    }.frame(height: 9)
                     if primary, let reset = quota.resetAt {
                         HStack(spacing: 4) {
                             Image(systemName: "clock.arrow.circlepath")
                             if reset > Date() { Text(reset, style: .relative); Text("后重置") }
                             else { Text("等待客户端更新") }
+                            if reset > Date(), !quota.stale, quota.remaining != nil, quota.paceRemaining() != nil {
+                                Text("·")
+                                if let runOut = quota.projectedRunOut() {
+                                    Text("按当前节奏约").foregroundStyle(Theme.attention)
+                                    Text(runOut, style: .relative).foregroundStyle(Theme.attention)
+                                    Text("后用完").foregroundStyle(Theme.attention)
+                                } else {
+                                    Text("按当前节奏够用").foregroundStyle(Theme.accent)
+                                }
+                            }
                         }.font(.system(size: 9)).foregroundStyle(.secondary)
                     }
                 }.help(tooltip(quota)).accessibilityElement(children: .combine)
@@ -1199,11 +1794,24 @@ private struct AgentDockQuotaView: View {
     }
 }
 
-private struct AgentDockSessionView: View {
-    @ObservedObject var state: AppState
+/// One session in the card. It takes plain values rather than observing AppState, so
+/// an unrelated state change (or a switch of agents) skips every row that is unchanged.
+/// Actions still go through `state`; the open request's card observes it on its own.
+private struct AgentDockSessionView: View, Equatable {
+    let state: AppState
     let row: AgentDockSessionRow
     let selectedRequestID: String?
     let showSource: Bool
+    /// What the running turn is doing right now, when the live monitor knows this session.
+    let phase: WorkPhase?
+    let replyPreviews: Bool
+    let messageStatus: String?
+    let delivery: String?
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.row == rhs.row && lhs.selectedRequestID == rhs.selectedRequestID && lhs.showSource == rhs.showSource &&
+            lhs.phase == rhs.phase && lhs.replyPreviews == rhs.replyPreviews &&
+            lhs.messageStatus == rhs.messageStatus && lhs.delivery == rhs.delivery
+    }
     private var session: AgentDockSession { row.session }
     private var selected: AgentInteraction? { row.requests.first { $0.id == selectedRequestID } }
     private var displayEvent: AgentSessionEvent {
@@ -1224,7 +1832,7 @@ private struct AgentDockSessionView: View {
         case .input: return "待回答"
         case .approval: return "待审批"
         case .finished: return "已完成"
-        case .working: return "运行中"
+        case .working: return phase.map { $0.title.replacingOccurrences(of: "正在", with: "") } ?? "运行中"
         case .recent: return session.status
         }
     }
@@ -1233,7 +1841,13 @@ private struct AgentDockSessionView: View {
         case .input: return "questionmark.bubble"
         case .approval: return "hand.raised"
         case .finished: return "checkmark.circle"
-        case .working: return "waveform"
+        case .working:
+            switch phase {
+            case .tool: return "wrench.and.screwdriver"
+            case .thinking: return "ellipsis.bubble"
+            case .replying: return "text.bubble"
+            default: return "waveform"
+            }
         case .recent: return "clock"
         }
     }
@@ -1250,6 +1864,12 @@ private struct AgentDockSessionView: View {
                         Label(eventLabel, systemImage: eventSymbol).foregroundStyle(eventColor)
                             .help((selected ?? row.requests.first)?.status ?? session.status)
                         if row.requests.count > 1 { Text("\(row.requests.count)").foregroundStyle(Theme.attention) }
+                        if displayEvent == .working, let started = session.turnStartedAt {
+                            TimelineView(.periodic(from: .now, by: 30)) { context in
+                                Text(Self.runningLabel(since: started, now: context.date)).foregroundStyle(.secondary)
+                                    .help("本轮开始于 " + started.formatted(date: .omitted, time: .shortened))
+                            }
+                        }
                         if let project = session.project { Text(project).lineLimit(1).foregroundStyle(.secondary) }
                         if row.event == .finished {
                             Spacer(minLength: 0)
@@ -1294,23 +1914,65 @@ private struct AgentDockSessionView: View {
                     }
                 }
                 AgentInteractionCardView(state: state, interaction: selected, showActions: false, showHeader: false, embedded: true)
+                // The decision sits with the request it answers; the card pins a copy
+                // to its bottom only while this one has scrolled out of view.
+                AgentInteractionActionsView(state: state, interaction: selected).reportsStickyFrame(.actions)
             } else if !row.requests.isEmpty {
                 Text(row.requests[0].request.summary).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(2)
-            } else if state.agentReplyPreviews, let reply = session.reply, !reply.isEmpty {
+            } else if replyPreviews, let reply = session.reply, !reply.isEmpty {
                 AgentReplySummary(session: session, show: state.showAgentReplyPreview, hide: state.hideAgentReplyPreview)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             if row.requests.isEmpty, row.event == .approval || row.event == .input {
                 Text("请到原会话处理，客户端暂未提供可回答的请求。").font(.system(size: 10)).foregroundStyle(.secondary)
             }
-            if let status = state.agentMessageStatus[session.id] {
+            if let status = messageStatus {
                 Text(status).font(.system(size: 9)).foregroundStyle(.secondary)
             }
-            if let delivery = state.agentInteractionDelivery[session.source], selected != nil {
+            if let delivery, selected != nil {
                 Text(delivery).font(.system(size: 9)).foregroundStyle(.secondary)
             }
         }.padding(.vertical, 10).padding(.horizontal, 2)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .background { if selected != nil { Color.clear.reportsStickyFrame(.item) } }
             .accessibilityElement(children: .contain).accessibilityIdentifier("agent-session-" + session.id)
+    }
+    static func runningLabel(since start: Date, now: Date) -> String {
+        let minutes = Int(max(0, now.timeIntervalSince(start)) / 60)
+        if minutes < 1 { return "刚开始" }
+        if minutes < 60 { return "已运行 \(minutes) 分钟" }
+        return "已运行 \(minutes / 60) 小时" + (minutes % 60 > 0 ? " \(minutes % 60) 分" : "")
+    }
+}
+
+/// The local sessions that used the most tokens, a hint at where a quota went.
+private struct AgentDockTopSessions: View {
+    let sessions: [AgentDockSession]
+    let showSource: Bool
+    private var ranked: [AgentDockSession] {
+        Dictionary(sessions.map { ($0.dockIdentity, $0) }, uniquingKeysWith: { $0.observedAt >= $1.observedAt ? $0 : $1 }).values
+            .filter { Self.total($0) > 0 }
+            .sorted { Self.total($0) != Self.total($1) ? Self.total($0) > Self.total($1) : $0.dockIdentity < $1.dockIdentity }
+            .prefix(3).map { $0 }
+    }
+    static func total(_ session: AgentDockSession) -> Int { max(0, session.tokensIn) + max(0, session.tokensOut) + max(0, session.cacheRead) }
+    var body: some View {
+        if !ranked.isEmpty {
+            VStack(alignment: .leading, spacing: 7) {
+                Text("最费的会话").font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
+                ForEach(ranked) { session in
+                    HStack(spacing: 6) {
+                        if showSource { AgentMark(source: session.source, size: 12) }
+                        Text(session.title).lineLimit(1)
+                        Spacer(minLength: 8)
+                        Text(TokenFormat.short(Self.total(session))).monospacedDigit().foregroundStyle(.secondary)
+                    }
+                    .font(.system(size: 11))
+                    .help(session.title + "\n" + Self.total(session).formatted(.number.locale(Locale(identifier: "zh_CN")))
+                          + " Token（输入、输出与缓存读取，本机会话累计）")
+                }
+            }
+            .padding(.top, 16).accessibilityElement(children: .contain).accessibilityIdentifier("cat-dock-top-sessions")
+        }
     }
 }

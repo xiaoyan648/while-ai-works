@@ -16,6 +16,7 @@ final class MascotController: ObservableObject {
     var attention: CGPoint?
     private var active = true
     private var perched = false
+    private var glance = 0
 
     static var resources: Bundle {
         #if SWIFT_PACKAGE
@@ -71,6 +72,29 @@ final class MascotController: ObservableObject {
     }
 
     func pet() { instance?.triggerProperty(fromPath: "pet")?.trigger() }
+
+    /// An agent finished: the ears flick and the cat blinks, then glances toward the
+    /// dock (`direction`, each axis -1...1) for a moment before following the pointer.
+    func notice(toward direction: CGPoint) {
+        guard active, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
+        instance?.triggerProperty(fromPath: "notice")?.trigger()
+        glance += 1
+        let token = glance, target = CGPoint(x: direction.x * 0.6, y: direction.y * 0.6)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            guard let self, self.glance == token, self.attention == nil else { return }
+            self.attention = target; self.look(x: 0, y: 0)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+                guard let self, self.glance == token, self.attention == target else { return }
+                self.attention = nil
+            }
+        }
+    }
+
+    /// The seated cat stretches as play begins.
+    func stretch() {
+        guard active, !perched, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
+        instance?.triggerProperty(fromPath: "stretch")?.trigger()
+    }
 
     func setPerched(_ perched: Bool) {
         self.perched = perched

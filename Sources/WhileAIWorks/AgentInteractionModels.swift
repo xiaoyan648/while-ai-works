@@ -136,7 +136,7 @@ extension AppState {
     }
 }
 
-struct AgentDockSessionRow: Identifiable {
+struct AgentDockSessionRow: Identifiable, Equatable {
     let session: AgentDockSession
     let requests: [AgentInteraction]
     var id: String { session.dockIdentity }

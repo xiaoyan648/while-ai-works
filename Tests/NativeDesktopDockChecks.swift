@@ -1,6 +1,16 @@
 import AppKit
 import SwiftUI
 import WhileCore
+import AgentHUDCore
+
+/// Like `precondition`, but says which check failed even in optimized builds.
+private func check(_ condition: @autoclosure () -> Bool, _ message: @autoclosure () -> String = "unexpected state",
+                   line: UInt = #line) {
+    guard condition() else {
+        fputs("NativeDesktopDockChecks line \(line): \(message())\n", stderr)
+        exit(1)
+    }
+}
 
 @main enum NativeDesktopDockChecks {
     static func main() throws {
@@ -10,25 +20,25 @@ import WhileCore
         defer { defaults.removePersistentDomain(forName: suite) }
         let state = AppState(defaults: defaults)
         state.soundEnabled = false
-        precondition(state.desktopPetPresentation == .dock && state.desktopDockOrientation == .vertical && state.desktopDockEdge == .right)
-        precondition(state.desktopCompanionAppearance == .system && !state.desktopPetShowsStatus && state.desktopDockAttachment == .attached)
+        check(state.desktopPetPresentation == .dock && state.desktopDockOrientation == .vertical && state.desktopDockEdge == .right)
+        check(state.desktopCompanionAppearance == .system && !state.desktopPetShowsStatus && state.desktopDockAttachment == .attached)
         state.desktopDockOrientation = .horizontal
-        precondition(state.desktopDockEdge == .bottom)
+        check(state.desktopDockEdge == .bottom)
         state.dock(on: .top)
         state.desktopDockPosition = DesktopDockPosition(screenID: "external", fraction: 0.72)
         state.desktopCompanionAppearance = .dark
         state.desktopDockAttachment = .floating
         let restored = AppState(defaults: defaults)
-        precondition(restored.desktopDockOrientation == .horizontal && restored.desktopDockEdge == .top)
-        precondition(restored.desktopDockPosition == state.desktopDockPosition && restored.desktopCompanionAppearance == .dark)
-        precondition(restored.desktopDockAttachment == .floating)
+        check(restored.desktopDockOrientation == .horizontal && restored.desktopDockEdge == .top)
+        check(restored.desktopDockPosition == state.desktopDockPosition && restored.desktopCompanionAppearance == .dark)
+        check(restored.desktopDockAttachment == .floating)
         state.desktopPetPosition = DesktopPetPosition(screenID: "cat", x: 0.2, y: 0.3)
         state.desktopPetPresentation = .companion
         state.resetDesktopPetPosition()
-        precondition(state.desktopPetPosition == nil && state.desktopDockPosition != nil, "forms own independent saved positions")
+        check(state.desktopPetPosition == nil && state.desktopDockPosition != nil, "forms own independent saved positions")
         state.desktopPetPresentation = .dock
         state.resetDesktopPetPosition()
-        precondition(state.desktopDockPosition == nil)
+        check(state.desktopDockPosition == nil)
 
         for visible in [CGRect(x: 0, y: 25, width: 1512, height: 920),
                         CGRect(x: -1920, y: -120, width: 1920, height: 1080),
@@ -39,7 +49,7 @@ import WhileCore
                     let size = DesktopDockGeometry.size(orientation: edge.orientation, sources: 4)
                     let origin = DesktopDockGeometry.origin(size: size, edge: edge, fraction: fraction, visible: visible, attachment: attachment)
                     let dock = CGRect(origin: origin, size: size)
-                    precondition(visible.contains(dock), "dock fits negative screen origins and usable edges")
+                    check(visible.contains(dock), "dock fits negative screen origins and usable edges")
                     if attachment == .attached {
                         let contact: CGFloat
                         switch edge {
@@ -48,29 +58,29 @@ import WhileCore
                         case .top: contact = dock.maxY - visible.maxY
                         case .bottom: contact = dock.minY - visible.minY
                         }
-                        precondition(abs(contact) < 0.01, "attached panel meets the usable edge exactly")
+                        check(abs(contact) < 0.01, "attached panel meets the usable edge exactly")
                     }
                     let outline = CatDockContour(orientation: edge.orientation, edge: edge, attachment: attachment)
                         .path(in: CGRect(origin: .zero, size: size))
                     let value = DesktopDockGeometry.fraction(origin: origin, size: size, edge: edge, visible: visible)
-                    precondition(value.isFinite && value >= 0 && value <= 1)
+                    check(value.isFinite && value >= 0 && value <= 1)
                     let roundtrip = DesktopDockGeometry.origin(size: size, edge: edge, fraction: value, visible: visible, attachment: attachment)
-                    precondition(abs(roundtrip.x - origin.x) < 0.01 && abs(roundtrip.y - origin.y) < 0.01)
+                    check(abs(roundtrip.x - origin.x) < 0.01 && abs(roundtrip.y - origin.y) < 0.01)
                     for index in 0..<4 {
                         let tile = DesktopDockGeometry.tileFrame(index: index, orientation: edge.orientation)
-                        precondition(CGRect(origin: .zero, size: size).contains(tile))
-                        precondition(outline.contains(CGPoint(x: tile.midX, y: tile.midY)), "logo targets remain inside the silhouette")
+                        check(CGRect(origin: .zero, size: size).contains(tile))
+                        check(outline.contains(CGPoint(x: tile.midX, y: tile.midY)), "logo targets remain inside the silhouette")
                         let anchor = CGPoint(x: origin.x + tile.midX, y: origin.y + size.height - tile.midY)
                         let detail = DesktopDockGeometry.detailFrame(dock: dock, anchor: anchor, edge: edge, visible: visible)
-                        precondition(visible.contains(detail), "every entry's card fits at both ends of every edge")
-                        precondition(!dock.intersects(detail), "detail never covers the dock's input targets")
+                        check(visible.contains(detail), "every entry's card fits at both ends of every edge")
+                        check(!dock.intersects(detail), "detail never covers the dock's input targets")
                     }
                 }
             }
         }
         }
         for name in ["chatgpt", "claude", "qoder", "qoder-dark", "workbuddy"] {
-            precondition(AgentMarkAssets.image(name) != nil, "client mark resource must be available")
+            check(AgentMarkAssets.image(name) != nil, "client mark resource must be available")
         }
         state.desktopDockOrientation = .vertical
         state.desktopDockAttachment = .floating
@@ -87,7 +97,7 @@ import WhileCore
         state.workSourceDetails = [.qoder: "等待 Qoder 监听状态", .workbuddy: "等待 WorkBuddy 监听状态"]
         let bundle = Bundle(path: "dist/While AI Works.app")!
         let mascot = MascotController(bundle: bundle), cardMascot = MascotController(bundle: bundle)
-        precondition(mascot.isAvailable && cardMascot.isAvailable)
+        check(mascot.isAvailable && cardMascot.isAvailable)
         let dock = DesktopDockController(state: state, mascot: mascot, cardMascot: cardMascot)
         func settle(_ seconds: Double = 0.15) { RunLoop.main.run(until: Date().addingTimeInterval(seconds)) }
         settle(1.2)
@@ -101,74 +111,169 @@ import WhileCore
                 fputs("Rive: playing=\(mascot.riveViewModel!.isPlaying) drawable=\(view.drawableSize) frame=\(view.frame) device=\(String(describing: view.device)) layer=\(String(describing: view.layer))\n", stderr)
             }
         }
-        precondition(dock.panel.isVisible && !dock.detailPanel.isVisible)
-        precondition(!dock.panel.canBecomeKey && !dock.detailPanel.canBecomeKey && !dock.panel.canBecomeMain)
+        check(dock.panel.isVisible && !dock.cardVisible)
+        check(!dock.panel.canBecomeKey && !dock.detailPanel.canBecomeKey && !dock.panel.canBecomeMain)
         let nativeRoot = dock.panel.contentView!
         let catRect = DesktopDockGeometry.catFrame(orientation: .vertical)
         let catPoint = CGPoint(x: catRect.midX, y: nativeRoot.bounds.height - catRect.midY)
-        precondition(nativeRoot.hitTest(catPoint) === nativeRoot, "flipped native host routes the top cat to drag/pet")
+        check(nativeRoot.hitTest(catPoint) === nativeRoot, "flipped native host routes the top cat to drag/pet")
         let entryRect = DesktopDockGeometry.tileFrame(index: 0, orientation: .vertical)
         let entryPoint = CGPoint(x: entryRect.midX, y: nativeRoot.bounds.height - entryRect.midY)
-        precondition(nativeRoot.hitTest(entryPoint) != nil && nativeRoot.hitTest(entryPoint) !== nativeRoot,
+        check(nativeRoot.hitTest(entryPoint) != nil && nativeRoot.hitTest(entryPoint) !== nativeRoot,
                      "actual window coordinates route an agent entry to SwiftUI")
-        precondition(nativeRoot.hitTest(CGPoint(x: 2, y: 2)) == nil, "shadow padding passes through")
+        check(nativeRoot.hitTest(CGPoint(x: 2, y: 2)) == nil, "shadow padding passes through")
         let initialFrame = dock.panel.frame
         let initialKey = NSApp.keyWindow
         dock.hover(.codex, entered: true)
         dock.hover(.codex, entered: false)
         settle(0.14)
-        precondition(!dock.detailPanel.isVisible, "passing through an entry does not open a card")
+        check(!dock.cardVisible, "passing through an entry does not open a card")
         dock.hover(.codex, entered: true)
         dock.hover(.claude, entered: true)
         dock.hover(.codex, entered: false)
         settle(0.2)
-        precondition(dock.detailPanel.isVisible && state.desktopDockSource == .claude,
+        check(dock.cardVisible && state.desktopDockSource == .claude,
                      "latest entry wins even when the previous exit arrives late")
         let visibleCard = dock.detailPanel.contentView!
         for source in [WorkSource.qoder, .workbuddy, .codex, .claude, .codex] {
             let previous = state.desktopDockSource!
             dock.hover(source, entered: true)
             dock.hover(previous, entered: false)
-            precondition(state.desktopDockSource == source && dock.detailPanel.isVisible,
+            check(state.desktopDockSource == source && dock.cardVisible,
                          "an open card switches immediately without another dwell")
-            precondition(dock.detailPanel.contentView === visibleCard,
+            check(dock.detailPanel.contentView === visibleCard,
                          "rapid switching retains the native card and its Rive canvas")
         }
         settle(0.5)
-        precondition(state.desktopDockSource == .codex && dock.detailPanel.isVisible,
+        check(state.desktopDockSource == .codex && dock.cardVisible,
                      "cancelled opening/closing work cannot revert the latest target")
-        precondition(dock.panel.frame == initialFrame && NSApp.keyWindow === initialKey,
+        check(dock.panel.frame == initialFrame && NSApp.keyWindow === initialKey,
                      "hover preserves rail position and keyboard focus")
         dock.select(.codex)
         dock.hover(.claude, entered: true)
         settle(0.14)
-        precondition(state.desktopDockSource == .codex, "a pinned card ignores pointer switching")
+        check(state.desktopDockSource == .codex, "a pinned card ignores pointer switching")
         dock.dismiss()
         if ProcessInfo.processInfo.arguments.contains("--hover-only") {
             print("Native dock hover passed: cancelled dwell, latest target, immediate switching, retained canvas, focus preservation and pinning")
             return
         }
         dock.select(.codex); settle(0.6)
-        precondition(dock.detailPanel.isVisible && state.desktopDockSource == .codex)
+        check(dock.cardVisible && state.desktopDockSource == .codex)
         let cardRoot = dock.detailPanel.contentView!
         let cardRect = DesktopDockGeometry.cardFrame(in: cardRoot.bounds.size)
         let cardPoint = CGPoint(x: cardRect.midX, y: cardRoot.bounds.height - cardRect.midY)
-        precondition(cardRoot.hitTest(cardPoint) != nil && cardRoot.hitTest(cardPoint) !== cardRoot, "native card routes scrolling and buttons")
-        precondition(dock.panel.frame == initialFrame && NSApp.keyWindow === initialKey, "opening preserves the dock and keyboard focus")
+        check(cardRoot.hitTest(cardPoint) != nil && cardRoot.hitTest(cardPoint) !== cardRoot, "native card routes scrolling and buttons")
+        check(dock.panel.frame == initialFrame && NSApp.keyWindow === initialKey, "opening preserves the dock and keyboard focus")
         state.agentComposeSessionID = "fixture-local-draft"
         dock.refresh(); state.focusAgentComposer(); settle()
-        precondition(dock.detailPanel.canBecomeKey && dock.detailPanel.isKeyWindow, "only explicitly opened input receives keyboard focus")
+        check(dock.detailPanel.canBecomeKey && dock.detailPanel.isKeyWindow, "only explicitly opened input receives keyboard focus")
         state.agentComposeSessionID = nil; dock.refresh(); settle()
-        precondition(!dock.detailPanel.canBecomeKey && !dock.detailPanel.isKeyWindow, "closing input releases keyboard focus")
+        check(!dock.detailPanel.canBecomeKey && !dock.detailPanel.isKeyWindow, "closing input releases keyboard focus")
         dock.select(.claude); settle()
-        precondition(dock.detailPanel.isVisible && state.desktopDockSource == .claude)
+        check(dock.cardVisible && state.desktopDockSource == .claude)
         dock.select(.claude); settle()
-        precondition(!dock.detailPanel.isVisible, "clicking the pinned source again collapses")
+        check(!dock.cardVisible, "clicking the pinned source again collapses")
         dock.select(.codex); settle()
         dock.dismissOutsideClick(at: CGPoint(x: dock.panel.frame.midX, y: dock.panel.frame.midY))
-        precondition(state.desktopPetShowsStatus, "dock click remains inside the same control")
+        check(state.desktopPetShowsStatus, "dock click remains inside the same control")
         dock.dismissOutsideClick(at: CGPoint(x: initialFrame.minX - 600, y: initialFrame.minY - 600))
-        precondition(!state.desktopPetShowsStatus && !dock.detailPanel.isVisible)
+        check(!state.desktopPetShowsStatus && !dock.cardVisible)
+
+        // Stamps within 1.5 s fall one after another; only the first sounds and twitches.
+        let center = DockStampCenter()
+        check(center.claim(now: 10) == 0 && center.claim(now: 10.2) == DockStampCenter.stagger && center.claim(now: 12) == 0)
+        check(center.contact(sound: false, now: 10) && !center.contact(sound: false, now: 11) && center.contact(sound: false, now: 11.6))
+
+        // Pace: a 5-hour window with an hour left should have 20% remaining when spent
+        // evenly. On pace it lasts; spending faster projects the run-out time.
+        let resetSoon = Date().addingTimeInterval(3600)
+        let onPace = AgentDockQuota(id: "pace", source: .claude, title: "当前会话", remaining: 20, resetAt: resetSoon,
+                                    observedAt: Date(), stale: false, window: .session)
+        check(abs((onPace.paceRemaining() ?? -1) - 20) < 0.5 && onPace.projectedRunOut() == nil, "on pace lasts the window")
+        let burning = AgentDockQuota(id: "burn", source: .claude, title: "当前会话", remaining: 10, resetAt: resetSoon,
+                                     observedAt: Date(), stale: false, window: .session)
+        check(burning.projectedRunOut().map { abs($0.timeIntervalSinceNow - 1600) < 30 } == true,
+                     "90% spent in 4 hours runs out 10% in about 27 minutes")
+        check(AgentDockQuota(id: "x", source: .codex, title: "其他", remaining: 50, resetAt: resetSoon, observedAt: Date(),
+                                    stale: false, window: .other).paceRemaining() == nil, "no pace without a known window")
+        // Tool input reads as a command with every other field kept.
+        let readable = AgentInteractionDetail.readable(#"{"command":"npm test","description":"运行检查","timeout":120000,"run_in_background":false}"#)
+        check(readable.subject == "npm test" && readable.notes == ["运行检查", "run_in_background：false", "timeout：120000"])
+        check(AgentInteractionDetail.readable("rm -rf build").subject == "rm -rf build", "plain text stays as is")
+
+        // Working marks swing in one continuous sine: fastest while passing upright,
+        // never pausing there, and neighbouring clients out of step.
+        func marks(in view: NSView) -> [AgentActivityMarkView] {
+            (view as? AgentActivityMarkView).map { [$0] } ?? view.subviews.flatMap { marks(in: $0) }
+        }
+        let rail = marks(in: nativeRoot)
+        func mark(_ source: WorkSource) -> AgentActivityMarkView { rail.first { $0.source == source }! }
+        check(rail.count == 4 && mark(.codex).isAnimating && mark(.claude).isAnimating && !mark(.qoder).isAnimating,
+                     "only working clients swing")
+        settle(AgentActivityMarkView.rampDuration + 0.1)
+        var samples: [(time: Double, codex: Double, claude: Double)] = []
+        let sampling = CACurrentMediaTime()
+        while CACurrentMediaTime() - sampling < Motion.swingPeriod {
+            settle(1.0 / 120)
+            samples.append((CACurrentMediaTime(), mark(.codex).presentedAngle, mark(.claude).presentedAngle))
+        }
+        let limit = AgentActivityMarkView.swingAngle
+        let widest = samples.map { abs($0.codex) }.max() ?? 0
+        check(widest > limit * 0.9 && widest < limit * 1.05, "the swing reaches ±8°")
+        let crossings = zip(samples, samples.dropFirst()).filter { ($0.codex < 0) != ($1.codex < 0) }
+            .map { abs($1.codex - $0.codex) / ($1.time - $0.time) }
+        let peakSpeed = limit * 2 * .pi / Motion.swingPeriod
+        check(!crossings.isEmpty && crossings.allSatisfy { $0 > peakSpeed * 0.7 }, "the mark never stops while passing upright")
+        check(samples.contains { abs($0.codex - $0.claude) > limit * 0.5 }, "neighbouring clients swing out of step")
+
+        // Work ends with an explicit completion: the swing settles upright, then a paw
+        // is stamped on the mark and the ears twitch once.
+        let twitches = DockStampCenter.shared.earTwitch
+        let done = Date()
+        state.activeSessionCounts[.codex] = 0
+        state.desktopWorkSessions.removeAll { $0.source == .codex }
+        state.agentDashboard.sessions = [AgentDockSession(id: "fixture-codex-done", source: .codex, title: "补齐动效检查", project: "While AI Works",
+            status: "已回复", running: false, tokensIn: 0, tokensOut: 0, cacheRead: 0, reply: nil, observedAt: done,
+            navigationURL: nil, resumeCommand: nil, event: .finished, eventAt: done)]
+        check(state.unseenCompletion(for: .codex) == done && state.unseenCompletion(for: .claude) == nil)
+        settle(0.1)
+        check(!mark(.codex).isAnimating, "a finished client stops swinging")
+        settle(1.0)
+        check(abs(mark(.codex).presentedAngle) < 0.01, "the mark comes to rest upright")
+        check(DockStampCenter.shared.earTwitch == twitches + 1, "the stamp lands once and twitches the ears")
+        let question = PermissionQuestion(id: "fixture-question", question: "选择方向",
+            options: [.init(label: "继续", description: "按方案实现")])
+        state.agentInteractions = [.init(request: PermissionRequest(id: "fixture-ask", source: .codex, sessionID: "fixture-codex-done",
+            toolName: "request_user_input_async", summary: question.question, detail: nil, cwd: "/fixture", questions: [question],
+            nativeApproval: .asynchronousQuestion(turnID: "fixture-turn"), at: done))]
+        if !ProcessInfo.processInfo.arguments.contains("--no-capture") {
+            let stampOutput = URL(fileURLWithPath: ".build/ui-review/cat-dock")
+            try FileManager.default.createDirectory(at: stampOutput, withIntermediateDirectories: true)
+            for appearance in [DesktopCompanionAppearance.light, .dark] {
+                state.desktopCompanionAppearance = appearance; settle(0.6)
+                guard let image = (DockWindowCapture() as DockWindowImaging).image(of: CGWindowID(dock.panel.windowNumber)) else { fatalError("dock capture unavailable") }
+                try NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])!
+                    .write(to: stampOutput.appendingPathComponent("stamp-request-\(appearance.rawValue).png"))
+            }
+        }
+        state.agentInteractions = []
+        dock.select(.codex); settle(0.3)
+        check(state.unseenCompletion(for: .codex) != nil, "the paw stays while its card is in view")
+        dock.select(.claude); settle(0.2)
+        check(state.unseenCompletion(for: .codex) == nil, "leaving the card marks the completion seen")
+        let seen = defaults.dictionary(forKey: "mascot.dock.completionSeen") as? [String: Double]
+        check((seen?["codex"] ?? 0) >= done.timeIntervalSince1970, "seen survives relaunch")
+        dock.dismiss(); settle(0.3)
+        check(!dock.cardVisible && !dock.detailPanel.isVisible, "the card's exit finishes and releases its window")
+        state.agentDashboard.sessions = []
+        state.activeSessionCounts[.codex] = 2
+        state.desktopWorkSessions = [
+            .init(id: "fixture-codex-tool", source: .codex, phase: .tool),
+            .init(id: "fixture-codex-reply", source: .codex, phase: .replying),
+            .init(id: "fixture-claude", source: .claude, phase: .thinking)
+        ]
+        state.desktopCompanionAppearance = .dark
 
         let output = URL(fileURLWithPath: ".build/ui-review/cat-dock")
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
@@ -185,22 +290,22 @@ import WhileCore
                     let first = try capture(dock, output: output, name: "\(orientation.rawValue)-\(appearance.rawValue)-\(attachment.rawValue)")
                     settle(0.3)
                     let second = try capture(dock, output: output, name: "\(orientation.rawValue)-\(appearance.rawValue)-\(attachment.rawValue)")
-                    precondition(first.1 != second.1, "the real perched Rive canvas must advance; the quiet rail is intentionally static")
+                    check(first.1 != second.1, "the real perched Rive canvas must advance; the quiet rail is intentionally static")
                 }
-                precondition(dock.panel.appearance?.name == appearance.native?.name)
+                check(dock.panel.appearance?.name == appearance.native?.name)
             }
         }
         }
         let companion = DesktopPetController(state: state, mascot: MascotController(bundle: bundle))
         state.desktopPetPresentation = .companion; settle(0.6)
-        precondition(companion.panel.isVisible && !companion.dockController.panel.isVisible)
+        check(companion.panel.isVisible && !companion.dockController.panel.isVisible)
         state.desktopPetPresentation = .dock; settle(0.6)
-        precondition(!companion.panel.isVisible && companion.dockController.panel.isVisible, "mode switch shows exactly one resident form")
+        check(!companion.panel.isVisible && companion.dockController.panel.isVisible, "mode switch shows exactly one resident form")
         state.selectedSources = []; settle()
         dock.select(nil); settle()
-        precondition(dock.panel.isVisible && dock.detailPanel.isVisible, "empty selection still provides settings and overview")
+        check(dock.panel.isVisible && dock.cardVisible, "empty selection still provides settings and overview")
         state.desktopPetEnabled = false; settle()
-        precondition(!dock.panel.isVisible && !dock.detailPanel.isVisible && !companion.panel.isVisible)
+        check(!dock.panel.isVisible && !dock.cardVisible && !companion.panel.isVisible)
         withExtendedLifetime((dock, companion)) {}
         print("NativeDesktopDockChecks: defaults, persistence, independent forms, 4 edges, screen boundaries, stable anchor, nonactivating input and light/dark appearance passed")
         print(captureEnabled ? "NativeDesktopDockChecks: live perched Rive verified, static rail marks captured; real window captures in \(output.path) (isolated sample sessions)" : "NativeDesktopDockChecks: live capture SKIPPED (--no-capture); no visual acceptance claimed")

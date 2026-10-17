@@ -10,6 +10,7 @@ final class PlayAudio {
     private var splashPlayer: AVAudioPlayer?
     private var bitePlayer: AVAudioPlayer?
     private var catchPlayer: AVAudioPlayer?
+    private var stampPlayer: AVAudioPlayer?
     private var wipePlayer: AVAudioPlayer?
     private var popPlayers: [AVAudioPlayer] = []
     private var woodPlayers: [AVAudioPlayer] = []
@@ -25,6 +26,8 @@ final class PlayAudio {
         bitePlayer?.prepareToPlay()
         catchPlayer = try? AVAudioPlayer(data: Self.catchRevealWAV())
         catchPlayer?.prepareToPlay()
+        stampPlayer = try? AVAudioPlayer(data: Self.stampWAV())
+        stampPlayer?.prepareToPlay()
         wipePlayer = try? AVAudioPlayer(data: Self.frictionWAV())
         wipePlayer?.numberOfLoops = -1
         wipePlayer?.enableRate = true
@@ -80,6 +83,28 @@ final class PlayAudio {
         catchPlayer?.volume = masterVolume * 0.68
         catchPlayer?.play()
     }
+    /// A soft paw stamp when an agent finishes; quieter than the wooden fish.
+    func stamp() {
+        stampPlayer?.currentTime = 0
+        stampPlayer?.volume = masterVolume * 0.39
+        stampPlayer?.play()
+    }
+    /// About 90 ms: a low thump falling from 140 to 90 Hz, with a short muffled tap.
+    static func stampWAV() -> Data {
+        var rng = AudioRandom(seed: 4409)
+        var low = 0.0
+        var samples: [Double] = []
+        for i in 0..<Int(44_100 * 0.095) {
+            let t = Double(i) / 44_100
+            low += 0.12 * (rng.next() - low)
+            let attack = 1 - exp(-t / 0.002)
+            let phase = 2 * Double.pi * (140 * t - 250 * t * t)
+            let thump = sin(phase) * exp(-t / 0.025) * 0.7
+            let tap = low * exp(-t / 0.004) * 1.4 * (t < 0.012 ? 1 : 0)
+            samples.append(attack * (thump + tap) * min(1, (0.095 - t) / 0.01))
+        }
+        return wav(samples)
+    }
     /// A warm rising two-note cue, emitted once when a catch lands.
     static func catchRevealWAV() -> Data {
         var samples: [Double] = []
@@ -128,6 +153,7 @@ final class PlayAudio {
         splashPlayer?.stop()
         bitePlayer?.stop()
         catchPlayer?.stop()
+        stampPlayer?.stop()
         friction = FrictionEnvelope()
         wipePlayer?.stop()
         wipePlayer?.volume = 0

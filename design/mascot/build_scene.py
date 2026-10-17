@@ -16,6 +16,8 @@ View model `Cat` (what the app drives):
     lookY      number -1 (up) ... 1 (down)
     celebrate  trigger  star eyes, a hop, a burst of light and a fish made of light
     pet        trigger  happy eyes, a lean and a heart (also fired by clicking the cat)
+    notice     trigger  ears flick back and a blink, laid over any mood (an agent finished)
+    stretch    trigger  a seated stretch, low and long with eyes shut, laid over any mood
 
 The look is theme-free: every glow is a light paint that disappears on a light
 background and every shadow a dark one that disappears on a dark background, so
@@ -395,7 +397,10 @@ ellipse(orb_halo, *ORB, 48, 48)
 radial_fill(orb_halo, *ORB, 24, "60" + LIGHT)
 
 # --- the cat, pivoting at the middle of its feet
-cat = node("Cat", 120, 206, stage)
+# Notice and Stretch key only these wrapper nodes, which no mood touches, so
+# they play over whatever the cat is doing and leave nothing behind.
+stretch_body = node("Stretch", 120, 206, stage)
+cat = node("Cat", 120, 206, stretch_body)
 
 hit = shape("Hit Area", 120, 130, cat)
 ellipse(hit, 120, 130, 130, 180)
@@ -405,14 +410,6 @@ fill(hit, "00000000")
 paw = node("Paw", 104, 199, cat, opacity=0.0)
 part("Paw Shape", 104, 199, paw, oval=(104, 199, 21, 13))
 
-# Two real fur paws wrap over the card rim. The posture layer hides the lower
-# body, rather than stretching the seated cat or painting a second mascot.
-perch_paws = node("Perch Paws", 120, 137, cat, opacity=0.0)
-part("Perch Paw L", 97, 139, perch_paws, oval=(97, 139, 17, 15))
-part("Perch Paw R", 157, 139, perch_paws,
-     "M 143 146 C 141 143 142 132 147 128 C 151 124 163 124 169 129 "
-     "C 173 132 174 143 171 146 C 169 148 166 147 165 144 "
-     "C 164 150 158 150 157 145 C 155 150 150 150 150 145 C 147 150 144 149 143 146 Z")
 perch_tilt = node("Perch Tilt", 120, 126, cat)
 head_bob = node("Head Bob", 120, 126, perch_tilt)
 head_tilt = node("Head Tilt", 120, 126, head_bob)
@@ -479,11 +476,25 @@ path(perch_head_edge, HEAD)
 stroke(perch_head_edge, P["shade"], 1.5, role="shade")
 
 ears = {}
+ear_flicks = {}
 for side, pivot_x in (("L", 96), ("R", 144)):
-    ear = node(f"Ear {side}", pivot_x, 62, head_look)
+    ear_flicks[side] = node(f"Ear Flick {side}", pivot_x, 62, head_look)
+    ear = node(f"Ear {side}", pivot_x, 62, ear_flicks[side])
     d = "M 76 88 L 79 31 L 115 56 Z"
     part(f"Ear Shape {side}", pivot_x, 62, ear, mirror(d) if side == "R" else d, radii={1: 9})
     ears[side] = ear
+
+# Two front legs hook over the card rim. Each is a rounded column whose top reaches
+# well inside the head's outline, so it stays joined to the cat however the head
+# tilts or follows the pointer; drawn after the head, so no head edge crosses it.
+# Perched, they show at artboard y 118–144; the app's card mask reveals each column
+# below the rim (DesktopDock PerchedMascotHost).
+# The posture layer hides the lower body, rather than stretching the seated cat.
+perch_paws = node("Perch Paws", 120, 137, cat, opacity=0.0)
+for side, x in (("L", 97), ("R", 143)):
+    part(f"Perch Paw {side}", x, 139, perch_paws,
+         f"M {x - 8.5} 112 L {x + 8.5} 112 L {x + 8.5} 138 L {x - 8.5} 138 Z",
+         radii={0: 8.5, 1: 8.5, 2: 8.5, 3: 8.5})
 
 torso = node("Torso", 120, 206, cat)
 paw_line = shape("Paw Line", 120, 196, torso)
@@ -566,8 +577,10 @@ vm_look_x = El("ViewModelPropertyNumber", name="lookX")
 vm_look_y = El("ViewModelPropertyNumber", name="lookY")
 vm_celebrate = El("ViewModelPropertyTrigger", name="celebrate")
 vm_pet = El("ViewModelPropertyTrigger", name="pet")
+vm_notice = El("ViewModelPropertyTrigger", name="notice")
+vm_stretch = El("ViewModelPropertyTrigger", name="stretch")
 view_model.attrs["defaultInstanceId"] = instance.id
-view_model.add(vm_mood, vm_coat, vm_posture, vm_look_x, vm_look_y, vm_celebrate, vm_pet, instance)
+view_model.add(vm_mood, vm_coat, vm_posture, vm_look_x, vm_look_y, vm_celebrate, vm_pet, vm_notice, vm_stretch, instance)
 instance.add(
     El("ViewModelInstanceEnum", propertyValue=MOOD["idle"].id, viewModelPropertyId=vm_mood.id),
     El("ViewModelInstanceEnum", propertyValue=COAT["ink"].id, viewModelPropertyId=vm_coat.id),
@@ -576,6 +589,8 @@ instance.add(
     El("ViewModelInstanceNumber", propertyValue=0, viewModelPropertyId=vm_look_y.id),
     El("ViewModelInstanceTrigger", viewModelPropertyId=vm_celebrate.id),
     El("ViewModelInstanceTrigger", viewModelPropertyId=vm_pet.id),
+    El("ViewModelInstanceTrigger", viewModelPropertyId=vm_notice.id),
+    El("ViewModelInstanceTrigger", viewModelPropertyId=vm_stretch.id),
 )
 
 
@@ -931,6 +946,29 @@ pose(pet, [16, 88], pet_face)
 pose(pet, [110], {})
 animations.append(pet)
 
+# Notice (0.4 s): ears flick back 8°, overshoot 4° and settle; one quick blink.
+notice = Anim("Notice", 24, loop="oneShot")
+for side, sign in (("L", -1), ("R", 1)):
+    notice.key(ear_flicks[side], "rotation", [(0, 0, "out"), (7, sign * 0.14, "io"), (13, -sign * 0.07, "io"),
+                                              (20, 0, "hold"), (24, 0, "hold")])
+notice.key(eyes_blink, "scaleY", [(0, 1, "hold"), (12, 1, "in"), (15, 0.06, "out"), (20, 1, "hold"), (24, 1, "hold")])
+notice.key(eyes_blink, "scaleX", [(0, 1, "hold"), (12, 1, "in"), (15, 1.08, "out"), (20, 1, "hold"), (24, 1, "hold")])
+animations.append(notice)
+
+# Stretch (0.8 s): the body sinks low and long with eyes shut and ears back,
+# then springs up a little past rest and settles.
+stretch = Anim("Stretch", 48, loop="oneShot")
+stretch.key(stretch_body, "scaleY", [(0, 1, "io"), (14, 0.9, "io"), (30, 0.9, "io"), (40, 1.04, "out"), (48, 1, "hold")])
+stretch.key(stretch_body, "scaleX", [(0, 1, "io"), (14, 1.08, "io"), (30, 1.08, "io"), (40, 0.98, "out"), (48, 1, "hold")])
+for side, sign in (("L", -1), ("R", 1)):
+    stretch.key(ear_flicks[side], "rotation", [(0, 0, "io"), (14, sign * 0.18, "io"), (30, sign * 0.18, "io"),
+                                               (42, 0, "hold"), (48, 0, "hold")])
+stretch.key(eyes_blink, "scaleY", [(0, 1, "io"), (10, 0.08, "io"), (32, 0.08, "io"), (40, 1, "hold"), (48, 1, "hold")])
+stretch.key(eyes_blink, "scaleX", [(0, 1, "hold"), (48, 1, "hold")])
+animations.append(stretch)
+overlay_rest = Anim("Overlay Rest", 60)
+animations.append(overlay_rest)
+
 # Companion game poses keep the chest steady for the native, species-specific catch.
 proud = Anim("Proud Catch", 150)
 pose(proud, [0, 150], {(eyes, "opacity"): 0.0, (eyes_happy, "opacity"): 1.0,
@@ -1067,8 +1105,22 @@ pet_listener = El("StateMachineListenerSingle", targetId=hit.id, listenerTypeVal
         El("BindablePropertyTrigger", propertyValue=1).add(
             El("DataBindContext", sourcePathIds=vm_path(vm_pet), propertyKey=686, direction=True))))
 
+# Overlays rest on an empty animation and return to it when done, so the layer
+# lets go of the wrapper nodes and the blink between plays.
+s_overlay_rest = astate(overlay_rest, 0, 0)
+s_notice = astate(notice, 260, -60)
+s_stretch = astate(stretch, 260, 100)
+for overlay in (s_notice, s_stretch):
+    overlay.attrs["reset"] = True
+    overlay.add(El("StateTransition", stateToId=s_overlay_rest.id, enableExitTime=True,
+                   exitTimeIsPercetange=True, exitTime=100))
+overlay_layer = layer("Overlay", s_overlay_rest, [s_overlay_rest, s_notice, s_stretch], any_transitions=[
+    El("StateTransition", stateToId=s_notice.id, duration=0).add(trigger_condition(vm_notice)),
+    El("StateTransition", stateToId=s_stretch.id, duration=120).add(trigger_condition(vm_stretch)),
+])
+
 state_machine.add(pet_listener, always(breathe), always(blink), always(drift), always(hover),
-                  tail_layer, mood_layer, coat_layer, posture_layer)
+                  tail_layer, mood_layer, coat_layer, posture_layer, overlay_layer)
 artboard.add(state_machine)
 
 # Look: host-driven numbers, eased by an interpolating converter.

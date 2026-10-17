@@ -249,6 +249,10 @@ final class AppState: ObservableObject {
     @Published var desktopPetPresentation: DesktopPetPresentation {
         didSet { defaults.set(desktopPetPresentation.rawValue, forKey: "mascot.desktop.presentation"); desktopPetShowsStatus = false }
     }
+    /// Panels and cards default to the dock's solid paper/ink; frosted glass is a choice.
+    @Published var panelMaterial: PanelMaterial {
+        didSet { defaults.set(panelMaterial.rawValue, forKey: "panel.material") }
+    }
     @Published var desktopCompanionAppearance: DesktopCompanionAppearance {
         didSet { defaults.set(desktopCompanionAppearance.rawValue, forKey: "mascot.desktop.appearance") }
     }
@@ -270,6 +274,25 @@ final class AppState: ObservableObject {
     }
     /// Selection and expansion never survive relaunch or a change of presentation.
     @Published var desktopDockSource: WorkSource?
+    /// When each client's card was last looked at. Only timestamps are stored, so
+    /// a completion stamped once is not stamped again after relaunch.
+    @Published private(set) var completionSeenAt: [WorkSource: Date] = [:]
+    /// The newest completion a client explicitly reported and the user has not yet
+    /// looked at. A new run clears it; pauses or silence never count as completion.
+    func unseenCompletion(for source: WorkSource, now: Date = Date()) -> Date? {
+        guard selectedSources.contains(source), agentRunningCount(for: source) == 0,
+              let latest = agentDashboard.sessions.filter({ $0.source == source && $0.event == .finished }).compactMap(\.eventAt).max(),
+              latest > now.addingTimeInterval(-24 * 3600), latest > completionSeenAt[source] ?? .distantPast else { return nil }
+        return latest
+    }
+    var latestUnseenCompletion: Date? { WorkSource.allCases.compactMap { unseenCompletion(for: $0) }.max() }
+    func markCompletionSeen(_ sources: [WorkSource], at time: Date = Date()) {
+        let pending = sources.filter { unseenCompletion(for: $0, now: time) != nil }
+        guard !pending.isEmpty else { return }
+        for source in pending { completionSeenAt[source] = time }
+        defaults.set(Dictionary(uniqueKeysWithValues: completionSeenAt.map { ($0.key.rawValue, $0.value.timeIntervalSince1970) }),
+                     forKey: "mascot.dock.completionSeen")
+    }
     @Published var desktopPetEnabled: Bool { didSet {
         defaults.set(desktopPetEnabled, forKey: "mascot.desktop.enabled")
         if !desktopPetEnabled && !(desktopEnabled && followAI) { clearWorkState() }
@@ -449,6 +472,7 @@ final class AppState: ObservableObject {
         desktopPetSize = DesktopPetSize(rawValue: defaults.string(forKey: "mascot.desktop.size") ?? "") ?? .medium
         desktopPetPresentation = DesktopPetPresentation(rawValue: defaults.string(forKey: "mascot.desktop.presentation") ?? "") ?? .dock
         desktopCompanionAppearance = DesktopCompanionAppearance(rawValue: defaults.string(forKey: "mascot.desktop.appearance") ?? "") ?? .system
+        panelMaterial = PanelMaterial(rawValue: defaults.string(forKey: "panel.material") ?? "") ?? .solid
         let orientation = DesktopDockOrientation(rawValue: defaults.string(forKey: "mascot.dock.orientation") ?? "") ?? .vertical
         desktopDockOrientation = orientation
         let edge = DesktopDockEdge(rawValue: defaults.string(forKey: "mascot.dock.edge") ?? "") ?? orientation.defaultEdge
@@ -456,6 +480,16 @@ final class AppState: ObservableObject {
         desktopDockAttachment = DesktopDockAttachment(rawValue: defaults.string(forKey: "mascot.dock.attachment") ?? "") ?? .attached
         desktopDockPosition = defaults.data(forKey: "mascot.dock.position").flatMap { try? JSONDecoder().decode(DesktopDockPosition.self, from: $0) }
         desktopPetEnabled = defaults.bool(forKey: "mascot.desktop.enabled")
+        if let seen = defaults.dictionary(forKey: "mascot.dock.completionSeen") as? [String: Double] {
+            completionSeenAt = Dictionary(uniqueKeysWithValues: seen.compactMap { key, value in
+                WorkSource(rawValue: key).map { ($0, Date(timeIntervalSince1970: value)) } })
+        } else {
+            // First run with completion stamps: earlier completions count as seen.
+            let now = Date()
+            completionSeenAt = Dictionary(uniqueKeysWithValues: WorkSource.allCases.map { ($0, now) })
+            defaults.set(Dictionary(uniqueKeysWithValues: WorkSource.allCases.map { ($0.rawValue, now.timeIntervalSince1970) }),
+                         forKey: "mascot.dock.completionSeen")
+        }
         volume = min(1, max(0, defaults.object(forKey: "volume") as? Double ?? 0.55))
         PlayAudio.shared.masterVolume = Float(volume)
         refreshScreens()
@@ -646,6 +680,11 @@ struct AgentDockData: Equatable {
     var updatedAt: Date?
 }
 enum DesktopDockTab: String, CaseIterable { case sessions, quota }
+enum PanelMaterial: String, CaseIterable, Identifiable {
+    case solid, glass
+    var id: String { rawValue }
+    var title: String { self == .solid ? "实色" : "毛玻璃" }
+}
 enum AgentQuotaWindow: Equatable { case session, weekly, modelWeekly, other }
 enum AgentSessionEvent: Equatable { case input, approval, finished, working, recent }
 struct AgentDockQuota: Equatable, Identifiable {
@@ -657,6 +696,26 @@ struct AgentDockQuota: Equatable, Identifiable {
     let observedAt: Date
     let stale: Bool
     var window: AgentQuotaWindow = .other
+    /// Length of the quota window when the client reports it; used for the pace marker.
+    var windowDuration: TimeInterval? = nil
+    /// Where the bar would be if the window were spent evenly: remaining percent at
+    /// this point in the window, or nil without a reset time and window length.
+    func paceRemaining(at now: Date = Date()) -> Double? {
+        let length = windowDuration ?? (window == .session ? 5 * 3600 : window == .weekly || window == .modelWeekly ? 7 * 86400 : nil)
+        guard let length, length > 0, let resetAt, resetAt > now else { return nil }
+        return min(100, max(0, resetAt.timeIntervalSince(now) / length * 100))
+    }
+    /// When, at the rate spent so far in this window, the quota would run out before
+    /// it resets. Nil when it lasts, or too little of the window has passed to tell.
+    func projectedRunOut(at now: Date = Date()) -> Date? {
+        guard !stale, let remaining, let pace = paceRemaining(at: now), let resetAt else { return nil }
+        let elapsed = 100 - pace, spent = 100 - remaining
+        guard elapsed >= 5, spent > 0, remaining < pace else { return nil }
+        let length = resetAt.timeIntervalSince(now) / (pace / 100)
+        let rate = spent / (elapsed / 100 * length)
+        let runOut = now.addingTimeInterval(remaining / rate)
+        return runOut < resetAt ? runOut : nil
+    }
 }
 struct AgentDockSession: Equatable, Identifiable, Sendable {
     let id: String
@@ -674,6 +733,8 @@ struct AgentDockSession: Equatable, Identifiable, Sendable {
     let resumeCommand: String?
     var event: AgentSessionEvent = .recent
     var eventAt: Date? = nil
+    /// When the running turn began, for "running for 12 minutes".
+    var turnStartedAt: Date? = nil
     var dockIdentity: String { source.rawValue + ":" + id }
     var canSend: Bool { source == .codex && navigationURL?.scheme == "codex" && navigationURL?.lastPathComponent == id }
 }

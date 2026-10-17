@@ -228,15 +228,21 @@ import AgentHUDCore
 private struct DockReviewComposition: View {
     @ObservedObject var state: AppState
     let perch: MascotController
+    /// The card sizes itself to its content, as the live window does.
+    @State private var idealCard: CGFloat?
     private var strip: some View {
         DesktopDockSurface(state: state)
     }
     private var card: some View {
-        let size = DesktopDockGeometry.detailSize
+        let wanted = idealCard.map { $0 + DesktopDockGeometry.cardChrome } ?? DesktopDockGeometry.detailSize.height
+        let size = CGSize(width: DesktopDockGeometry.detailSize.width,
+                          height: min(DesktopDockGeometry.detailSize.height, max(DesktopDockGeometry.minDetailHeight, wanted)))
         let card = DesktopDockGeometry.cardFrame(in: size)
         let cat = DesktopDockGeometry.perchedCatFrame(in: size)
         return ZStack(alignment: .topLeading) {
-            DesktopDockDetailView(state: state).frame(width: card.width, height: card.height).offset(x: card.minX, y: card.minY)
+            DesktopDockDetailView(state: state, idealHeight: { height in
+                if abs((idealCard ?? 0) - height) > 1 { idealCard = height }
+            }).frame(width: card.width, height: card.height).offset(x: card.minX, y: card.minY)
             PerchedReviewSnapshot(mascot: perch).frame(width: cat.width, height: cat.height).offset(x: cat.minX, y: cat.minY)
         }.frame(width: size.width, height: size.height, alignment: .topLeading)
     }

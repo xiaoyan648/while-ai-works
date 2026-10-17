@@ -86,12 +86,12 @@ struct DesktopPetBubbleView: View {
                             .contentTransition(.numericText())
                     }
                 }
-                .font(Theme.number(15)).foregroundStyle(Color(nsColor: NSColor(rgb: 0x202923)))
+                .font(Theme.number(15)).foregroundStyle(.primary)
                 .frame(minWidth: 30, minHeight: 27).padding(.horizontal, 6)
-                .background(Color(nsColor: NSColor(rgb: 0xF6F7F0)), in: Capsule())
-                .overlay(Capsule().strokeBorder(.white.opacity(0.85), lineWidth: 0.75))
-                Circle().fill(Color(nsColor: NSColor(rgb: 0xF6F7F0))).frame(width: 5, height: 5).padding(.leading, 9)
-                Circle().fill(Color(nsColor: NSColor(rgb: 0xF6F7F0))).frame(width: 3, height: 3).padding(.leading, 3)
+                .background(Theme.surface, in: Capsule())
+                .overlay(Capsule().strokeBorder(Theme.heroEdge, lineWidth: 0.75))
+                Circle().fill(Theme.surface).frame(width: 5, height: 5).padding(.leading, 9)
+                Circle().fill(Theme.surface).frame(width: 3, height: 3).padding(.leading, 3)
             }
             .padding(6).contentShape(Rectangle())
             .shadow(color: .black.opacity(0.14), radius: 5, y: 2)
@@ -109,63 +109,166 @@ struct DesktopPetBubbleView: View {
 struct PetDetailScroll<Content: View>: NSViewRepresentable {
     let content: Content
     @Binding var hasMoreBelow: Bool
-    init(hasMoreBelow: Binding<Bool>, @ViewBuilder content: () -> Content) {
-        _hasMoreBelow = hasMoreBelow; self.content = content()
+    /// Reports the full height of the content, so the card can size itself to it.
+    var contentHeight: ((CGFloat) -> Void)?
+    /// Whether the open request's actions have run below the view and should pin.
+    var pinActions: Binding<Bool>?
+    init(hasMoreBelow: Binding<Bool>, contentHeight: ((CGFloat) -> Void)? = nil, pinActions: Binding<Bool>? = nil,
+         @ViewBuilder content: () -> Content) {
+        _hasMoreBelow = hasMoreBelow; self.contentHeight = contentHeight; self.pinActions = pinActions; self.content = content()
     }
     func makeNSView(context: Context) -> PetDetailScrollView {
         let view = PetDetailScrollView()
         view.onOverflow = { value in
             DispatchQueue.main.async { if hasMoreBelow != value { hasMoreBelow = value } }
         }
+        if let pinActions {
+            view.onPin = { value in
+                DispatchQueue.main.async { if pinActions.wrappedValue != value { pinActions.wrappedValue = value } }
+            }
+        }
         return view
     }
     func updateNSView(_ view: PetDetailScrollView, context: Context) {
+        view.onHeight = contentHeight
         view.setContent(AnyView(content))
     }
 }
 
+/// The scrolling content's root stays the same view for the life of the scroll view;
+/// updates only swap what it shows, and the content reports its own height, so an
+/// update costs one SwiftUI diff rather than a new root and two full measurements.
+final class PetDetailScrollContent: ObservableObject {
+    @Published var content = AnyView(EmptyView())
+    @Published var width: CGFloat = 0
+    var onHeight: (CGFloat) -> Void = { _ in }
+    var onSticky: (StickyActionFrames.Frames) -> Void = { _ in }
+    private var sticky = StickyActionFrames.Frames()
+    /// Rows report where the open request sits directly, rather than through a
+    /// preference every view in the list would have to combine.
+    func report(_ part: StickyActionFrames.Part, _ frame: CGRect?) {
+        var next = sticky
+        if part == .item { next.item = frame } else { next.actions = frame }
+        guard next != sticky else { return }
+        sticky = next; onSticky(next)
+    }
+}
+
+private struct StickyReporterKey: EnvironmentKey {
+    static let defaultValue: PetDetailScrollContent? = nil
+}
+extension EnvironmentValues {
+    var stickyReporter: PetDetailScrollContent? {
+        get { self[StickyReporterKey.self] }
+        set { self[StickyReporterKey.self] = newValue }
+    }
+}
+
+private struct PetDetailScrollRoot: View {
+    @ObservedObject var box: PetDetailScrollContent
+    var body: some View {
+        box.content
+            .frame(width: max(1, box.width), alignment: .leading)
+            .fixedSize(horizontal: false, vertical: true)
+            .background(GeometryReader { geometry in
+                // Reported directly: a preference would be combined across every row.
+                Color.clear
+                    .onAppear { box.onHeight(geometry.size.height) }
+                    .onChange(of: geometry.size.height) { _, height in box.onHeight(height) }
+            })
+            .coordinateSpace(name: PetDetailScrollView.space)
+            .environment(\.stickyReporter, box)
+    }
+}
+
 final class PetDetailScrollView: NSScrollView {
-    private let host = NSHostingView(rootView: AnyView(EmptyView()))
-    private var content = AnyView(EmptyView())
-    private var measuredWidth: CGFloat = -1
+    static let space = "pet-detail-scroll"
+    private let box = PetDetailScrollContent()
+    private let host: NSHostingView<PetDetailScrollRoot>
+    private var contentHeight: CGFloat = 0
     private var boundsObserver: NSObjectProtocol?
+    private var sticky = StickyActionFrames.Frames()
     var onOverflow: ((Bool) -> Void)?
+    var onHeight: ((CGFloat) -> Void)?
+    var onPin: ((Bool) -> Void)?
 
     init() {
+        host = NSHostingView(rootView: PetDetailScrollRoot(box: box))
         super.init(frame: .zero)
+        host.sizingOptions = []
         drawsBackground = false; borderType = .noBorder
         hasVerticalScroller = false; hasHorizontalScroller = false
         verticalScrollElasticity = .automatic; horizontalScrollElasticity = .none
         documentView = host
         contentView.postsBoundsChangedNotifications = true
+        box.onHeight = { [weak self] height in self?.contentHeightChanged(height) }
+        box.onSticky = { [weak self] frames in self?.sticky = frames; self?.reportPin() }
         boundsObserver = NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification,
-            object: contentView, queue: .main) { [weak self] _ in self?.reportOverflow() }
+            object: contentView, queue: .main) { [weak self] _ in self?.reportOverflow(); self?.reportPin() }
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     deinit { if let boundsObserver { NotificationCenter.default.removeObserver(boundsObserver) } }
-    func setContent(_ content: AnyView) {
-        self.content = content; measuredWidth = -1; needsLayout = true
-    }
+    func setContent(_ content: AnyView) { box.content = content }
     override func layout() {
         super.layout()
         let width = contentView.bounds.width
         guard width > 0 else { return }
-        if measuredWidth != width {
-            measuredWidth = width
-            host.rootView = AnyView(content.frame(width: width, alignment: .leading).fixedSize(horizontal: false, vertical: true))
-        }
-        host.layoutSubtreeIfNeeded()
-        let height = host.fittingSize.height
-        let frame = CGRect(x: 0, y: 0, width: width, height: height)
+        if box.width != width { box.width = width }
+        placeHost()
+    }
+    private func contentHeightChanged(_ height: CGFloat) {
+        guard abs(height - contentHeight) > 0.25 else { return }
+        contentHeight = height
+        placeHost()
+        onHeight?(height)
+    }
+    private func placeHost() {
+        let width = contentView.bounds.width
+        guard width > 0 else { return }
+        // The document is exactly as tall as its content: resizing the viewport (the card
+        // window growing or shrinking) never lays the list out again.
+        let frame = CGRect(x: 0, y: 0, width: width, height: contentHeight)
         if host.frame != frame { host.frame = frame }
         // Clamp an old scroll offset when running sessions disappear.
-        let y = min(max(0, contentView.bounds.minY), max(0, height - contentView.bounds.height))
-        if abs(y - contentView.bounds.minY) > 0.5 { contentView.scroll(to: CGPoint(x: 0, y: y)) }
-        reflectScrolledClipView(contentView)
+        let y = min(max(0, contentView.bounds.minY), max(0, contentHeight - contentView.bounds.height))
+        if abs(y - contentView.bounds.minY) > 0.5 { contentView.scroll(to: CGPoint(x: 0, y: y)); reflectScrolledClipView(contentView) }
         reportOverflow()
+        reportPin()
     }
     private func reportOverflow() {
-        onOverflow?(host.frame.maxY - contentView.bounds.maxY > 1)
+        onOverflow?(contentHeight - contentView.bounds.maxY > 1)
+    }
+    /// Pin while the request's item is in view but its actions are below the fold.
+    private func reportPin() {
+        guard let item = sticky.item, let actions = sticky.actions else { onPin?(false); return }
+        let visible = contentView.bounds
+        onPin?(actions.maxY > visible.maxY - 8 && item.minY < visible.maxY - 24)
+    }
+}
+
+/// Where the open request's session item and its actions sit in the scrolling content.
+enum StickyActionFrames {
+    struct Frames: Equatable { var item: CGRect?; var actions: CGRect? }
+    enum Part { case item, actions }
+}
+
+private struct StickyFrameReporter: View {
+    let part: StickyActionFrames.Part
+    @Environment(\.stickyReporter) private var reporter
+    var body: some View {
+        GeometryReader { geometry in
+            let frame = geometry.frame(in: .named(PetDetailScrollView.space))
+            Color.clear
+                .onAppear { reporter?.report(part, frame) }
+                .onChange(of: frame) { _, frame in reporter?.report(part, frame) }
+                .onDisappear { reporter?.report(part, nil) }
+        }
+    }
+}
+
+extension View {
+    func reportsStickyFrame(_ part: StickyActionFrames.Part) -> some View {
+        background(StickyFrameReporter(part: part))
     }
 }
 
@@ -225,11 +328,11 @@ struct DesktopPetStatusView: View {
         }
         .padding(12)
         .background {
-            RoundedRectangle(cornerRadius: 18, style: .continuous).fill(.regularMaterial)
-                .overlay {
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .fill(scheme == .dark ? Color(nsColor: NSColor(rgb: 0x17271F)).opacity(0.65) : .white.opacity(0.08))
-                }
+            if state.panelMaterial == .solid {
+                RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Theme.surface)
+            } else {
+                RoundedRectangle(cornerRadius: 18, style: .continuous).fill(.regularMaterial)
+            }
         }
         .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Theme.heroEdge, lineWidth: 0.5))
         .shadow(color: .black.opacity(0.12), radius: 7, y: 3)

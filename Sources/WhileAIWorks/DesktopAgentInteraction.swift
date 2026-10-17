@@ -44,6 +44,8 @@ struct AgentInteractionCardView: View {
     var embedded = false
     var later: (() -> Void)?
     @FocusState private var typing: Bool
+    @State private var shownDetailHeight: CGFloat = 0
+    @State private var fullDetailHeight: CGFloat = 0
     private var request: PermissionRequest { interaction.request }
     private var draft: AgentInteractionDraft { state.agentInteractionDrafts[request.id] ?? .init() }
     private var fullDetail: Bool { expanded || (request.detail != nil && draft.reviewedDetail == request.detail) }
@@ -77,9 +79,16 @@ struct AgentInteractionCardView: View {
             else {
                 Text(request.summary).font(.system(size: 12, weight: .medium)).fixedSize(horizontal: false, vertical: true)
                 if let detail = request.detail {
-                    Text(detail).font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary)
-                        .lineLimit(fullDetail ? nil : 4).textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    // The full block is measured behind the visible one: when nothing is
+                    // cut off, the whole operation is already in view and counts as reviewed.
+                    detailBlock(detail, limited: !fullDetail)
+                        .background(alignment: .topLeading) {
+                            detailBlock(detail, limited: false).fixedSize(horizontal: false, vertical: true).hidden()
+                                .background(GeometryReader { Color.clear.preference(key: FullDetailHeight.self, value: $0.size.height) })
+                        }
+                        .background(GeometryReader { Color.clear.preference(key: ShownDetailHeight.self, value: $0.size.height) })
+                        .onPreferenceChange(FullDetailHeight.self) { fullDetailHeight = $0; reviewIfFullyShown(detail) }
+                        .onPreferenceChange(ShownDetailHeight.self) { shownDetailHeight = $0; reviewIfFullyShown(detail) }
                         .padding(9).background(Theme.well, in: RoundedRectangle(cornerRadius: 8))
                     if !fullDetail {
                         Button("查看完整操作") { change { $0.reviewedDetail = detail } }
@@ -100,6 +109,23 @@ struct AgentInteractionCardView: View {
         .padding(embedded ? 0 : 10).frame(maxWidth: .infinity, alignment: .leading)
         .background(embedded ? Color.clear : Theme.well, in: RoundedRectangle(cornerRadius: 12))
         .accessibilityIdentifier("agent-interaction-card")
+    }
+    private func detailBlock(_ detail: String, limited: Bool) -> some View {
+        let readable = AgentInteractionDetail.readable(detail)
+        return VStack(alignment: .leading, spacing: 4) {
+            Text(readable.subject).font(.system(size: 11, design: .monospaced)).foregroundStyle(.primary)
+                .lineLimit(limited ? 4 : nil)
+            ForEach(Array((limited ? Array(readable.notes.prefix(3)) : readable.notes).enumerated()), id: \.offset) { _, note in
+                Text(note).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(limited ? 2 : nil)
+            }
+        }
+        .textSelection(.enabled)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+    private func reviewIfFullyShown(_ detail: String) {
+        guard !fullDetail, shownDetailHeight > 0, fullDetailHeight > 0, fullDetailHeight <= shownDetailHeight + 0.5,
+              state.agentInteractions.contains(where: { $0.id == request.id }) else { return }
+        state.agentInteractionDrafts[request.id, default: .init()].reviewedDetail = detail
     }
     private func question(_ question: PermissionQuestion) -> some View {
         VStack(alignment: .leading, spacing: 7) {
@@ -151,7 +177,46 @@ struct AgentInteractionCardView: View {
     }
 }
 
-/// Kept outside the detail card's scrolling/fade region so the decision never disappears.
+private struct FullDetailHeight: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+}
+private struct ShownDetailHeight: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+}
+
+/// Tool input as a person reviews it: the command, path or URL first, then every
+/// other field, so nothing an allow would run is hidden. Non-JSON text is shown as is.
+enum AgentInteractionDetail {
+    static func readable(_ detail: String) -> (subject: String, notes: [String]) {
+        guard let data = detail.data(using: .utf8),
+              let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let key = ["command", "cmd", "file_path", "path", "url", "pattern", "query"].first(where: { object[$0] is String }),
+              let subject = object[key] as? String else { return (detail, []) }
+        let rest = object.keys.filter { $0 != key }.sorted { lhs, rhs in
+            lhs == "description" || (rhs != "description" && lhs < rhs)
+        }
+        let notes = rest.map { field -> String in
+            if field == "description", let text = object[field] as? String { return text }
+            return field + "：" + render(object[field]!)
+        }
+        return (subject, notes)
+    }
+    private static func render(_ value: Any) -> String {
+        if let text = value as? String { return text }
+        if let number = value as? NSNumber {
+            return CFGetTypeID(number) == CFBooleanGetTypeID() ? (number.boolValue ? "true" : "false") : number.stringValue
+        }
+        if JSONSerialization.isValidJSONObject(value),
+           let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]),
+           let text = String(data: data, encoding: .utf8) { return text }
+        return String(describing: value)
+    }
+}
+
+/// The decision for one request. In the dock card it follows the request inside its
+/// session item, and pins to the card's bottom while that item runs past the view.
 struct AgentInteractionActionsView: View {
     @ObservedObject var state: AppState
     let interaction: AgentInteraction
@@ -181,7 +246,7 @@ struct AgentInteractionActionsView: View {
                 Spacer()
                 Button(interaction.phase == .sending ? "发送中…" : "提交回答") { submit(.answer(draft.answers(for: request.questions))) }
                     .disabled(!interaction.canAnswer || !AgentInteractionValidation.allows(.answer(draft.answers(for: request.questions)), for: request))
-                    .foregroundStyle(Theme.accent).accessibilityIdentifier("agent-interaction-submit")
+                    .buttonStyle(DockPrimaryButtonStyle()).accessibilityIdentifier("agent-interaction-submit")
             } else {
                 Button("回到原会话") { state.openInteractionSession(request) }.foregroundStyle(.secondary)
                 Spacer(minLength: 0)
@@ -190,12 +255,12 @@ struct AgentInteractionActionsView: View {
                         .accessibilityIdentifier("agent-interaction-deny")
                     if expanded || request.detail == nil || draft.reviewedDetail == request.detail {
                         Button(request.nativeApproval == nil ? "允许一次" : "允许此对话") { submit(.allow) }
-                            .disabled(!interaction.canAnswer).foregroundStyle(Theme.accent).accessibilityIdentifier("agent-interaction-allow")
+                            .disabled(!interaction.canAnswer).buttonStyle(DockPrimaryButtonStyle()).accessibilityIdentifier("agent-interaction-allow")
                     } else {
                         Button("审阅操作") {
                             var updated = draft; updated.reviewedDetail = request.detail
                             state.agentInteractionDrafts[request.id] = updated
-                        }.foregroundStyle(Theme.accent).accessibilityIdentifier("agent-interaction-review")
+                        }.buttonStyle(DockPrimaryButtonStyle()).accessibilityIdentifier("agent-interaction-review")
                     }
                 }
             }

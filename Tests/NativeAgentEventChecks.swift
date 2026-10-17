@@ -40,10 +40,12 @@ import AgentHUDCore
                 angles.append(atan2(frame.transform.m12, frame.transform.m11))
                 check(frame.position == logoLayer.position, "activity never moves the logo's center or hit target")
             }
-            check(scales.count >= 16 && scales.max()! - scales.min()! > 0.08,
+            // ±8° sine swing with a 100%–106% breath (docs/motion-design.md §3.1).
+            let swing = CGFloat(AgentActivityMarkView.swingAngle)
+            check(scales.count >= 16 && scales.max()! - scales.min()! > CGFloat(AgentActivityMarkView.breath) * 0.7,
                   "the visible logo has a noticeable breathing range")
-            check(angles.count >= 16 && angles.max()! > 0.15 && angles.min()! < -0.15,
-                  "the visible compositor rocks the logo in both directions")
+            check(angles.count >= 16 && angles.max()! > swing * 0.85 && angles.min()! < -swing * 0.85,
+                  "the visible compositor swings the logo in both directions")
             active[0].configure(source: .codex, dark: true, working: true, reduceMotion: true)
             check(!active[0].isAnimating, "reduced motion leaves a static logo")
             check(CATransform3DIsIdentity(logoLayer.transform), "reduced motion restores an upright, full-size logo")
@@ -101,7 +103,7 @@ import AgentHUDCore
         check(state.desktopDockTab == .sessions, "switching agent returns to session events")
         state.desktopDockTab = .quota; state.desktopPetPresentation = .companion; dock.refresh()
         state.desktopPetPresentation = .dock; dock.refresh()
-        check(!state.desktopPetShowsStatus && !dock.detailPanel.isVisible, "mode changes keep the card collapsed")
+        check(!state.desktopPetShowsStatus && !dock.cardVisible, "mode changes keep the card collapsed")
         state.desktopPetShowsStatus = true; dock.refresh()
         check(state.desktopDockTab == .sessions, "reopening after a presentation change returns to sessions")
         dock.dismiss(); dock.select(.claude)

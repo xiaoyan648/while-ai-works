@@ -137,12 +137,13 @@ final class AgentHubDataController {
             else { window = .other }
             data.quotas.append(.init(id: snapshot.agentId, source: source, title: title,
                 remaining: snapshot.remainingPct.flatMap { $0.isFinite ? min(100, max(0, $0)) : nil },
-                resetAt: snapshot.resetAt, observedAt: snapshot.updatedAt, stale: stale, window: window))
+                resetAt: snapshot.resetAt, observedAt: snapshot.updatedAt, stale: stale, window: window,
+                windowDuration: snapshot.windowDuration))
             if let weekly = snapshot.weeklyRemainingPct, weekly.isFinite,
                !observedTitle.lowercased().contains("week"), !observedTitle.contains("周") {
                 data.quotas.append(.init(id: snapshot.agentId + "-weekly", source: source, title: "每周",
                     remaining: min(100, max(0, weekly)), resetAt: snapshot.weeklyResetAt,
-                    observedAt: snapshot.updatedAt, stale: stale, window: .weekly))
+                    observedAt: snapshot.updatedAt, stale: stale, window: .weekly, windowDuration: 7 * 86400))
             }
         }
         let turns = Dictionary(report.turns.map { ($0.sessionID, $0) }, uniquingKeysWith: { $0.observedAtMs > $1.observedAtMs ? $0 : $1 })
@@ -177,7 +178,8 @@ final class AgentHubDataController {
                 tokensIn: max(0, session.tokensIn), tokensOut: max(0, session.tokensOut), cacheRead: max(0, session.cacheReadTokens),
                 reply: reply, observedAt: session.lastActivityAt ?? session.observedAt, navigationURL: url, resumeCommand: resume,
                 event: turn?.state == .waitingForApproval ? .approval : (turn?.state == .completed || completedWithoutTurn) ? .finished : running ? .working : .recent,
-                eventAt: completedAt ?? turn.map { Date(timeIntervalSince1970: Double($0.observedAtMs) / 1000) }))
+                eventAt: completedAt ?? turn.map { Date(timeIntervalSince1970: Double($0.observedAtMs) / 1000) },
+                turnStartedAt: running ? turn?.startedAtMs.map { Date(timeIntervalSince1970: Double($0) / 1000) } : nil))
         }
         data.sessions = Array(Dictionary(data.sessions.map { ($0.dockIdentity, $0) }, uniquingKeysWith: {
             $0.observedAt >= $1.observedAt ? $0 : $1

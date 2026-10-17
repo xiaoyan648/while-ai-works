@@ -20,10 +20,13 @@ struct SettingsView: View {
             controls
             desktop
             ai
+            appearance
             sound
             about
         }
         .formStyle(.grouped)
+        .scrollContentBackground(state.panelMaterial == .solid ? .hidden : .automatic)
+        .background { if state.panelMaterial == .solid { Theme.surface.ignoresSafeArea() } }
         .tint(Theme.accent)
         .frame(minWidth: 480, idealWidth: 520, minHeight: 420, idealHeight: 660)
         .onAppear { preview.set(mood: .idle, coat: state.mascotCoat) }
@@ -199,6 +202,16 @@ struct SettingsView: View {
                 .multilineTextAlignment(.leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var appearance: some View {
+        Section("外观") {
+            Picker("面板材质", selection: $state.panelMaterial) {
+                ForEach(PanelMaterial.allCases) { Text($0.title).tag($0) }
+            }
+            .pickerStyle(.segmented).accessibilityIdentifier("panel-material")
+            Text("实色与猫条一致；毛玻璃透出桌面颜色。").font(.caption).foregroundStyle(.secondary)
         }
     }
 

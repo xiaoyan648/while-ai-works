@@ -10,6 +10,7 @@ struct MenuBarView: View {
     var quit: () -> Void = {}
     @Namespace private var tiles
     @State private var taps: [PlayMode: Int] = [:]
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     static let width: CGFloat = 344
 
@@ -24,11 +25,28 @@ struct MenuBarView: View {
         }
         .padding(12)
         .frame(width: Self.width)
+        .modifier(PanelSurface(material: state.panelMaterial))
         .onAppear(perform: syncMascot)
         .onChange(of: state.mascotMood) { _, _ in syncMascot() }
         .onChange(of: state.mascotCoat) { _, _ in syncMascot() }
         .onChange(of: state.celebrationSerial) { _, _ in mascot.celebrate() }
+        .onChange(of: state.latestUnseenCompletion) { old, new in
+            if let new, new > old ?? .distantPast { mascot.notice(toward: dockDirection) }
+        }
+        .onChange(of: state.desktopEnabled) { _, playing in if playing { mascot.stretch() } }
     }
+
+    /// Which way the dock lies from the panel, for the cat's glance.
+    private var dockDirection: CGPoint {
+        switch state.desktopDockEdge {
+        case .right: return CGPoint(x: 1, y: 0)
+        case .left: return CGPoint(x: -1, y: 0)
+        case .top: return CGPoint(x: 0, y: -1)
+        case .bottom: return CGPoint(x: 0, y: 1)
+        }
+    }
+
+    private var snap: Animation { Motion.resolved(Motion.snap, reduceMotion: reduceMotion) }
 
     private func syncMascot() { mascot.set(mood: state.mascotMood, coat: state.mascotCoat) }
 
@@ -46,6 +64,7 @@ struct MenuBarView: View {
                 Text(headline)
                     .font(.system(size: 17, weight: .semibold))
                     .contentTransition(.opacity)
+                    .animation(snap, value: headline)
                 Text(detail)
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
@@ -53,7 +72,7 @@ struct MenuBarView: View {
                     .fixedSize(horizontal: false, vertical: true)
                 statusChip.padding(.top, 3)
             }
-            .animation(Theme.spring, value: headline)
+            .animation(snap, value: detail)
             Spacer(minLength: 0)
         }
         .padding(.trailing, 12)
@@ -124,7 +143,14 @@ struct MenuBarView: View {
     private var statusChip: some View {
         HStack(spacing: 6) {
             ActivityDot(active: state.desktopEnabled && state.followAI && state.detectedWorking)
-            Text(chipText).font(.system(size: 11, weight: .medium)).lineLimit(1)
+            // A changed status pushes up from below rather than blinking in place.
+            ZStack(alignment: .leading) {
+                Text(chipText).font(.system(size: 11, weight: .medium)).lineLimit(1)
+                    .id(chipText)
+                    .transition(reduceMotion ? .opacity : .push(from: .bottom))
+            }
+            .clipped()
+            .animation(snap, value: chipText)
         }
         .padding(.horizontal, 8).padding(.vertical, 4)
         .background(Theme.well, in: Capsule())
@@ -145,10 +171,13 @@ struct MenuBarView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(state.desktopEnabled ? "正在玩" : "开始玩")
                     .font(.system(size: 14, weight: .semibold))
+                    .contentTransition(.opacity)
                 Text(state.desktopEnabled ? "按 \(state.shortcutLabel) 回去工作" : "开启后在桌面玩，\(state.shortcutLabel) 随时收起")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
+                    .contentTransition(.opacity)
             }
+            .animation(snap, value: state.desktopEnabled)
             Spacer(minLength: 8)
             Toggle("开始玩", isOn: $state.desktopEnabled)
                 .labelsHidden()
@@ -168,7 +197,7 @@ struct MenuBarView: View {
                 let selected = state.mode == mode
                 Button {
                     taps[mode, default: 0] += 1
-                    withAnimation(Theme.spring) { state.mode = mode }
+                    withAnimation(snap) { state.mode = mode }
                 } label: {
                     VStack(spacing: 5) {
                         Image(systemName: mode.symbol)
@@ -183,6 +212,7 @@ struct MenuBarView: View {
                             .monospacedDigit()
                             .foregroundStyle(.secondary)
                             .contentTransition(.numericText())
+                            .animation(snap, value: state.shortCount(for: mode))
                     }
                     .foregroundStyle(selected ? Theme.accent : Color.primary)
                     .frame(maxWidth: .infinity)
@@ -218,7 +248,7 @@ struct MenuBarView: View {
                         Text(state.primaryStatValue.formatted())
                             .font(Theme.number(28))
                             .contentTransition(.numericText(value: Double(state.primaryStatValue)))
-                            .animation(Theme.spring, value: state.primaryStatValue)
+                            .animation(snap, value: state.primaryStatValue)
                         Text(state.primaryStatUnit).font(.system(size: 12)).foregroundStyle(.secondary)
                     }
                 }
@@ -226,6 +256,8 @@ struct MenuBarView: View {
                 VStack(alignment: .trailing, spacing: 6) {
                     Text("本次 \(state.session(for: state.mode).formatted()) \(state.mode.unit)")
                         .font(.system(size: 11)).monospacedDigit().foregroundStyle(.secondary)
+                        .contentTransition(.numericText(value: Double(state.session(for: state.mode))))
+                        .animation(snap, value: state.session(for: state.mode))
                     if state.mode != .woodfish {
                         InlineAction(title: state.mode == .fishing ? "收竿重来" : "重新铺满",
                                      symbol: "arrow.counterclockwise", tint: Theme.accent) { state.reset() }
