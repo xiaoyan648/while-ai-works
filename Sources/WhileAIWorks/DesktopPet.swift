@@ -7,6 +7,10 @@ final class DesktopPetPanel: NSPanel {
     var allowsKeyboard = false
     override var canBecomeKey: Bool { allowsKeyboard }
     override var canBecomeMain: Bool { false }
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if allowsKeyboard, TextEditingMenu.performKeyEquivalent(with: event, in: self) { return true }
+        return super.performKeyEquivalent(with: event)
+    }
 }
 
 enum DesktopPetPlacement {

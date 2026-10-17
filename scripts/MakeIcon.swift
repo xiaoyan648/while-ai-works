@@ -8,12 +8,9 @@ guard let source = CGImageSourceCreateWithURL(sourceURL as CFURL, nil),
     fatalError("Cannot load icon artwork at \(sourceURL.path)")
 }
 try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-// Remove only the concept sheet's outer margin. Apply the native tile silhouette
-// to keep the desktop outside the icon genuinely transparent.
-let margin = CGFloat(artwork.width) * 0.04
-let crop = CGRect(x: margin, y: margin, width: CGFloat(artwork.width) - margin * 2,
-                  height: CGFloat(artwork.height) - margin * 2)
-let tile = artwork.cropping(to: crop)!
+// The source is full-bleed square artwork. Preserve the cat's ears and tail;
+// apply the native tile silhouette and transparent outer margin here only.
+guard artwork.width == artwork.height else { fatalError("Icon artwork must be square") }
 for size in [16, 32, 128, 256, 512] {
     for scale in [1, 2] {
         let pixels = size * scale
@@ -29,7 +26,7 @@ for size in [16, 32, 128, 256, 512] {
         context.setShadow(offset: .zero, blur: 0, color: nil)
         context.addPath(shape); context.clip()
         context.interpolationQuality = .high
-        context.draw(tile, in: rect)
+        context.draw(artwork, in: rect)
         let name = "icon_\(size)x\(size)\(scale == 2 ? "@2x" : "").png"
         let output = directory.appendingPathComponent(name)
         let destination = CGImageDestinationCreateWithURL(output as CFURL, "public.png" as CFString, 1, nil)!

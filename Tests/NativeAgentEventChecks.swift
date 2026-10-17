@@ -5,9 +5,17 @@ import AgentHUDCore
 @main enum NativeAgentEventChecks {
     static func main() {
         _ = NSApplication.shared
+        let mainMenu = NSMenu()
+        let appItem = NSMenuItem()
+        appItem.submenu = NSMenu(); mainMenu.addItem(appItem)
+        let editItem = NSMenuItem(title: "编辑", action: nil, keyEquivalent: "")
+        editItem.submenu = TextEditingMenu.menu; mainMenu.addItem(editItem)
+        NSApp.mainMenu = mainMenu
+        var restoreClipboard: (() -> Void)?
         func check(_ condition: @autoclosure () -> Bool, _ message: String = "unexpected native state", line: UInt = #line) {
             guard condition() else {
                 fputs("NativeAgentEventChecks line \(line): \(message)\n", stderr)
+                restoreClipboard?()
                 exit(1)
             }
         }
@@ -143,6 +151,41 @@ import AgentHUDCore
                      "an explicit answer receives the native field editor")
         let editor = dock.detailPanel.firstResponder as! NSTextView
         check(editor.visibleRect.height >= editor.bounds.height - 1, "the whole answer field must be visible")
+        let pasteboard = NSPasteboard.general
+        let savedClipboard = (pasteboard.pasteboardItems ?? []).map { item in
+            item.types.compactMap { type in item.data(forType: type).map { (type, $0) } }
+        }
+        restoreClipboard = {
+            pasteboard.clearContents()
+            pasteboard.writeObjects(savedClipboard.map { entries in
+                let item = NSPasteboardItem()
+                for (type, data) in entries { item.setData(data, forType: type) }
+                return item
+            })
+        }
+        defer { restoreClipboard?() }
+        func shortcut(_ key: String, code: UInt16, shift: Bool = false, panel: DesktopPetPanel) -> Bool {
+            let event = NSEvent.keyEvent(with: .keyDown, location: .zero,
+                modifierFlags: shift ? [.command, .shift] : .command, timestamp: 0,
+                windowNumber: panel.windowNumber, context: nil, characters: shift ? key.uppercased() : key,
+                charactersIgnoringModifiers: shift ? key.uppercased() : key, isARepeat: false, keyCode: code)!
+            let handled = panel.performKeyEquivalent(with: event)
+            settle(0.1)
+            return handled
+        }
+        let pastedAnswer = "中文回答 👩🏽‍💻\n第二行 mixed English"
+        pasteboard.clearContents(); pasteboard.setString(pastedAnswer, forType: .string)
+        check(shortcut("a", code: 0, panel: dock.detailPanel), "Command-A selects the answer")
+        check(shortcut("v", code: 9, panel: dock.detailPanel), "Command-V reaches the nonactivating panel editor")
+        check(editor.string == pastedAnswer && state.agentInteractionDrafts[request.id]?.custom[question.answerKey] == pastedAnswer,
+              "multiline Unicode paste updates both the native editor and the actual answer draft")
+        check(shortcut("z", code: 6, panel: dock.detailPanel) && editor.string == "保留草稿", "paste can be undone")
+        let redone = shortcut("z", code: 6, shift: true, panel: dock.detailPanel)
+        check(redone && editor.string == pastedAnswer, "paste can be redone")
+        check(shortcut("a", code: 0, panel: dock.detailPanel))
+        check(shortcut("c", code: 8, panel: dock.detailPanel) && pasteboard.string(forType: .string) == pastedAnswer, "copy preserves Unicode and newlines")
+        check(shortcut("x", code: 7, panel: dock.detailPanel) && editor.string.isEmpty, "cut edits the active answer")
+        check(shortcut("v", code: 9, panel: dock.detailPanel) && editor.string == pastedAnswer, "cut text can be pasted back")
         let newer = PermissionRequest(id: "native-newer-request", source: .codex, sessionID: "native-other-session",
             toolName: "Bash", summary: "运行另一个检查", detail: "npm test", cwd: "/fixture/other", at: Date().addingTimeInterval(1))
         state.agentInteractions.append(.init(request: newer, viaHook: true)); settle()
@@ -152,11 +195,27 @@ import AgentHUDCore
         state.agentInteractionInputID = nil; dock.refresh(); settle()
         check(!dock.detailPanel.canBecomeKey && !dock.detailPanel.isKeyWindow, "closing input releases keyboard focus")
         dock.dismiss(); dock.select(.codex); settle()
-        check(!dock.detailPanel.canBecomeKey && state.agentInteractionDrafts[request.id]?.custom[question.answerKey] == "保留草稿",
+        check(!dock.detailPanel.canBecomeKey && state.agentInteractionDrafts[request.id]?.custom[question.answerKey] == pastedAnswer,
                      "reopening a saved answer previews it without automatic keyboard focus")
+        check(!shortcut("v", code: 9, panel: dock.detailPanel), "a read-only preview does not consume paste")
+        let expanded = AgentInteractionWindowController(state: state)
+        expanded.show(request.id, appearance: nil, beside: dock.detailPanel.frame); settle()
+        for _ in 0..<12 {
+            if expanded.panel.firstResponder is NSTextView { break }
+            expanded.panel.selectNextKeyView(nil); settle(0.05)
+        }
+        check(expanded.panel.firstResponder is NSTextView, "the standalone request window can focus its answer")
+        let expandedEditor = expanded.panel.firstResponder as! NSTextView
+        let expandedAnswer = "浮窗回答\n也可以粘贴 🐈"
+        pasteboard.clearContents(); pasteboard.setString(expandedAnswer, forType: .string)
+        check(shortcut("a", code: 0, panel: expanded.panel))
+        check(shortcut("v", code: 9, panel: expanded.panel) && expandedEditor.string == expandedAnswer &&
+              state.agentInteractionDrafts[request.id]?.custom[question.answerKey] == expandedAnswer,
+              "the standalone request window also pastes into the correct draft")
+        expanded.dismiss()
         state.desktopPetEnabled = false; dock.refresh(); settle()
         check(icons.allSatisfy { !$0.isAnimating }, "hidden windows stop activity rendering")
-        print("NativeAgentEventChecks: inline text truncation/reflow/full reply, working-logo animation/reduced motion, session default, fully visible answer, incoming-event focus stability and draft reopening passed; no real answer sent")
+        print("NativeAgentEventChecks: inline text truncation/reflow/full reply, working-logo animation/reduced motion, session default, Unicode multiline paste/copy/cut/select-all/undo/redo, incoming-event focus stability and draft reopening passed; no real answer sent")
         withExtendedLifetime(dock) {}
     }
 }

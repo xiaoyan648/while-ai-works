@@ -98,6 +98,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
         appMenu.addItem(withTitle: "退出", action: #selector(quit), keyEquivalent: "q")
         item.submenu = appMenu
         main.addItem(item)
+        let editItem = NSMenuItem(title: "编辑", action: nil, keyEquivalent: "")
+        editItem.submenu = TextEditingMenu.menu
+        main.addItem(editItem)
         NSApp.mainMenu = main
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
