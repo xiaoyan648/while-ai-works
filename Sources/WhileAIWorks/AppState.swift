@@ -735,6 +735,8 @@ struct AgentDockSession: Equatable, Identifiable, Sendable {
     var eventAt: Date? = nil
     /// When the running turn began, for "running for 12 minutes".
     var turnStartedAt: Date? = nil
+    /// Source-owned hierarchy; nil identifies a main session.
+    var parentSessionID: String? = nil
     var dockIdentity: String { source.rawValue + ":" + id }
     var canSend: Bool { source == .codex && navigationURL?.scheme == "codex" && navigationURL?.lastPathComponent == id }
 }

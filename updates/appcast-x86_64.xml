@@ -6,6 +6,41 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <channel>
         <title>While AI Works</title>
         <item>
+            <title>0.19.0</title>
+            <pubDate>Sun, 18 Oct 2026 07:20:52 -0400</pubDate>
+            <link>https://github.com/xiaoyan648/while-ai-works/releases/tag/v0.19.0</link>
+            <sparkle:version>34</sparkle:version>
+            <sparkle:shortVersionString>0.19.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="markdown"><![CDATA[# 0.19.0 · 子 Agent 收进猫条
+
+版本 0.19.0，构建号 34。需要 macOS 14 或更新版本。
+
+## 主 Agent 与子 Agent
+
+- 主 Agent 的子 Agent 默认收起，点击「子 Agent」入口后按层级缩进展示；更深的子树可以继续单独展开。
+- 子 Agent 的待回答与待审批会汇总到折叠入口，并将整个会话组排到「待你处理」，不会自动展开或夺走输入焦点。
+- 会话数量上限只计算主 Agent，保留被选中主会话的完整子树，避免子 Agent 挤掉父会话或静默消失。
+
+## 中转站与额度读取
+
+- Codex 使用自定义中转站时，不再请求只对官方服务有意义的账户额度接口；本机会话和 Token 用量仍继续统计。
+- 官方额度读取设置 3 秒短超时；中转站、网络不可用或 app-server 无响应时，猫条仍可切换会话与页签。
+
+## 更新与安装
+
+0.17.1 及更新版本可在「设置 → 关于 → 检查更新」中升级。原有设置和鱼获保留。
+
+- M 系列 Mac：`While-AI-Works-0.19.0-macOS-arm64.dmg`
+- Intel Mac：`While-AI-Works-0.19.0-macOS-x86_64.dmg`
+
+退出旧版，打开 DMG，将 **While AI Works.app** 拖入 **Applications（应用程序）**。同时提供两种架构的 ZIP、签名更新清单和 `SHA256SUMS.txt`。
+
+应用采用 ad-hoc 签名，尚无 Developer ID 签名或 Apple 公证。更新包和更新清单验证 Ed25519 签名；首次安装可能需要在 macOS「隐私与安全性」中允许打开。Intel 版本为交叉编译，未经 Intel 真机验收。
+]]></description>
+            <enclosure url="https://github.com/xiaoyan648/while-ai-works/releases/download/v0.19.0/While-AI-Works-0.19.0-macOS-x86_64.zip" length="32269589" type="application/octet-stream" sparkle:edSignature="XH4FxHST63OAUle4n6CssRSRrsA1TnxkL+lgmWzOGcK8ITzBEny3wt1how6L6TJIMSl8nDqMQdU6HUwQD7YxDQ=="/>
+        </item>
+        <item>
             <title>0.18.1</title>
             <pubDate>Sat, 17 Oct 2026 08:08:21 -0400</pubDate>
             <link>https://github.com/xiaoyan648/while-ai-works/releases/tag/v0.18.1</link>
@@ -90,45 +125,9 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
 ]]></description>
             <enclosure url="https://github.com/xiaoyan648/while-ai-works/releases/download/v0.18.0/While-AI-Works-0.18.0-macOS-x86_64.zip" length="32436594" type="application/octet-stream" sparkle:edSignature="J0OpJPx6h1vATsE+PzHQ7pLqwa8brdS9bEAdNsxbH95QWEE/CxyYpCuJV5WAm773s9G244Fxi9f4/ebQmfa4Bw=="/>
         </item>
-        <item>
-            <title>0.17.3</title>
-            <pubDate>Thu, 15 Oct 2026 23:35:01 -0400</pubDate>
-            <link>https://github.com/xiaoyan648/while-ai-works/releases/tag/v0.17.3</link>
-            <sparkle:version>31</sparkle:version>
-            <sparkle:shortVersionString>0.17.3</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <description sparkle:format="markdown"><![CDATA[# 0.17.3 · 轻量安装，鱼缸按需下载
-
-版本 0.17.3，构建号 31。需要 macOS 14 或更新版本。
-
-## 更轻的应用
-
-- 鱼缸模型和纹理改为独立资源包，默认安装不再携带。Apple Silicon 应用约 54 MiB，ZIP 约 30 MiB，较此前分别减少约 80% 和 86%。
-- 首次进入「收藏 → 水下观赏」时提示下载约 187 MiB，点击「下载并开启鱼缸」后才开始联网。支持进度、取消和失败重试，下载期间可继续使用小猫、钓鱼和鱼图鉴。
-- 下载完成后校验并安装到本机缓存，之后可离线观赏；普通应用更新复用同版本资源。鱼缸模型和纹理质量不变，已有鱼获、收藏和入住名单保留。
-- 从旧版升级后，首次开启鱼缸也需要下载一次独立资源包。
-
-## 猫条体验
-
-- 增大 Agent 详情卡片，让较长的问题和选项更容易阅读。
-- 运行中的 Agent 图标加入轻微左右摆动和更清晰的呼吸缩放。额度环保持稳定，空闲、隐藏或开启「减少动态效果」时停止动画。
-
-## 更新与安装
-
-0.17.1 及更新版本可在「设置 → 关于 → 检查更新」中升级。0.17.0 及更早版本需手动安装一次。原有设置和鱼获保留。
-
-- M 系列 Mac：`While-AI-Works-0.17.3-macOS-arm64.dmg`
-- Intel Mac：`While-AI-Works-0.17.3-macOS-x86_64.dmg`
-
-退出旧版，打开 DMG，将 **While AI Works.app** 拖入 **Applications（应用程序）**。同时提供两种架构的 ZIP、签名更新清单和 `SHA256SUMS.txt`。
-
-应用采用 ad-hoc 签名，尚无 Developer ID 签名或 Apple 公证。更新包和更新清单验证 Ed25519 签名；首次安装可能需要在 macOS「隐私与安全性」中允许打开。
-]]></description>
-            <enclosure url="https://github.com/xiaoyan648/while-ai-works/releases/download/v0.17.3/While-AI-Works-0.17.3-macOS-x86_64.zip" length="32244661" type="application/octet-stream" sparkle:edSignature="vwUnSYoaYXsTMyWykV9AzTDBq13yPRO+kKPEy6S3xfq7nHRU8WyUTpYlj4QpPAnm1vm7Vl7XjqvbCC05kVVNBw=="/>
-        </item>
     </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: crpO0InsMIaFHbPGv8etS3XRRLkkGzrkXQnp27P5fQ4D12bHYV3SHMrUnmxXhT2MhVnriqsIGytIGNqMZkDiDQ==
-length: 9056
+edSignature: +K0vNAcfVLMhraibkCXu6tqiB9/Il7YtIe6OCGrvmyaFEwOhNTu/AUrVsJi7F7TkT+y2S6zT91UvAKma3XNzDw==
+length: 8872
 -->

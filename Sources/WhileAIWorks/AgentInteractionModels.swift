@@ -156,6 +156,58 @@ struct AgentDockSessionRow: Identifiable, Equatable {
     }
 }
 
+/// Presentation hierarchy for a main Agent and its nested sandbox Agents.
+/// A missing parent leaves the row at the top level so requests remain visible.
+struct AgentDockSessionTree: Identifiable {
+    let row: AgentDockSessionRow
+    let children: [AgentDockSessionTree]
+    var id: String { row.id }
+    var descendants: [AgentDockSessionRow] { children.flatMap { [$0.row] + $0.descendants } }
+    var pendingCount: Int {
+        descendants.filter { $0.event == .input || $0.event == .approval }.count
+    }
+    func priority(at now: Date) -> Int {
+        pendingCount > 0 ? 0 : row.priority(at: now)
+    }
+
+    struct Entry: Identifiable {
+        let node: AgentDockSessionTree
+        let depth: Int
+        var id: String { node.id }
+    }
+
+    func visibleEntries(expanded: Set<String>, depth: Int = 0) -> [Entry] {
+        [Entry(node: self, depth: depth)] + (expanded.contains(id)
+            ? children.flatMap { $0.visibleEntries(expanded: expanded, depth: depth + 1) }
+            : [])
+    }
+
+    static func roots(_ rows: [AgentDockSessionRow]) -> [Self] {
+        let known = Set(rows.map(\.id))
+        func parent(_ row: AgentDockSessionRow) -> String? {
+            row.session.parentSessionID.map { row.session.source.rawValue + ":" + $0 }
+        }
+        let grouped = Dictionary(grouping: rows.filter { parent($0).map(known.contains) == true }, by: { parent($0)! })
+        func tree(_ row: AgentDockSessionRow, ancestors: Set<String>) -> Self {
+            let seen = ancestors.union([row.id])
+            return Self(row: row, children: (grouped[row.id] ?? []).filter { !seen.contains($0.id) }
+                .map { tree($0, ancestors: seen) })
+        }
+        let now = Date()
+        let order = Dictionary(uniqueKeysWithValues: rows.enumerated().map { ($0.element.id, $0.offset) })
+        func rank(_ node: Self) -> Int {
+            ([node.row] + node.descendants).map { order[$0.id] ?? .max }.min() ?? .max
+        }
+        return rows.filter { parent($0).map(known.contains) != true }.map { tree($0, ancestors: []) }
+            .sorted {
+                if $0.priority(at: now) != $1.priority(at: now) {
+                    return $0.priority(at: now) < $1.priority(at: now)
+                }
+                return rank($0) < rank($1)
+            }
+    }
+}
+
 enum AgentInteractionValidation {
     static func allows(_ decision: PermissionDecision, for request: PermissionRequest) -> Bool {
         guard !request.isPlan else { return false }

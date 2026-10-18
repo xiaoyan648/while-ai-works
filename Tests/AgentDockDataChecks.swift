@@ -87,6 +87,51 @@ struct AgentDockDataChecks {
         let dockDefaults = UserDefaults(suiteName: dockSuite)!
         defer { dockDefaults.removePersistentDomain(forName: dockSuite) }
         let dockState = AppState(defaults: dockDefaults)
+        precondition(CodexQuotaReadPolicy.allowsOfficialQuota(dataDirectory: fixtureHome,
+                                                              environment: ["OPENAI_BASE_URL": "https://api.openai.com/backend-api"]))
+        precondition(!CodexQuotaReadPolicy.allowsOfficialQuota(dataDirectory: fixtureHome,
+                                                               environment: ["OPENAI_BASE_URL": "http://127.0.0.1:3425/backend-api/codex"]),
+                     "custom gateways skip account quota reads")
+        precondition(!CodexQuotaReadPolicy.allowsOfficialQuota(dataDirectory: fixtureHome,
+                                                               environment: ["OPENAI_BASE_URL": "https://gateway.example.com/v1"]),
+                     "unknown hosts skip account quota reads")
+        let configHome = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("codex-config-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: configHome, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: configHome) }
+        try "model_provider = \"custom\"\n[model_providers.custom]\nbase_url = \"http://127.0.0.1:3425/v1\"\n".write(to: configHome.appendingPathComponent("config.toml"), atomically: true, encoding: .utf8)
+        precondition(!CodexQuotaReadPolicy.allowsOfficialQuota(dataDirectory: configHome, environment: [:]),
+                     "the active model provider base URL also disables official quota reads")
+        func liveFixture(_ key: String, children: [LiveSession] = []) -> LiveSession {
+            .init(id: key, agentId: "codex", task: key, terminal: "fixture", startedAt: now,
+                  pctOfWindow: nil, tokensIn: 1, tokensOut: 2, observedAt: now, subagentSessions: children)
+        }
+        let family = liveFixture("main", children: [liveFixture("child", children: [liveFixture("grandchild")])] +
+            (0..<20).map { liveFixture("sibling-\($0)") })
+        let familyReport = UsageReport(generatedAt: now, snapshots: [], sessions: [family], discoveredAgents: [agent])
+        dockState.agentDashboard = AgentHubDataController.adapt(familyReport, showReplies: false, now: now)
+        precondition(dockState.agentDashboard.sessions.count == 23, "the main-session limit preserves all children")
+        precondition(dockState.agentDashboard.sessions.first { $0.id == "child" }?.parentSessionID == "main")
+        precondition(dockState.agentDashboard.sessions.first { $0.id == "grandchild" }?.parentSessionID == "child")
+        let forest = AgentDockSessionTree.roots(dockState.sessionRows(for: [.codex]))
+        precondition(forest.count == 1 && forest[0].descendants.count == 22)
+        precondition(forest[0].visibleEntries(expanded: []).map(\.id) == ["codex:main"], "children default to collapsed")
+        let expanded = forest[0].visibleEntries(expanded: ["codex:main"])
+        precondition(expanded.count == 22 && expanded.dropFirst().allSatisfy { $0.depth == 1 },
+                     "expanding a parent reveals direct children")
+        let nested = forest[0].visibleEntries(expanded: ["codex:main", "codex:child"])
+        precondition(nested.count == 23 && nested.first { $0.id == "codex:grandchild" }?.depth == 2)
+        let childRequest = PermissionRequest(id: "child-approval", source: .codex, sessionID: "grandchild", toolName: "Bash",
+            summary: "运行检查", detail: "swift test", cwd: "/fixture", at: now)
+        dockState.agentInteractions = [.init(request: childRequest, viaHook: true)]
+        let pendingFamily = AgentDockSessionTree.roots(dockState.sessionRows(for: [.codex]))[0]
+        precondition(pendingFamily.pendingCount == 1 && pendingFamily.priority(at: now) == 0,
+                     "collapsed descendants retain an actionable attention summary")
+        precondition(pendingFamily.visibleEntries(expanded: []).count == 1,
+                     "new requests never expand children automatically")
+        precondition(pendingFamily.visibleEntries(expanded: ["codex:main", "codex:child"])
+            .first { $0.id == "codex:grandchild" }?.node.row.requests.first?.id == childRequest.id,
+                     "expanding preserves original child request routing")
+        dockState.agentInteractions = []
         precondition(dockState.desktopDockTab == .sessions)
         dockState.agentDashboard = shown
         precondition(dockState.dockQuota(for: .codex)?.remaining == 10, "Codex rail selects the weekly window")

@@ -836,6 +836,7 @@ struct DesktopDockDetailView: View {
     /// Clients whose lists are complete. A first visit builds a screenful at once and the
     /// rest once the pointer settles, so sweeping across agents never builds whole lists.
     @State private var fullSources: Set<WorkSource> = []
+    @State private var expandedSessions: Set<String> = []
     static let firstRows = 6
     /// The client shown before the latest switch, for the direction of the swap.
     @State private var lastSource: WorkSource?
@@ -863,8 +864,11 @@ struct DesktopDockDetailView: View {
     /// as computed properties they were rebuilt (filtered and sorted) for every row.
     var body: some View {
         let rows = state.sessionRows(for: sources)
+        let roots = AgentDockSessionTree.roots(rows)
         let requests = rows.flatMap(\.requests)
-        let selectedRequest = requests.first { $0.id == state.agentInteractionSelectionID } ?? requests.first
+        let visibleRequests = roots.flatMap { $0.visibleEntries(expanded: expandedSessions) }
+            .flatMap { $0.node.row.requests }
+        let selectedRequest = visibleRequests.first { $0.id == state.agentInteractionSelectionID } ?? visibleRequests.first
         return card(rows: rows, requests: requests, selectedRequest: selectedRequest)
     }
     private func card(rows: [AgentDockSessionRow], requests: [AgentInteraction], selectedRequest: AgentInteraction?) -> some View {
@@ -962,7 +966,7 @@ struct DesktopDockDetailView: View {
         }
         .onChange(of: state.desktopPetShowsStatus) { _, shown in
             // A closed card keeps nothing alive; the next opening starts fresh.
-            if !shown { keptSources = []; fullSources = [] }
+            if !shown { keptSources = []; fullSources = []; expandedSessions = [] }
         }
         .accessibilityIdentifier("cat-dock-detail")
         .environment(\.locale, Locale(identifier: "zh_CN"))
@@ -985,9 +989,15 @@ struct DesktopDockDetailView: View {
                         .padding(.top, group.priority == groups[0].priority ? 2 : 12)
                         .accessibilityAddTraits(.isHeader)
                 }
-                ForEach(group.rows) { row in
-                    sessionView(row, selectedRequestID: selectedRequestID)
-                    Divider().opacity(0.25)
+                ForEach(group.rows) { node in
+                    ForEach(node.visibleEntries(expanded: expandedSessions)) { entry in
+                        VStack(alignment: .leading, spacing: 0) {
+                            sessionView(entry.node.row, selectedRequestID: selectedRequestID)
+                            if !entry.node.children.isEmpty { subagentToggle(entry.node) }
+                            Divider().opacity(0.25)
+                        }
+                        .padding(.leading, CGFloat(min(entry.depth, 4)) * 14)
+                    }
                 }
             }
             ForEach(sources.filter { source in !rows.contains { $0.session.source == source } }) { source in
@@ -995,15 +1005,41 @@ struct DesktopDockDetailView: View {
             }
         }
     }
-    private func sessionGroups(_ rows: [AgentDockSessionRow], limit: Int) -> [(priority: Int, rows: [AgentDockSessionRow])] {
+    private func sessionGroups(_ rows: [AgentDockSessionRow], limit: Int) -> [(priority: Int, rows: [AgentDockSessionTree])] {
         let now = Date()
-        var groups: [(priority: Int, rows: [AgentDockSessionRow])] = []
-        for row in rows.prefix(limit) {
-            let priority = row.requests.isEmpty ? row.priority(at: now) : 0
-            if let index = groups.firstIndex(where: { $0.priority == priority }) { groups[index].rows.append(row) }
-            else { groups.append((priority, [row])) }
+        var groups: [(priority: Int, rows: [AgentDockSessionTree])] = []
+        for node in AgentDockSessionTree.roots(rows).prefix(limit) {
+            let priority = node.priority(at: now)
+            if let index = groups.firstIndex(where: { $0.priority == priority }) { groups[index].rows.append(node) }
+            else { groups.append((priority, [node])) }
         }
         return groups
+    }
+    private func subagentToggle(_ node: AgentDockSessionTree) -> some View {
+        let expanded = expandedSessions.contains(node.id)
+        return Button {
+            if expanded { expandedSessions.remove(node.id) }
+            else { expandedSessions.insert(node.id) }
+            state.hideAgentReplyPreview()
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                    .font(.system(size: 8, weight: .semibold))
+                Text("子 Agent · \(node.descendants.count)")
+                if node.pendingCount > 0 {
+                    Text("\(node.pendingCount) 待处理").foregroundStyle(Theme.attention)
+                }
+                Spacer(minLength: 0)
+            }
+            .font(.system(size: 10))
+            .contentShape(Rectangle())
+            .padding(.vertical, 7)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
+        .accessibilityLabel((expanded ? "收起" : "展开") + node.row.session.title + "的子 Agent")
+        .accessibilityValue("\(node.descendants.count) 个，\(node.pendingCount) 个待处理")
+        .accessibilityIdentifier("agent-subagents-" + node.row.session.id)
     }
     private func sessionView(_ row: AgentDockSessionRow, selectedRequestID: String?) -> some View {
         let session = row.session

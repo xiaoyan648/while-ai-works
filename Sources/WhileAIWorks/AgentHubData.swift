@@ -24,6 +24,54 @@ enum AgentCommandEnvironment {
     }
 }
 
+/// Account quota is only meaningful for the official Codex service. A local
+/// transcript can still be read when Codex uses a gateway, so skip the app
+/// server request instead of waiting on an endpoint that cannot answer it.
+enum CodexQuotaReadPolicy {
+    private static let officialHosts: Set<String> = ["api.openai.com", "chatgpt.com", "www.chatgpt.com"]
+    private static let overrideKeys = ["OPENAI_BASE_URL", "CODEX_BASE_URL", "CHATGPT_BASE_URL"]
+
+    static func allowsOfficialQuota(dataDirectory: URL,
+                                    environment: [String: String] = ProcessInfo.processInfo.environment) -> Bool {
+        let configured = overrideKeys.compactMap { key -> String? in
+            guard let value = environment[key]?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else { return nil }
+            return value
+        }.first ?? configBaseURL(dataDirectory: dataDirectory)
+        guard let configured else { return true }
+        guard let url = URL(string: configured), let host = url.host?.lowercased() else { return false }
+        return officialHosts.contains(host) && (url.scheme?.lowercased() == "https")
+    }
+
+    private static func configBaseURL(dataDirectory: URL) -> String? {
+        let file = dataDirectory.appendingPathComponent("config.toml")
+        guard let text = try? String(contentsOf: file, encoding: .utf8) else { return nil }
+        var activeProvider: String?
+        var providerBases: [String: String] = [:]
+        var sectionProvider: String?
+        for line in text.split(whereSeparator: \.isNewline) {
+            let value = line.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false)[0]
+                .trimmingCharacters(in: .whitespaces)
+            if value.hasPrefix("[") && value.hasSuffix("]") {
+                let section = value.dropFirst().dropLast().trimmingCharacters(in: .whitespaces)
+                if section.hasPrefix("model_providers.") {
+                    sectionProvider = String(section.dropFirst("model_providers.".count))
+                } else {
+                    sectionProvider = nil
+                }
+                continue
+            }
+            guard let equals = value.firstIndex(of: "=") else { continue }
+            let key = value[..<equals].trimmingCharacters(in: .whitespaces)
+            let raw = value[value.index(after: equals)...].trimmingCharacters(in: .whitespaces)
+            let parsed = raw.trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+            if key == "openai_base_url" || key == "chatgpt_base_url" { return parsed }
+            if key == "model_provider" { activeProvider = parsed }
+            if key == "base_url", let sectionProvider { providerBases[sectionProvider] = parsed }
+        }
+        return activeProvider.flatMap { providerBases[$0] }
+    }
+}
+
 /// Owns only the two requested providers. No hooks, remote relay or demo assembly.
 @MainActor
 final class AgentHubDataController {
@@ -71,8 +119,11 @@ final class AgentHubDataController {
         if sources.contains(.codex) {
             let directory = CodexLocator.dataDirectory
             let provider = CodexUsageProvider(readLimits: {
+                guard CodexQuotaReadPolicy.allowsOfficialQuota(dataDirectory: directory) else {
+                    throw UsageProviderError("Codex 使用自定义中转站，暂不读取账户额度")
+                }
                 guard let executable = CodexLocator.find() else { throw UsageProviderError("安装并登录 Codex 后读取额度") }
-                return try await CodexAppServerClient(executable: executable, dataDirectory: directory).fetch()
+                return try await CodexAppServerClient(executable: executable, dataDirectory: directory, timeout: 3).fetch()
             }, transcripts: .standard(directory: directory, ledger: ledger),
                history: QuotaHistoryStore(ledger: ledger, scope: "while-codex"))
             providers.append(.init("Codex", provider))
@@ -148,7 +199,10 @@ final class AgentHubDataController {
         }
         let turns = Dictionary(report.turns.map { ($0.sessionID, $0) }, uniquingKeysWith: { $0.observedAtMs > $1.observedAtMs ? $0 : $1 })
         let completions = Dictionary(report.completions.map { ($0.sessionID, $0) }, uniquingKeysWith: { $0.completedAt > $1.completedAt ? $0 : $1 })
-        for session in report.sessions.flatMap({ [$0] + $0.descendantSessions }) {
+        func family(_ session: LiveSession, parentID: String? = nil) -> [(session: LiveSession, parentID: String?)] {
+            [(session, parentID)] + (session.subagentSessions ?? []).flatMap { family($0, parentID: session.id) }
+        }
+        for (session, parentID) in report.sessions.flatMap({ family($0) }) {
             let turn = turns[session.id]
             guard let source = source(session.agentId, vendor: turn?.provider) else { continue }
             let running = session.isLive(at: now) && turn?.state != .completed && turn?.state != .ended
@@ -179,7 +233,8 @@ final class AgentHubDataController {
                 reply: reply, observedAt: session.lastActivityAt ?? session.observedAt, navigationURL: url, resumeCommand: resume,
                 event: turn?.state == .waitingForApproval ? .approval : (turn?.state == .completed || completedWithoutTurn) ? .finished : running ? .working : .recent,
                 eventAt: completedAt ?? turn.map { Date(timeIntervalSince1970: Double($0.observedAtMs) / 1000) },
-                turnStartedAt: running ? turn?.startedAtMs.map { Date(timeIntervalSince1970: Double($0) / 1000) } : nil))
+                turnStartedAt: running ? turn?.startedAtMs.map { Date(timeIntervalSince1970: Double($0) / 1000) } : nil,
+                parentSessionID: parentID))
         }
         data.sessions = Array(Dictionary(data.sessions.map { ($0.dockIdentity, $0) }, uniquingKeysWith: {
             $0.observedAt >= $1.observedAt ? $0 : $1
@@ -191,11 +246,25 @@ final class AgentHubDataController {
             return lhs.id < rhs.id
         }
         var counts: [WorkSource: Int] = [:]
-        data.sessions = data.sessions.filter { session in
+        // Limit main sessions, keeping each selected family intact. Children must
+        // neither crowd their parent out nor disappear before the user expands it.
+        let roots = data.sessions.filter { $0.parentSessionID == nil }.filter { session in
             guard counts[session.source, default: 0] < 15 else { return false }
             counts[session.source, default: 0] += 1
             return true
         }
+        var retained = Set(roots.map(\.dockIdentity))
+        var pending = data.sessions.filter { $0.parentSessionID != nil }
+        while !pending.isEmpty {
+            let children = pending.filter { child in
+                guard let parent = child.parentSessionID else { return false }
+                return retained.contains(child.source.rawValue + ":" + parent)
+            }
+            guard !children.isEmpty else { break }
+            retained.formUnion(children.map(\.dockIdentity))
+            pending.removeAll { retained.contains($0.dockIdentity) }
+        }
+        data.sessions.removeAll { !retained.contains($0.dockIdentity) }
         return data
     }
 
