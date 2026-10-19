@@ -96,12 +96,15 @@ final class CodexMonitor {
         let revision = self.revision
         DispatchQueue.main.async { [weak self] in
             guard let self, self.configurationRevision == revision else { return }
-            self.state.activeSessionCounts = counts
-            self.state.workSourceDetails = sourceDetails
-            self.state.desktopWorkSessions = sessions
-            self.state.detectedWorking = working
-            self.state.workIntensity = level
-            self.state.monitorDetail = detail
+            // Every published write re-renders each view observing the state, so an
+            // unchanged poll (most of them) writes nothing.
+            let state = self.state
+            if state.activeSessionCounts != counts { state.activeSessionCounts = counts }
+            if state.workSourceDetails != sourceDetails { state.workSourceDetails = sourceDetails }
+            if state.desktopWorkSessions != sessions { state.desktopWorkSessions = sessions }
+            if state.detectedWorking != working { state.detectedWorking = working }
+            if state.workIntensity != level { state.workIntensity = level }
+            if state.monitorDetail != detail { state.monitorDetail = detail }
         }
     }
 

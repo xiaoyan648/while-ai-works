@@ -900,29 +900,38 @@ struct DesktopDockDetailView: View {
                     if sources.isEmpty {
                         Text("让小猫帮你留意 AI 的工作。").font(.system(size: 12)).foregroundStyle(.secondary)
                         Button("选择要关注的 AI", action: settings).buttonStyle(.plain).foregroundStyle(Theme.accent)
-                    } else if state.desktopDockTab == .quota {
-                        ForEach(sources) { source in quotaRows(source) }
-                        AgentDockTopSessions(sessions: state.agentDashboard.sessions.filter { sources.contains($0.source) },
-                                             showSource: state.desktopDockSource == nil)
-                    } else if let current = state.desktopDockSource {
-                        // One list per client seen while the card is open stays alive, so a
-                        // switch shows another list instead of building one. Hidden lists take
-                        // no height and skip updates (their rows are equatable values).
-                        ZStack(alignment: .topLeading) {
-                            ForEach(WorkSource.dockOrder.filter { $0 == current || keptSources.contains($0) }) { source in
-                                let shown = source == current
-                                sessionList(shown ? rows : state.sessionRows(for: [source]), sources: [source],
-                                            limit: fullSources.contains(source) ? .max : Self.firstRows,
-                                            selectedRequestID: shown ? selectedRequest?.id : nil)
-                                    .offset(shown ? .zero : swapOffset)
-                                    .opacity(shown ? 1 : 0)
-                                    .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: shown)
-                                    .frame(height: shown ? nil : 0, alignment: .top).clipped()
-                                    .allowsHitTesting(shown).accessibilityHidden(!shown)
-                            }
-                        }
                     } else {
-                        sessionList(rows, sources: sources, limit: .max, selectedRequestID: selectedRequest?.id)
+                        let quota = state.desktopDockTab == .quota
+                        if quota {
+                            ForEach(sources) { source in quotaRows(source) }
+                            AgentDockTopSessions(sessions: state.agentDashboard.sessions.filter { sources.contains($0.source) },
+                                                 showSource: state.desktopDockSource == nil)
+                        }
+                        // The session lists stay alive under the quota tab too: switching tabs
+                        // used to tear every row down and build them all again on the way back.
+                        if let current = state.desktopDockSource {
+                            // One list per client seen while the card is open stays alive, so a
+                            // switch shows another list instead of building one. Hidden lists take
+                            // no height and skip updates (their rows are equatable values).
+                            ZStack(alignment: .topLeading) {
+                                ForEach(WorkSource.dockOrder.filter { $0 == current || keptSources.contains($0) }) { source in
+                                    let shown = source == current && !quota
+                                    sessionList(source == current ? rows : state.sessionRows(for: [source]), sources: [source],
+                                                limit: fullSources.contains(source) ? .max : Self.firstRows,
+                                                selectedRequestID: shown ? selectedRequest?.id : nil)
+                                        .offset(shown || quota ? .zero : swapOffset)
+                                        .opacity(shown ? 1 : 0)
+                                        .animation(reduceMotion || quota ? nil : .easeOut(duration: 0.16), value: shown)
+                                        .frame(height: shown ? nil : 0, alignment: .top).clipped()
+                                        .allowsHitTesting(shown).accessibilityHidden(!shown)
+                                }
+                            }
+                        } else {
+                            sessionList(rows, sources: sources, limit: .max, selectedRequestID: quota ? nil : selectedRequest?.id)
+                                .opacity(quota ? 0 : 1)
+                                .frame(height: quota ? 0 : nil, alignment: .top).clipped()
+                                .allowsHitTesting(!quota).accessibilityHidden(quota)
+                        }
                     }
                 }.frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -1067,8 +1076,10 @@ struct DesktopDockDetailView: View {
     }
     private func tab(_ tab: DesktopDockTab, title: String, symbol: String, hasRequests: Bool = false) -> some View {
         Button {
+            // Every published write re-renders each view observing the state, equal or not.
+            guard state.desktopDockTab != tab else { return }
             state.desktopDockTab = tab
-            state.agentInteractionInputID = nil
+            if state.agentInteractionInputID != nil { state.agentInteractionInputID = nil }
             state.hideAgentReplyPreview()
         } label: {
             Image(systemName: symbol).font(.system(size: 11, weight: .medium))
@@ -1217,16 +1228,12 @@ final class DesktopDockController: NSObject {
         detailContent.onIdealHeight = { [weak self] height in
             guard let self, abs((self.idealCardHeight ?? 0) - height.rounded(.up)) > 1 else { return }
             self.idealCardHeight = height.rounded(.up)
-            if self.cardVisible { self.refresh() }
+            // Reported from inside a SwiftUI update: resizing here would lay the whole card
+            // out again synchronously, once per height the update passes through.
+            if self.cardVisible { self.scheduleRefresh() }
         }
         detailPanel.contentView = detailContent
-        subscription = state.objectWillChange.sink { [weak self] _ in
-            guard let self, !self.refreshScheduled else { return }
-            self.refreshScheduled = true
-            DispatchQueue.main.async { [weak self] in
-                self?.refreshScheduled = false; self?.refresh()
-            }
-        }
+        subscription = state.objectWillChange.sink { [weak self] _ in self?.scheduleRefresh() }
         screenObserver = NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
             object: nil, queue: .main) { [weak self] _ in self?.refresh() }
         localClickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
@@ -1260,6 +1267,14 @@ final class DesktopDockController: NSObject {
         return panel
     }
     private var sources: [WorkSource] { WorkSource.dockOrder.filter { state.selectedSources.contains($0) } }
+    /// Coalesces state changes and height reports into one refresh on the next run-loop turn.
+    private func scheduleRefresh() {
+        guard !refreshScheduled else { return }
+        refreshScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            self?.refreshScheduled = false; self?.refresh()
+        }
+    }
     private func screen(for position: DesktopDockPosition?) -> NSScreen? {
         NSScreen.screens.first { DesktopScreenChoice.id(for: $0) == position?.screenID }
             ?? NSScreen.screens.first { DesktopScreenChoice.id(for: $0) == String(CGMainDisplayID()) }
@@ -1369,14 +1384,15 @@ final class DesktopDockController: NSObject {
     func select(_ source: WorkSource?) {
         cancelHover()
         replyPreview.dismiss()
-        if source != state.desktopDockSource {
-            state.agentComposeSessionID = nil; state.agentInteractionInputID = nil
-            state.desktopDockTab = .sessions
+        if source != state.desktopDockSource || !state.desktopPetShowsStatus {
+            if state.agentComposeSessionID != nil { state.agentComposeSessionID = nil }
+            if state.agentInteractionInputID != nil { state.agentInteractionInputID = nil }
+            if state.desktopDockTab != .sessions { state.desktopDockTab = .sessions }
         }
-        if !state.desktopPetShowsStatus { state.desktopDockTab = .sessions }
         if pinned && state.desktopPetShowsStatus && source == state.desktopDockSource { dismiss(); return }
         pinned = true
-        state.desktopDockSource = source; state.desktopPetShowsStatus = true
+        if state.desktopDockSource != source { state.desktopDockSource = source }
+        if !state.desktopPetShowsStatus { state.desktopPetShowsStatus = true }
         refresh()
     }
     func hover(_ source: WorkSource, entered: Bool) {
@@ -1451,8 +1467,11 @@ final class DesktopDockController: NSObject {
     }
     func dismiss() {
         replyPreview.dismiss()
-        cancelHover(); pinned = false; state.agentComposeSessionID = nil; state.agentInteractionInputID = nil
-        state.desktopPetShowsStatus = false; hideCard(animated: true)
+        cancelHover(); pinned = false
+        if state.agentComposeSessionID != nil { state.agentComposeSessionID = nil }
+        if state.agentInteractionInputID != nil { state.agentInteractionInputID = nil }
+        if state.desktopPetShowsStatus { state.desktopPetShowsStatus = false }
+        hideCard(animated: true)
     }
     private func contains(_ point: CGPoint) -> Bool {
         (panel.isVisible && content.containsInteraction(panel.convertPoint(fromScreen: point))) ||

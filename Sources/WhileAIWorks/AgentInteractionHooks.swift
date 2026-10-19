@@ -90,7 +90,8 @@ enum AgentInteractionHookInstallation {
               let source = WorkSource(rawValue: request.source.rawValue), sources.contains(source), state.selectedSources.contains(source)
         else { connection.cancel(); return }
         let id = request.id
-        waiting[id] = connection; state.agentInteractions.append(.init(request: request, viaHook: true))
+        waiting[id] = connection
+        state.agentInteractions = (state.agentInteractions + [.init(request: request, viaHook: true)]).sorted { $0.request.at < $1.request.at }
         connection.stateUpdateHandler = { [weak self] status in
             MainActor.assumeIsolated {
                 guard let self else { return }

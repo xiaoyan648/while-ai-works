@@ -101,6 +101,14 @@ struct AgentDockDataChecks {
         try "model_provider = \"custom\"\n[model_providers.custom]\nbase_url = \"http://127.0.0.1:3425/v1\"\n".write(to: configHome.appendingPathComponent("config.toml"), atomically: true, encoding: .utf8)
         precondition(!CodexQuotaReadPolicy.allowsOfficialQuota(dataDirectory: configHome, environment: [:]),
                      "the active model provider base URL also disables official quota reads")
+        try "[profiles.gateway]\nmodel_provider = \"custom\"\n[mcp_servers.docs]\nopenai_base_url = \"http://127.0.0.1:1/v1\"\n[model_providers.custom]\nbase_url = \"http://127.0.0.1:3425/v1\"\n"
+            .write(to: configHome.appendingPathComponent("config.toml"), atomically: true, encoding: .utf8)
+        precondition(CodexQuotaReadPolicy.allowsOfficialQuota(dataDirectory: configHome, environment: [:]),
+                     "an unselected profile or another table's keys do not choose the provider")
+        try "profile = \"gateway\"\n[profiles.gateway]\nmodel_provider = \"custom\"\n[model_providers.custom]\nbase_url = \"http://127.0.0.1:3425/v1\"\n"
+            .write(to: configHome.appendingPathComponent("config.toml"), atomically: true, encoding: .utf8)
+        precondition(!CodexQuotaReadPolicy.allowsOfficialQuota(dataDirectory: configHome, environment: [:]),
+                     "the selected profile's model provider applies")
         func liveFixture(_ key: String, children: [LiveSession] = []) -> LiveSession {
             .init(id: key, agentId: "codex", task: key, terminal: "fixture", startedAt: now,
                   pctOfWindow: nil, tokensIn: 1, tokensOut: 2, observedAt: now, subagentSessions: children)

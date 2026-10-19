@@ -352,6 +352,7 @@ final class DesktopPetController: NSObject {
     private let showSettings: () -> Void
     private var content: DesktopPetContentView!
     private var subscription: AnyCancellable?
+    private var refreshScheduled = false
     private var screenObserver: NSObjectProtocol?
     private var pointerTimer: Timer?
     private var lastReset: UUID
@@ -392,8 +393,11 @@ final class DesktopPetController: NSObject {
         content.onSave = { [weak self] in self?.savePosition() }
         content.makeMenu = { [weak self] in self?.contextMenu() ?? NSMenu() }
         panel.contentView = content
+        // One refresh per run-loop turn, however many properties a change writes.
         subscription = state.objectWillChange.sink { [weak self] _ in
-            DispatchQueue.main.async { [weak self] in self?.refresh() }
+            guard let self, !self.refreshScheduled else { return }
+            self.refreshScheduled = true
+            DispatchQueue.main.async { [weak self] in self?.refreshScheduled = false; self?.refresh() }
         }
         screenObserver = NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
                                                                  object: nil, queue: .main) { [weak self] _ in self?.restorePosition() }
@@ -418,7 +422,9 @@ final class DesktopPetController: NSObject {
     }
 
     private func refresh() {
-        panel.appearance = state.desktopCompanionAppearance.native
+        // Reassigning an equal appearance still invalidates every view in the window.
+        let appearance = state.desktopCompanionAppearance.native
+        if panel.appearance?.name != appearance?.name { panel.appearance = appearance }
         let celebration = state.celebrationSerial != lastCelebration
         lastCelebration = state.celebrationSerial
         let count = state.activeSessionCount

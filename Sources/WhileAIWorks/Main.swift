@@ -26,6 +26,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
     private let mascot = MascotController()
     private let quickMenu = NSMenu()
     private var subscriptions: Set<AnyCancellable> = []
+    private var statusIconScheduled = false
+    private var statusIconKey: (filled: Bool, working: Bool, tip: String)?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if let bundle=Bundle.main.bundleIdentifier,
@@ -53,7 +55,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
             showPanel: { [weak self] in self?.showPanel() },
             showSettings: { [weak self] in self?.showSettings() })
         state.objectWillChange.sink { [weak self] _ in
-            DispatchQueue.main.async { self?.updateStatusIcon() }
+            guard let self, !self.statusIconScheduled else { return }
+            self.statusIconScheduled = true
+            DispatchQueue.main.async { [weak self] in self?.statusIconScheduled = false; self?.updateStatusIcon() }
         }.store(in: &subscriptions)
         if DebugSnapshots.directory != nil { runSnapshots(); return }
         if ProcessInfo.processInfo.environment["WHILE_AI_WORKS_CAT_PREVIEW"] == "1" { return }
@@ -167,11 +171,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
     }
 
     private func updateStatusIcon() {
-        statusItem?.button?.image = StatusIcon.image(filled: state.desktopEnabled && state.interactionEnabled,
-                                                     working: state.desktopEnabled && state.followAI && state.detectedWorking)
-        statusItem?.button?.toolTip = state.desktopEnabled
+        let filled = state.desktopEnabled && state.interactionEnabled
+        let working = state.desktopEnabled && state.followAI && state.detectedWorking
+        let tip = state.desktopEnabled
             ? (state.interactionEnabled ? "正在玩 · " : "桌面效果已开启 · ") + state.shortcutLabel + " 收起"
             : "AI 干活时我们干什么 · " + state.shortcutLabel + " 开始玩"
+        // Drawn again only when it changes, not for every state change.
+        if let key = statusIconKey, key == (filled, working, tip), statusItem?.button?.image != nil { return }
+        statusIconKey = (filled, working, tip)
+        statusItem?.button?.image = StatusIcon.image(filled: filled, working: working)
+        statusItem?.button?.toolTip = tip
     }
 
     @objc func showPanel() {

@@ -102,7 +102,7 @@ enum AgentInteractionResult { case accepted, gone, uncertain, failed }
             reconcile(snapshot, queried: due)
         } catch {
             guard !Task.isCancelled, epoch == generation else { return }
-            for index in state.agentInteractions.indices where state.agentInteractions[index].source == .codex && !state.agentInteractions[index].viaHook && due.contains(state.agentInteractions[index].request.sessionID) {
+            for index in state.agentInteractions.indices where state.agentInteractions[index].source == .codex && !state.agentInteractions[index].viaHook && due.contains(state.agentInteractions[index].request.sessionID) && state.agentInteractions[index].fresh {
                 state.agentInteractions[index].fresh = false
             }
         }
@@ -112,13 +112,16 @@ enum AgentInteractionResult { case accepted, gone, uncertain, failed }
         let ids = Set(snapshot.requests.map(\.id))
         let removed = state.interactions(for: .codex).filter { !$0.viaHook && snapshot.observed.contains($0.request.sessionID) && !ids.contains($0.id) }.map(\.id)
         for id in removed { remove(id) }
+        // Each write to the published list re-renders every view observing the state; a
+        // poll that found nothing new (most of them) writes nothing.
         for index in state.agentInteractions.indices where state.agentInteractions[index].source == .codex && !state.agentInteractions[index].viaHook && queried.contains(state.agentInteractions[index].request.sessionID) {
-            state.agentInteractions[index].fresh = snapshot.observed.contains(state.agentInteractions[index].request.sessionID)
+            let fresh = snapshot.observed.contains(state.agentInteractions[index].request.sessionID)
+            if state.agentInteractions[index].fresh != fresh { state.agentInteractions[index].fresh = fresh }
         }
-        for request in snapshot.requests where !state.agentInteractions.contains(where: { $0.id == request.id }) {
-            state.agentInteractions.append(.init(request: request))
-        }
-        state.agentInteractions.sort { $0.request.at < $1.request.at }
+        let added = snapshot.requests.filter { request in !state.agentInteractions.contains(where: { $0.id == request.id }) }
+        guard !added.isEmpty else { return }
+        state.agentInteractions = (state.agentInteractions + added.map { AgentInteraction(request: $0) })
+            .sorted { $0.request.at < $1.request.at }
     }
     func answer(_ id: String, decision: PermissionDecision) {
         guard let interaction = state.agentInteractions.first(where: { $0.id == id }), interaction.canAnswer,

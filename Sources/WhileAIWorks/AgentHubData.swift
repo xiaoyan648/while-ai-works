@@ -45,30 +45,37 @@ enum CodexQuotaReadPolicy {
     private static func configBaseURL(dataDirectory: URL) -> String? {
         let file = dataDirectory.appendingPathComponent("config.toml")
         guard let text = try? String(contentsOf: file, encoding: .utf8) else { return nil }
-        var activeProvider: String?
+        // Only top-level keys choose the provider (or the selected profile's); the same keys
+        // inside any other table, such as an unused profile, do not apply.
+        var topLevel: [String: String] = [:]
+        var profiles: [String: [String: String]] = [:]
         var providerBases: [String: String] = [:]
-        var sectionProvider: String?
+        var section: String?
+        func unquoted(_ name: Substring) -> String {
+            name.trimmingCharacters(in: .whitespaces).trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+        }
         for line in text.split(whereSeparator: \.isNewline) {
             let value = line.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false)[0]
                 .trimmingCharacters(in: .whitespaces)
             if value.hasPrefix("[") && value.hasSuffix("]") {
-                let section = value.dropFirst().dropLast().trimmingCharacters(in: .whitespaces)
-                if section.hasPrefix("model_providers.") {
-                    sectionProvider = String(section.dropFirst("model_providers.".count))
-                } else {
-                    sectionProvider = nil
-                }
+                section = value.dropFirst().dropLast().trimmingCharacters(in: .whitespaces)
                 continue
             }
             guard let equals = value.firstIndex(of: "=") else { continue }
             let key = value[..<equals].trimmingCharacters(in: .whitespaces)
             let raw = value[value.index(after: equals)...].trimmingCharacters(in: .whitespaces)
             let parsed = raw.trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
-            if key == "openai_base_url" || key == "chatgpt_base_url" { return parsed }
-            if key == "model_provider" { activeProvider = parsed }
-            if key == "base_url", let sectionProvider { providerBases[sectionProvider] = parsed }
+            guard let section else { topLevel[key] = parsed; continue }
+            if section.hasPrefix("model_providers."), key == "base_url" {
+                providerBases[unquoted(section.dropFirst("model_providers.".count))] = parsed
+            } else if section.hasPrefix("profiles.") {
+                profiles[unquoted(section.dropFirst("profiles.".count)), default: [:]][key] = parsed
+            }
         }
-        return activeProvider.flatMap { providerBases[$0] }
+        let profile = topLevel["profile"].flatMap { profiles[$0] } ?? [:]
+        func setting(_ key: String) -> String? { profile[key] ?? topLevel[key] }
+        if let base = setting("openai_base_url") ?? setting("chatgpt_base_url") { return base }
+        return setting("model_provider").flatMap { providerBases[$0] }
     }
 }
 
@@ -82,6 +89,7 @@ final class AgentHubDataController {
     private var observation: UsageChangeObservation?
     private var subscriptions = Set<AnyCancellable>()
     private let interactions: AgentInteractionController
+    private var refreshing = false
 
     init(state: AppState) {
         self.state = state
@@ -90,7 +98,11 @@ final class AgentHubDataController {
         settings = SettingsStore(defaults: UserDefaults(suiteName: "WhileAIWorks.AgentData")!)
         settings.update { $0.clientHooks = false; $0.language = .zhHans }
         state.refreshAgentData = { [weak self] in
+            // Repeated taps while a refresh is running join it instead of queueing more.
+            guard let self, !self.refreshing else { return }
+            self.refreshing = true
             Task { [weak self] in
+                defer { self?.refreshing = false }
                 guard let self, let store = self.store else { return }
                 await store.refreshAccounts(); await store.refresh(); self.publish()
             }
@@ -123,7 +135,9 @@ final class AgentHubDataController {
                     throw UsageProviderError("Codex 使用自定义中转站，暂不读取账户额度")
                 }
                 guard let executable = CodexLocator.find() else { throw UsageProviderError("安装并登录 Codex 后读取额度") }
-                return try await CodexAppServerClient(executable: executable, dataDirectory: directory, timeout: 3).fetch()
+                // `account/rateLimits/read` asks the service, which takes 5–8 s on a normal
+                // connection (measured 2026-10-18); 3 s timed out nearly every reading.
+                return try await CodexAppServerClient(executable: executable, dataDirectory: directory, timeout: 20).fetch()
             }, transcripts: .standard(directory: directory, ledger: ledger),
                history: QuotaHistoryStore(ledger: ledger, scope: "while-codex"))
             providers.append(.init("Codex", provider))
@@ -138,7 +152,8 @@ final class AgentHubDataController {
 
     private func publish(showReplies: Bool? = nil) {
         guard let report = store?.report else { return }
-        state.agentDashboard = Self.adapt(report, showReplies: showReplies ?? state.agentReplyPreviews)
+        let dashboard = Self.adapt(report, showReplies: showReplies ?? state.agentReplyPreviews)
+        if state.agentDashboard != dashboard { state.agentDashboard = dashboard }
         interactions.updateSessions(report.sessions)
     }
     func stop() { interactions.stop(); store?.stop(); observation?.cancel() }

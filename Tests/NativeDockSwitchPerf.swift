@@ -40,6 +40,19 @@ import AgentHUDCore
                            observedAt: now, stale: false, window: .weekly)
         }, sessions: sessions, updatedAt: now)
         state.activeSessionCounts = [.codex: 2, .claude: 2, .qoder: 2, .workbuddy: 2]
+        // `--real` reads this Mac's Codex and Claude data through the app's own pipeline.
+        var hub: AnyObject?
+        if CommandLine.arguments.contains("--real") {
+            state.agentDashboard = AgentDockData(); state.activeSessionCounts = [:]
+            state.selectedSources = [.codex, .claude]
+            hub = AgentHubDataController(state: state)
+            let begin = Date()
+            while state.agentDashboard.updatedAt == nil && Date().timeIntervalSince(begin) < 120 {
+                RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+            }
+            print(String(format: "real data after %.1f s: %d sessions, %d quotas", Date().timeIntervalSince(begin),
+                         state.agentDashboard.sessions.count, state.agentDashboard.quotas.count))
+        }
         let bundle = Bundle(path: "dist/While AI Works.app")!
         let dock = DesktopDockController(state: state, mascot: MascotController(bundle: bundle), cardMascot: MascotController(bundle: bundle))
         func settle(_ seconds: Double) { RunLoop.main.run(until: Date().addingTimeInterval(seconds)) }
@@ -62,6 +75,63 @@ import AgentHUDCore
                 state.workIntensity = Double(step % 5) / 5; state.activeSessionCounts[.codex] = 2 + step % 2
                 step += 1; settle(0.1)
             }
+            return
+        }
+        // Rapid clicks on the Codex tile: each click toggles the pinned card open or closed.
+        if let clicks = CommandLine.arguments.firstIndex(of: "--tiles").flatMap({ Int(CommandLine.arguments[$0 + 1]) }) {
+            dock.dismiss(); settle(0.4)
+            var handling: [Double] = []
+            recording = true
+            for _ in 0..<clicks {
+                let begin = CACurrentMediaTime()
+                dock.select(.codex)
+                handling.append((CACurrentMediaTime() - begin) * 1000)
+                settle(0.06)
+            }
+            settle(1.0)
+            recording = false
+            let gaps = zip(ticks, ticks.dropFirst()).map { ($1 - $0) * 1000 }.sorted()
+            let long = gaps.filter { $0 > 25 }
+            print(String(format: "tile clicks %d · gap p95 %.1f ms, max %.1f ms · gaps > 25 ms: %d (%.0f ms total) · click handling mean %.1f ms, max %.1f ms",
+                         clicks, gaps.isEmpty ? 0 : gaps[Int(Double(gaps.count) * 0.95)], gaps.last ?? 0, long.count, long.reduce(0, +),
+                         handling.reduce(0, +) / Double(max(1, handling.count)), handling.max() ?? 0))
+            withExtendedLifetime(dock) {}; withExtendedLifetime(hub) {}
+            return
+        }
+        // Rapid clicks on the sessions/quota tabs of a pinned Codex card, as the tab
+        // button does them: every click writes the tab even when it is already shown.
+        if let clicks = CommandLine.arguments.firstIndex(of: "--tabs").flatMap({ Int(CommandLine.arguments[$0 + 1]) }) {
+            dock.select(.codex); settle(0.4)
+            precondition(dock.cardVisible && state.desktopDockSource == .codex, "a pinned Codex card for the tab test")
+            let interval = Double(env["PERF_TAB_INTERVAL"] ?? "") ?? 0.04
+            var handling: [Double] = [], settles: [Double] = []
+            recording = true
+            for click in 0..<clicks {
+                let begin = CACurrentMediaTime()
+                // PERF_TAB_IDLE=1 measures the same time span with no switches, as a baseline.
+                if env["PERF_TAB_IDLE"] != "1" {
+                    state.desktopDockTab = click % 3 == 2 ? state.desktopDockTab : (click % 2 == 0 ? .quota : .sessions)
+                }
+                state.agentInteractionInputID = nil
+                state.hideAgentReplyPreview()
+                handling.append((CACurrentMediaTime() - begin) * 1000)
+                let settleBegin = CACurrentMediaTime()
+                settle(interval)
+                settles.append((CACurrentMediaTime() - settleBegin) * 1000 - interval * 1000)
+            }
+            settle(1.0)
+            recording = false
+            let gaps = zip(ticks, ticks.dropFirst()).map { ($1 - $0) * 1000 }.sorted()
+            func percentile(_ p: Double) -> Double { gaps.isEmpty ? 0 : gaps[min(gaps.count - 1, Int(Double(gaps.count) * p))] }
+            let long = gaps.filter { $0 > 25 }
+            // Time the 240 Hz timer could not fire: main-thread work, per click.
+            let busy = gaps.reduce(0) { $0 + max(0, $1 - 1000.0 / 240) }
+            print(String(format: "tab clicks %d · main-thread gaps: p50 %.1f ms, p95 %.1f ms, max %.1f ms · gaps > 25 ms: %d (%.0f ms total) · busy %.1f ms per click",
+                         clicks, percentile(0.5), percentile(0.95), gaps.last ?? 0, long.count, long.reduce(0, +), busy / Double(max(1, clicks))))
+            print(String(format: "click handling: mean %.2f ms, max %.2f ms · overrun per click: mean %.1f ms, max %.1f ms",
+                         handling.reduce(0, +) / Double(max(1, handling.count)), handling.max() ?? 0,
+                         settles.reduce(0, +) / Double(max(1, settles.count)), settles.max() ?? 0))
+            withExtendedLifetime(dock) {}; withExtendedLifetime(hub) {}
             return
         }
         let loop = CommandLine.arguments.firstIndex(of: "--loop").flatMap { Double(CommandLine.arguments[$0 + 1]) }
