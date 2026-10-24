@@ -15,6 +15,7 @@
 ## Hermes
 
 执行复制的命令，将插件安装到当前 `HERMES_HOME`，再重启 Hermes。
+本机真实验证版本：v0.22.5。已启动的 gateway 会保留启动时的环境，安装插件或更改交互通道后也需重启 gateway。
 支持 CLI/gateway 的轮次状态、完成、等待输入提醒。需要 Hermes 版本提供相应生命周期 hooks。
 问题和密码在原客户端回答。
 
@@ -28,6 +29,7 @@ security:
 ```
 
 未配置 transport 仍可跟随状态。插件只提供一次允许或拒绝，Hermes 仍决定哪些工具需要审批、请求是否有效及如何处理超时。
+Hermes 的智能审批可能直接放行安全操作，这时不会产生待确认卡片。需要逐项人工确认的体验，可在 Hermes 中设置 `hermes config set approvals.mode manual` 后重新开始会话。
 移除：`hermes plugins disable while-ai-works`，恢复原 transport 配置并重启。
 
 ## 反馈

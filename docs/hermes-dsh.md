@@ -16,7 +16,7 @@
 | 回复预览、猫条主动发新消息 | 本次未接入 | 本次未接入 |
 | 账户剩余额度 | 隐藏 | 隐藏 |
 
-Hermes 尚未在本机安装完整客户端；验证覆盖其上游 SQLite 结构、hooks 参数和真实 ApprovalRequest/ApprovalDecision 契约。仍需真实 Hermes CLI/gateway 验收。
+Hermes 已在本机安装官方稳定版 v0.22.5，并完成真实 CLI/gateway、轮次状态、Token 和审批拒绝验证。具体证据见文末本机验收记录。
 
 DSH 已在本机 0.2.1-rc.2 上验证。限时问题依赖原客户端的等待租约，计划审阅还包含额外内容，这两类继续使用原客户端。未知协议、缺失工具参数、断连和超时都交回原客户端，不自动批准。上游接口仍可能变化，版本不匹配应停止增强交互而保留可读的本地数据。
 
@@ -75,5 +75,27 @@ python3 Tests/DSHRuntimeCheck.py
 ```
 
 DSH 运行检查使用真实安装的 headless 客户端，在临时 profile 安装扩展；Swift 读取其实际压缩日志并验证工作中、完成、Token。它不证明远端模型、个人账号或 Web/TUI 的全部行为已验收。Hermes 契约检查也不等同于完整客户端验收。
+
+## 2026-10-24 本机真实模型验收
+
+DSH 0.2.1-rc.2 沿用已有 Magpie 接入和 `tokenzz/deepseek-v4.1-flash` 模型，已把增强监听安装到 headless、web、tui 三个现有 profile。以下实测使用 headless，确实调用模型：
+
+- 执行 `sleep 12` 后打印验收标记；Preview 猫条观察到工作状态和完成标记，本地读取器读到输入 12,191、输出 157 Token。
+- 通过实际 `ask_user_question` 工具提出选项问题，安装的扩展交给生产 Swift 交互服务，回传选项后模型继续完成任务。headless 默认不挂载提问工具，因此仅本次测试额外加载了该官方工具插件；web/tui 的原配置保留。
+- 实际 bash 工具提出扩大沙箱权限的审批，Swift 交互服务拒绝；DSH 确认命令未执行、未重试。
+- 另一条真实问题由正在运行的 Preview 接收，猫条显示待处理数量；取消 DSH 后提示撤回。自动化无法定位独立的工作卡片窗口，所以鼠标点击回答的体验仍需人工验收。
+
+测试日志保存在本机 `.build/live-acceptance/`，不随代码发布。没有发布 Beta。
+
+Hermes 使用官方稳定版 v0.22.5（`bf0203a794a07aac3ff764972ab9087baa4e4f4e`），Python 3.14.9，沿用同一个 Magpie 接入。安装在 `~/.hermes/hermes-agent`，命令位于 `~/.local/bin/hermes`；增强监听已启用。
+
+- 官方依赖、TUI 和 Web 构建均成功。下载断连后复用按官方 SHA-256 校验的安装文件；npm 漏装的 macOS Rolldown 原生依赖按锁文件的 SHA-512 补装。非必需的 Git 完整历史刷新因网络缓慢中止，当前稳定版代码已固定，后续更新可重新刷新历史。未安装可选浏览器和桌面控制驱动。
+- 实际模型执行 `sleep 12` 和验收标记成功。读取器观察到工作中，完成后 Preview 猫条显示完成。输入 4,986、输出 336、缓存读取 4,352 Token，与实际 `session_model_usage` 汇总一致。
+- 默认终端界面执行 `sleep 25` 成功；猫条实际显示工作会话。任务结束且网关仍存活、`active_agents=0` 时，猫条回到空闲，完成标记保留。
+- Hermes 默认智能审批会自动放行被判断为安全的临时目录删除。为便于验收，当前安装已设置 `approvals.mode: manual`，保留 `security.approval.transport: while-ai-works` 与 `transport_fallback: builtin`。在人工审批下，真实 terminal 请求经插件进入生产 Swift 服务；拒绝后客户端返回 `BLOCKED`，测试目录保留，模型未重试。
+- 取消等待中的测试任务并停止其网关后，读取器不再报告工作，也没有把被取消的轮次标为完成。
+- 验收时曾使用临时 socket；网关会继承启动时的环境，修改 CLI 环境不会改变已启动的网关。测试结束已停止临时网关，重新从默认环境启动。演示时使用正常的 `hermes` / `dsh tui` 即可。
+
+仍需人工确认工作卡片按钮、实际项目、子 Agent 和不同用户配置下的体验。本机实测没有覆盖用户机器、Intel 硬件以及所有 Web/TUI 交互组合；Hermes 提问仍回原客户端回答，回复预览和主动发新消息仍未接入。
 
 依据：[用户反馈 #1](https://github.com/xiaoyan648/while-ai-works/issues/1)、[Hermes hooks](https://hermes-agent.nousresearch.com/docs/user-guide/features/hooks/)、[Hermes plugins](https://hermes-agent.nousresearch.com/docs/user-guide/features/plugins/)，以及本机 DSH 0.2.1-rc.2 的类型声明与运行行为。

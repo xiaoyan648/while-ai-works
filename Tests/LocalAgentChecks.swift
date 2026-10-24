@@ -6,9 +6,10 @@ import AgentHUDSupport
 
 @main enum LocalAgentChecks {
     @MainActor static func main() async throws {
-        if CommandLine.arguments.count == 3, CommandLine.arguments[1] == "--probe-dsh-root" {
-            let reader = LocalAgentReader(environment: ["DSH_HOME": CommandLine.arguments[2]])
-            let value = await reader.read(sources: [.dsh], previews: false)
+        if CommandLine.arguments.count == 3, ["--probe-dsh-root", "--probe-hermes-root"].contains(CommandLine.arguments[1]) {
+            let source: WorkSource = CommandLine.arguments[1] == "--probe-hermes-root" ? .hermes : .dsh
+            let reader = LocalAgentReader(environment: [source == .hermes ? "HERMES_HOME" : "DSH_HOME": CommandLine.arguments[2]])
+            let value = await reader.read(sources: [source], previews: false)
             let rows = value.sessions.map { ["id": $0.id, "running": $0.running, "finished": $0.event == .finished,
                 "input": $0.tokensIn, "output": $0.tokensOut] as [String: Any] }
             print(String(decoding: try JSONSerialization.data(withJSONObject: rows), as: UTF8.self)); return
