@@ -55,6 +55,13 @@ import SwiftUI
         precondition(state.desktopPetStatus(for: .qoder) == "等待连接")
         state.workSourceDetails = [:]
         precondition(state.desktopPetStatus(for: .qoder) == "未检测到工作")
+        state.selectedSources.insert(.dsh)
+        state.activeSessionCounts[.dsh] = 0
+        state.workSourceDetails[.dsh] = "无法读取本地记录"
+        precondition(state.desktopPetStatus(for: .dsh) == "读取异常", "local read errors must not imply the client is disconnected")
+        state.selectedSources = [.codex, .qoder]
+        state.activeSessionCounts = [.codex: 0, .qoder: 0]
+        state.workSourceDetails = [:]
 
         let size = DesktopPetView.size(showsStatus: true)
         for visible in [CGRect(x:0,y:25,width:1512,height:920), CGRect(x:-1920,y:-120,width:1920,height:1080), CGRect(x:40,y:80,width:340,height:410)] {

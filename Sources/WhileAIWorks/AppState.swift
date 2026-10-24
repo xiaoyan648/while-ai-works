@@ -351,7 +351,7 @@ final class AppState: ObservableObject {
         let count = agentRunningCount(for: source)
         if activeSessionCounts[source] == nil && agentDashboard.updatedAt == nil { return "正在读取" }
         if count > 0 { return "\(count) 个会话" }
-        if !agentDashboard.sessions.contains(where: { $0.source == source }) && !(workSourceDetails[source] ?? "").isEmpty { return source == .codex ? "状态不可用" : "等待连接" }
+        if !agentDashboard.sessions.contains(where: { $0.source == source }) && !(workSourceDetails[source] ?? "").isEmpty { return source.isLocalAgent ? "读取异常" : source == .codex ? "状态不可用" : "等待连接" }
         return "未检测到工作"
     }
     /// Bumped for every landed catch, so the cat can celebrate.

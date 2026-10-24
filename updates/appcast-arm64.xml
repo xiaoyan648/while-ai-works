@@ -6,6 +6,35 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <channel>
         <title>While AI Works</title>
         <item>
+            <title>0.20.1</title>
+            <pubDate>Sat, 24 Oct 2026 13:34:01 -0400</pubDate>
+            <link>https://github.com/xiaoyan648/while-ai-works/releases/tag/v0.20.1</link>
+            <sparkle:version>38</sparkle:version>
+            <sparkle:shortVersionString>0.20.1</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description sparkle:format="markdown"><![CDATA[# 0.20.1 · 修复 DSH 桌面环境读取
+
+版本 0.20.1，构建号 38。需要 macOS 14 或更新版本。
+
+## DSH
+
+- 修复使用 fnm 安装 Node.js 时，DSH Web / TUI 已启动，猫条仍提示“读取 Harness 数据需要 Node.js”的问题。桌面启动不会继承终端的版本管理器环境，本版补充 fnm、nvm、Volta 安装目录识别，并优先使用 fnm 的默认版本。
+- 保留已有 PATH 的优先级，不执行 shell 启动脚本，不修改 DSH 配置或 API Key。
+- 本地读取失败时显示“读取异常”，避免“等待连接”被误解为需要重启 DSH。
+
+## 安装与更新
+
+通过“设置 → 关于 → 检查更新”升级，或者下载对应芯片的 DMG。原有设置和鱼获保留。
+
+- M 系列 Mac：`While-AI-Works-0.20.1-macOS-arm64.dmg`
+- Intel Mac：`While-AI-Works-0.20.1-macOS-x86_64.dmg`
+
+应用使用 ad-hoc 签名，尚无 Developer ID 签名和 Apple 公证；更新归档与清单有 Ed25519 签名。Intel 为交叉编译及安装包校验，未做 Intel 真机验收。
+]]></description>
+            <enclosure url="https://github.com/xiaoyan648/while-ai-works/releases/download/v0.20.1/While-AI-Works-0.20.1-macOS-arm64.zip" length="31992456" type="application/octet-stream" sparkle:edSignature="gG2rJ6rnAARncoiQd1AgoJmsni6AShWmxYqJoiggwHuOf/YOG2X2IHImyzmi23v72TedcLmVMOTdrssh46xrAA=="/>
+        </item>
+        <item>
             <title>0.20.0</title>
             <pubDate>Sat, 24 Oct 2026 12:16:12 -0400</pubDate>
             <link>https://github.com/xiaoyan648/while-ai-works/releases/tag/v0.20.0</link>
@@ -86,45 +115,9 @@ Hermes 的原生提问、DSH 的限时问题与计划审阅仍在原客户端处
 ]]></description>
             <enclosure url="https://github.com/xiaoyan648/while-ai-works/releases/download/v0.19.1/While-AI-Works-0.19.1-macOS-arm64.zip" length="31812526" type="application/octet-stream" sparkle:edSignature="Fr2ArjkxXuJ0k2Gu3iVie/yKomLKswFi8/kjOc5Jjj6dmx3ZTTFVqxKDs39Q1fJ5RYByfULJ4vp3QwhvX3YMCw=="/>
         </item>
-        <item>
-            <title>0.19.0</title>
-            <pubDate>Sun, 18 Oct 2026 07:20:41 -0400</pubDate>
-            <link>https://github.com/xiaoyan648/while-ai-works/releases/tag/v0.19.0</link>
-            <sparkle:version>34</sparkle:version>
-            <sparkle:shortVersionString>0.19.0</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <description sparkle:format="markdown"><![CDATA[# 0.19.0 · 子 Agent 收进猫条
-
-版本 0.19.0，构建号 34。需要 macOS 14 或更新版本。
-
-## 主 Agent 与子 Agent
-
-- 主 Agent 的子 Agent 默认收起，点击「子 Agent」入口后按层级缩进展示；更深的子树可以继续单独展开。
-- 子 Agent 的待回答与待审批会汇总到折叠入口，并将整个会话组排到「待你处理」，不会自动展开或夺走输入焦点。
-- 会话数量上限只计算主 Agent，保留被选中主会话的完整子树，避免子 Agent 挤掉父会话或静默消失。
-
-## 中转站与额度读取
-
-- Codex 使用自定义中转站时，不再请求只对官方服务有意义的账户额度接口；本机会话和 Token 用量仍继续统计。
-- 官方额度读取设置 3 秒短超时；中转站、网络不可用或 app-server 无响应时，猫条仍可切换会话与页签。
-
-## 更新与安装
-
-0.17.1 及更新版本可在「设置 → 关于 → 检查更新」中升级。原有设置和鱼获保留。
-
-- M 系列 Mac：`While-AI-Works-0.19.0-macOS-arm64.dmg`
-- Intel Mac：`While-AI-Works-0.19.0-macOS-x86_64.dmg`
-
-退出旧版，打开 DMG，将 **While AI Works.app** 拖入 **Applications（应用程序）**。同时提供两种架构的 ZIP、签名更新清单和 `SHA256SUMS.txt`。
-
-应用采用 ad-hoc 签名，尚无 Developer ID 签名或 Apple 公证。更新包和更新清单验证 Ed25519 签名；首次安装可能需要在 macOS「隐私与安全性」中允许打开。Intel 版本为交叉编译，未经 Intel 真机验收。
-]]></description>
-            <enclosure url="https://github.com/xiaoyan648/while-ai-works/releases/download/v0.19.0/While-AI-Works-0.19.0-macOS-arm64.zip" length="31804474" type="application/octet-stream" sparkle:edSignature="09Njw0AMlzXjov/LvuHjHRurQ4wEas7+wfP6lfHLD+ZvPGqC61ua2iJUwH8ozBiUlj/w1m6bnoiwCUEur/EhBw=="/>
-        </item>
     </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: eLTHpG0hMJDG9wNUEFpIVmPsLVDBjqiMKZthWcD8tIorJ9B2gWcfpQETVHfCyRW3JdE+2dtu2dWKY2C/tsNBDQ==
-length: 8649
+edSignature: sCYlVWjqzuXJ8WjJgbgqkRTwIsCnqQLHO3MwjVzI8Aujs+Ae5/Rl9v3XcHUcTNfReUqM5pViClSdkhvbjeEeAA==
+length: 8150
 -->

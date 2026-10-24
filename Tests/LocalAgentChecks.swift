@@ -6,6 +6,15 @@ import AgentHUDSupport
 
 @main enum LocalAgentChecks {
     @MainActor static func main() async throws {
+        if CommandLine.arguments.contains("--probe-dsh-health") {
+            let node = DeepSeekLocator.nodeExecutable()
+            let reader = LocalAgentReader()
+            let value = await reader.read(sources: [.dsh], previews: false)
+            precondition(node != nil && value.notices[.dsh] == nil && !value.sessions.isEmpty,
+                         "DSH local records must decode with the actual process environment")
+            print("DSH health: \(value.sessions.count) sessions decoded; no read error; Node \(node!.path)")
+            return
+        }
         if CommandLine.arguments.count == 3, ["--probe-dsh-root", "--probe-hermes-root"].contains(CommandLine.arguments[1]) {
             let source: WorkSource = CommandLine.arguments[1] == "--probe-hermes-root" ? .hermes : .dsh
             let reader = LocalAgentReader(environment: [source == .hermes ? "HERMES_HOME" : "DSH_HOME": CommandLine.arguments[2]])
@@ -80,9 +89,9 @@ import AgentHUDSupport
         precondition(server.start()); defer { server.stop() }
         try await Task.sleep(for: .milliseconds(100))
         let process = Process(), output = Pipe()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.executableURL = DeepSeekLocator.nodeExecutable()
         let plugin = URL(fileURLWithPath: "Sources/WhileAIWorks/Resources/LocalAgents/dsh/index.mjs").absoluteURL
-        process.arguments = ["node", "--input-type=module", "-e", "const {request} = await import(process.argv[1]); console.log(JSON.stringify(await request(JSON.parse(process.argv[2]))));", plugin.absoluteString,
+        process.arguments = ["--input-type=module", "-e", "const {request} = await import(process.argv[1]); console.log(JSON.stringify(await request(JSON.parse(process.argv[2]))));", plugin.absoluteString,
             String(decoding: try JSONSerialization.data(withJSONObject: payload), as: UTF8.self)]
         process.environment = ProcessInfo.processInfo.environment.merging(["WHILE_AI_WORKS_INTERACTION_SOCKET": socket], uniquingKeysWith: { _, new in new })
         process.standardOutput = output
@@ -97,7 +106,7 @@ import AgentHUDSupport
         let cancelled = Process(), cancelledOutput = Pipe()
         cancelled.executableURL = process.executableURL; cancelled.environment = process.environment
         var args = process.arguments!
-        args[3] = "const {request} = await import(process.argv[1]); const c = new AbortController(); setTimeout(() => c.abort(), 1500); console.log(JSON.stringify(await request(JSON.parse(process.argv[2]), c.signal)));"
+        args[2] = "const {request} = await import(process.argv[1]); const c = new AbortController(); setTimeout(() => c.abort(), 1500); console.log(JSON.stringify(await request(JSON.parse(process.argv[2]), c.signal)));"
         cancelled.arguments = args; cancelled.standardOutput = cancelledOutput
         try cancelled.run(); defer { if cancelled.isRunning { cancelled.terminate() } }
         for _ in 0..<100 where state.agentInteractions.isEmpty { try await Task.sleep(for: .milliseconds(20)) }

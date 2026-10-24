@@ -78,7 +78,7 @@ public enum DeepSeekNode {
     public static func run(script: String, arguments: [String], environment: [String: String] = [:],
                            timeout: TimeInterval = 30) async throws -> Data {
         guard let node = DeepSeekLocator.nodeExecutable() else {
-            throw UsageProviderError(L10n.text("读取 Harness 数据需要 Node.js", "Node.js is required to read Harness data"))
+            throw UsageProviderError(L10n.text("未找到可用的 Node.js，无法解压 DSH 本地会话记录", "Cannot find Node.js to decompress local DSH session records"))
         }
         // A truncated log would parse as a different one, so output beyond the cap fails the read.
         let output = try await ChildProcess.run(node, ["-e", script] + arguments, environment: environment,

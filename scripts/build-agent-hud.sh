@@ -1,5 +1,5 @@
 #!/bin/bash
-# Sourced after toolchain flags are initialized. Preserve vendored sources intact.
+# Sourced after toolchain flags are initialized. Local dependency patches are documented in Vendor/AgentHUDOpen/README.md.
 agent_hud_root="$task_root/Vendor/AgentHUDOpen/Sources"
 agent_hud_key="$(python3 - "$agent_hud_root" <<'PY'
 import hashlib, pathlib, sys
