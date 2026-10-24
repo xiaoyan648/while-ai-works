@@ -7,6 +7,6 @@ app_sources=()
 for file in Sources/WhileAIWorks/*.swift; do
     [[ "$file" == */Main.swift ]] || app_sources+=("$file")
 done
-xcrun swiftc "${swift_flags[@]}" -O -parse-as-library -I .build/native -L .build/native -lWhileCore "${rive_flags[@]}" \
+xcrun swiftc "${swift_flags[@]}" -Onone -parse-as-library -I .build/native -L .build/native -lWhileCore "${rive_flags[@]}" \
  "${app_sources[@]}" Tests/NativeUIReviewChecks.swift -o .build/native/NativeUIReviewChecks
-.build/native/NativeUIReviewChecks
+.build/native/NativeUIReviewChecks "$@"

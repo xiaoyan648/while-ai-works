@@ -92,6 +92,37 @@ public enum HookBridge {
 }
 
 public enum HookInstallation {
+    public enum Status: Equatable, Sendable {
+        case absent, partial, configured, disabled, missingHelper, unreadable
+        public var hasConfiguration: Bool {
+            switch self { case .partial, .configured, .disabled, .missingHelper: return true; default: return false }
+        }
+    }
+    /// Read only our exact commands. A written configuration is not proof that a client loaded it.
+    public static func status(provider: HookProvider, home: URL = FileManager.default.homeDirectoryForCurrentUser) -> Status {
+        let fm = FileManager.default
+        let file = home.appendingPathComponent(".\(provider.rawValue)/settings.json")
+        guard fm.fileExists(atPath: file.path) else { return .absent }
+        guard let data = try? Data(contentsOf: file),
+              let settings = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              settings["hooks"] == nil || settings["hooks"] is [String: Any] else { return .unreadable }
+        let hooks = settings["hooks"] as? [String: Any] ?? [:]
+        let target = home.appendingPathComponent("Library/Application Support/While AI Works/Hooks/while-ai-works-hook")
+        let command = "\(quote(target.path)) \(provider.rawValue)"
+        var matches = 0
+        for event in provider.events {
+            guard hooks[event] == nil || hooks[event] is [[String: Any]] else { return .unreadable }
+            let groups = hooks[event] as? [[String: Any]] ?? []
+            guard groups.allSatisfy({ $0["hooks"] is [[String: Any]] }) else { return .unreadable }
+            if groups.contains(where: { ($0["hooks"] as? [[String: Any]] ?? []).contains { $0["command"] as? String == command } }) {
+                matches += 1
+            }
+        }
+        guard matches > 0 else { return .absent }
+        if settings["disableAllHooks"] as? Bool == true { return .disabled }
+        if matches != provider.events.count { return .partial }
+        return fm.isExecutableFile(atPath: target.path) ? .configured : .missingHelper
+    }
     public enum Failure: LocalizedError {
         case invalidConfig, missingHelper
         public var errorDescription: String? {

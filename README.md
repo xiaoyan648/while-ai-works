@@ -51,7 +51,7 @@ https://github.com/user-attachments/assets/db49fc4e-1adf-49a4-b173-da68e032c6b1
 
 ### 四种小游戏，给人类安排点事
 
-选「跟随 AI」，Codex、Claude Code、Qoder、WorkBuddy 开工时，桌面也跟着热闹；选「随时开启」，想玩就玩。
+选「跟随 AI」，Codex、Claude Code、Hermes、DSH、Qoder、WorkBuddy 开工时，桌面也跟着热闹；选「随时开启」，想玩就玩。
 
 <img src="images/0.17-games-with-cat.png" alt="小猫陪玩的四种桌面小游戏：擦污渍、捏气泡、敲木鱼和钓鱼" width="960">
 
@@ -68,6 +68,7 @@ https://github.com/user-attachments/assets/db49fc4e-1adf-49a4-b173-da68e032c6b1
 
 | 版本 | 这次带来了什么 |
 | --- | --- |
+| [**0.20.0**](docs/releases/0.20.0.md) | **Hermes / DSH 加入猫条**：本机会话与 Token、增强监听和工具审批；设置按 Agent 整理，开关对齐、接入配置集中管理。 |
 | [**0.19.1**](docs/releases/0.19.1.md) | **额度读取更稳，卡片切换更顺**：修复 Codex 额度过早超时与配置误判，减少切换页签时的重复布局和刷新。 |
 | [**0.19.0**](docs/releases/0.19.0.md) | **子 Agent 收进猫条**：主 Agent 下可展开查看子 Agent，折叠时仍提示待处理；自定义 Codex 中转站不再阻塞额度读取。 |
 | [**0.18.1**](docs/releases/0.18.1.md) | **回答可粘贴，小猫换图标**：修复输入回答时的编辑快捷键，支持多行粘贴；应用图标换成与桌面小猫一致的墨色灵猫。 |
@@ -109,7 +110,7 @@ Intel 包已通过 Rosetta 下的运行与资源检查，尚未完成 Intel 真�
 
 **Codex** 可直接跟随工作状态；**Claude Code / Qoder / WorkBuddy** 首次需要点击对应的「安装监听」，再重启客户端。提问与授权另外通过「安装交互监听」接入 Codex / Claude Code，具体支持范围见 [连接与使用说明](INTEGRATIONS.md)。
 
-Hermes / DSH 接入已提供本地 Preview，工作状态、本机用量与交互范围见 [验收说明](docs/hermes-dsh.md)。正式 Beta 将在本机体验确认后发布。
+Hermes / DSH 已在 0.20.0 加入猫条，工作状态、本机用量、增强监听的配置与交互范围见 [接入与验收说明](docs/hermes-dsh.md)。
 
 多个客户端同时工作时，只要还有一个会话在运行，玩法就会跟着变化。Qoder / WorkBuddy 的连接仍需更多真实使用反馈；状态没跟上时，可先切回「随时开启」。
 

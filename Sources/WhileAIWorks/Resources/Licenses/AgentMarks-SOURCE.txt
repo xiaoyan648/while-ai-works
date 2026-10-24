@@ -3,3 +3,25 @@ https://github.com/jazzenchen/agent-hud-open
 Revision faa3a06fcf06510855ada332ea454f1f6df30ab4
 Original PNGs preserved. Marks identify their respective clients.
 Cat dock contour and composition authored in While AI Works.
+
+Hermes Agent marks (retrieved 2026-10-24):
+https://github.com/NousResearch/hermes-agent/blob/main/apps/desktop/public/nous-girl.png
+https://github.com/NousResearch/hermes-agent/blob/main/apps/desktop/public/nous-girl-dark.png
+Git blob IDs: eb6cc7c0c797a91260a2347b9669affdac963ef9 (light),
+029d128c185abb0c113aea7646f37b4851804edd (dark).
+Original 256px PNGs preserved as hermes.png / hermes-dark.png.
+License: Hermes-MIT.txt.
+
+DeepSeek Harness marks (retrieved 2026-10-24):
+https://github.com/deepseek-ai/deepseek-harness/blob/master/apps/web/public/favicon.svg
+https://github.com/deepseek-ai/deepseek-harness/blob/master/apps/web/public/favicon-dark.svg
+Git blob IDs: 754615a37acaf1d24973b4e757ccdb16b9b8f003 (light),
+648fe4f2b9b5c7f94973e922094613e3012ceeba (dark).
+SVGs from the installed official @deepseek-ai/dsh-web-frontend 0.2.1-rc.2
+match these upstream blobs. Rasterized without artwork changes using:
+sips -s format png -z 256 256 favicon.svg --out dsh.png
+sips -s format png -z 256 256 favicon-dark.svg --out dsh-dark.png
+License: DSH-MIT.txt. Brand usage guidelines:
+https://github.com/deepseek-ai/deepseek-harness/blob/master/BRAND_GUIDELINES.md
+
+These marks identify supported third-party clients, without implying endorsement.

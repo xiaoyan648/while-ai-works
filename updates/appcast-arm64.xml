@@ -6,6 +6,50 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <channel>
         <title>While AI Works</title>
         <item>
+            <title>0.20.0</title>
+            <pubDate>Sat, 24 Oct 2026 12:16:12 -0400</pubDate>
+            <link>https://github.com/xiaoyan648/while-ai-works/releases/tag/v0.20.0</link>
+            <sparkle:version>37</sparkle:version>
+            <sparkle:shortVersionString>0.20.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description sparkle:format="markdown"><![CDATA[# 0.20.0 · Hermes / DSH 加入猫条
+
+版本 0.20.0，构建号 37。需要 macOS 14 或更新版本。
+
+## 新增 Hermes 与 DeepSeek Harness
+
+- 猫条显示 Hermes、DSH 的官方图标、工作状态、会话列表、完成提醒和本机 Token 用量。
+- 本地记录独立读取，不等待账户额度接口。使用自备 API Key 时，不显示无法取得的账户余额或剩余额度。
+- 按真实委托关系展示子 Agent，复制恢复命令可回到原客户端继续会话。
+- 可选增强监听补充准确状态和待处理提醒。DSH 支持普通结构化提问与一次性工具审批；Hermes 显式配置官方 approval transport 后支持一次性工具审批。
+- 请求取消、进程退出或超时后失效；无法接管时回到原客户端，不自动批准。
+
+Hermes 的原生提问、DSH 的限时问题与计划审阅仍在原客户端处理。本版尚未接入两者的回复预览和猫条主动发送新消息。已在 Hermes v0.22.5、DSH 0.2.1-rc.2 上完成本机真实模型与审批链路验证，上游接口变化时需重新核对兼容性。
+
+## 设置更清楚
+
+- 分开显示“小游戏启动时机”“关注的 Agent”“授权与提问”。每个 Agent 只出现一次，配置按钮与关注开关统一对齐。
+- 修复 Codex、Claude 设置行重复或开关缺失的问题，移除多余空白分隔行。
+- 安装、重新安装和移除放入各 Agent 的配置详情，明确区分工作状态监听与授权交互监听。
+- 区分未配置、配置不完整、组件缺失、配置已写入和收到监听事件。导出插件不会被显示为已经接通。
+
+首次使用 Hermes / DSH，在“关注的 Agent”中开启对应开关，再进入“配置…”查看增强监听接入说明。安装、重装和移除按原客户端及实际 profile 执行；不会覆盖已有 API Key 或替代原审批机制。
+
+## 更新与安装
+
+0.17.1 及更新版本可通过“设置 → 关于 → 检查更新”升级，原有设置和鱼获保留。
+
+- M 系列 Mac：`While-AI-Works-0.20.0-macOS-arm64.dmg`
+- Intel Mac：`While-AI-Works-0.20.0-macOS-x86_64.dmg`
+
+退出旧版，打开 DMG，将 **While AI Works.app** 拖入 **Applications（应用程序）**。同时提供两种架构的 ZIP、签名更新清单和 `SHA256SUMS.txt`。
+
+应用采用 ad-hoc 签名，尚无 Developer ID 签名或 Apple 公证；更新包和更新清单使用 Ed25519 签名验证。Intel 版本为交叉编译，未经 Intel 真机验收。
+]]></description>
+            <enclosure url="https://github.com/xiaoyan648/while-ai-works/releases/download/v0.20.0/While-AI-Works-0.20.0-macOS-arm64.zip" length="31984176" type="application/octet-stream" sparkle:edSignature="VBJE6elvm19z72ucIXCQI63yPUx9nFjwIdd9UNJY600HvvM1MRADTA/Rb3IZVsEv0shunct+KkclGonc93Y5Bg=="/>
+        </item>
+        <item>
             <title>0.19.1</title>
             <pubDate>Mon, 19 Oct 2026 01:28:49 -0400</pubDate>
             <link>https://github.com/xiaoyan648/while-ai-works/releases/tag/v0.19.1</link>
@@ -78,45 +122,9 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
 ]]></description>
             <enclosure url="https://github.com/xiaoyan648/while-ai-works/releases/download/v0.19.0/While-AI-Works-0.19.0-macOS-arm64.zip" length="31804474" type="application/octet-stream" sparkle:edSignature="09Njw0AMlzXjov/LvuHjHRurQ4wEas7+wfP6lfHLD+ZvPGqC61ua2iJUwH8ozBiUlj/w1m6bnoiwCUEur/EhBw=="/>
         </item>
-        <item>
-            <title>0.18.1</title>
-            <pubDate>Sat, 17 Oct 2026 08:06:36 -0400</pubDate>
-            <link>https://github.com/xiaoyan648/while-ai-works/releases/tag/v0.18.1</link>
-            <sparkle:version>33</sparkle:version>
-            <sparkle:shortVersionString>0.18.1</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <description sparkle:format="markdown"><![CDATA[# 0.18.1 · 回答可粘贴，小猫换图标
-
-版本 0.18.1，构建号 33。需要 macOS 14 或更新版本。
-
-## 输入回答更顺手
-
-- 修复猫条问题卡片和独立处理浮窗中无法使用 ⌘V 粘贴的问题，支持中文、多行内容和 Emoji。
-- 补齐剪切、复制、全选、撤销和重做快捷键；即使菜单栏仍属于其他应用，已进入的回答输入框也能正常编辑。
-- 收起后保留回答草稿；新的请求不会切走正在填写的回答，只读预览不接管粘贴。
-
-## 灵猫新图标
-
-- 应用图标换成与桌面小猫呼应的墨色灵猫：尖耳、薄荷色发光眼睛和弯尾。
-- 重新制作各尺寸应用图标，保留 macOS 圆角、透明外边距和轻柔阴影。
-
-## 更新与安装
-
-0.17.1 及更新版本可在「设置 → 关于 → 检查更新」中升级。原有设置和鱼获保留。
-
-- M 系列 Mac：`While-AI-Works-0.18.1-macOS-arm64.dmg`
-- Intel Mac：`While-AI-Works-0.18.1-macOS-x86_64.dmg`
-
-退出旧版，打开 DMG，将 **While AI Works.app** 拖入 **Applications（应用程序）**。同时提供两种架构的 ZIP、签名更新清单和 `SHA256SUMS.txt`。
-
-应用采用 ad-hoc 签名，尚无 Developer ID 签名或 Apple 公证。更新包和更新清单验证 Ed25519 签名；首次安装可能需要在 macOS「隐私与安全性」中允许打开。Intel 版本为交叉编译，未经 Intel 真机验收。
-]]></description>
-            <enclosure url="https://github.com/xiaoyan648/while-ai-works/releases/download/v0.18.1/While-AI-Works-0.18.1-macOS-arm64.zip" length="31773080" type="application/octet-stream" sparkle:edSignature="c0fWfezGeE9p9tZOf3Cp6kFoCNcQ0LVVWDtKswaIpzM9+GzlG71K0Ik++gg9ejdC427VTi+DWc1zbpTT3N7CAg=="/>
-        </item>
     </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: AuboTJ3KVVJGgLTimfuO+LW065nxaUuXtIY30PCZ79i+oP/vnWE3RvIm3T6jCpzZ7eBhuaxCp/dc7/2q1xqyCA==
-length: 7575
+edSignature: eLTHpG0hMJDG9wNUEFpIVmPsLVDBjqiMKZthWcD8tIorJ9B2gWcfpQETVHfCyRW3JdE+2dtu2dWKY2C/tsNBDQ==
+length: 8649
 -->

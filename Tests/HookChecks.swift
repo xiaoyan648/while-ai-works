@@ -123,12 +123,29 @@ enum CheckFailure: Error { case failed(String) }
         try fm.createDirectory(at: config.deletingLastPathComponent(), withIntermediateDirectories: true)
         let original = Data(#"{"enabledPlugins":{"existing":true},"hooks":{"Stop":[{"hooks":[{"type":"command","command":"existing-command"}]}]}}"#.utf8)
         try original.write(to: config)
+        try check(HookInstallation.status(provider: .workbuddy, home: home) == .absent, "other hooks do not imply our installation")
         let helper = root.appendingPathComponent("helper")
         try Data("#!/bin/sh\nexit 0\n".utf8).write(to: helper)
         try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: helper.path)
         try HookInstallation.install(provider: .workbuddy, helper: helper, home: home)
         try HookInstallation.install(provider: .workbuddy, helper: helper, home: home)
         let installed = try JSONSerialization.jsonObject(with: Data(contentsOf: config)) as! [String: Any]
+        try check(HookInstallation.status(provider: .workbuddy, home: home) == .configured, "all owned hooks and helper detected")
+        var disabled = installed
+        disabled["disableAllHooks"] = true
+        try JSONSerialization.data(withJSONObject: disabled).write(to: config)
+        try check(HookInstallation.status(provider: .workbuddy, home: home) == .disabled, "disabled hooks are not reported as connected")
+        var partial = installed
+        var partialHooks = partial["hooks"] as! [String: Any]
+        partialHooks.removeValue(forKey: "UserPromptSubmit")
+        partial["hooks"] = partialHooks
+        try JSONSerialization.data(withJSONObject: partial).write(to: config)
+        try check(HookInstallation.status(provider: .workbuddy, home: home) == .partial, "incomplete configuration is repairable")
+        try JSONSerialization.data(withJSONObject: installed).write(to: config)
+        let installedHelper = home.appendingPathComponent("Library/Application Support/While AI Works/Hooks/while-ai-works-hook")
+        try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: installedHelper.path)
+        try check(HookInstallation.status(provider: .workbuddy, home: home) == .missingHelper, "non-executable helper is not ready")
+        try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: installedHelper.path)
         try check((installed["enabledPlugins"] as? [String: Bool])?["existing"] == true, "preserve settings")
         let groups = (installed["hooks"] as! [String: [[String: Any]]])["Stop"]!
         try check(groups.count == 2, "idempotent installation, existing hook retained")
@@ -143,6 +160,7 @@ enum CheckFailure: Error { case failed(String) }
         try check(NSDictionary(dictionary: removed).isEqual(to: originalObject), "uninstall preserves original config")
         let invalid = Data(#"{"hooks":{"Stop":"invalid"}}"#.utf8)
         try invalid.write(to: config)
+        try check(HookInstallation.status(provider: .workbuddy, home: home) == .unreadable, "malformed config differs from absent")
         var rejected = false
         do { try HookInstallation.install(provider: .workbuddy, helper: helper, home: home) } catch { rejected = true }
         try check(rejected, "malformed hooks rejected")

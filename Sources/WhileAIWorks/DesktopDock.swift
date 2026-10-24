@@ -265,6 +265,16 @@ struct EarTwitch {
 
 enum AgentMarkAssets {
     private static var cache: [String: NSImage] = [:]
+    static func name(for source: WorkSource, dark: Bool) -> String {
+        switch source {
+        case .codex: return "chatgpt"
+        case .claude: return "claude"
+        case .qoder: return dark ? "qoder-dark" : "qoder"
+        case .workbuddy: return "workbuddy"
+        case .hermes: return dark ? "hermes-dark" : "hermes"
+        case .dsh: return dark ? "dsh-dark" : "dsh"
+        }
+    }
     static func image(_ name: String) -> NSImage? {
         if let cached = cache[name] { return cached }
         let paths = [MascotController.resources.url(forResource: name, withExtension: "png", subdirectory: "AgentMarks"),
@@ -279,16 +289,7 @@ struct AgentMark: View {
     let source: WorkSource
     var size: CGFloat = 24
     @Environment(\.colorScheme) private var scheme
-    private var name: String {
-        switch source {
-        case .codex: return "chatgpt"
-        case .claude: return "claude"
-        case .qoder: return scheme == .dark ? "qoder-dark" : "qoder"
-        case .workbuddy: return "workbuddy"
-        case .hermes: return "hermes"
-        case .dsh: return "dsh"
-        }
-    }
+    private var name: String { AgentMarkAssets.name(for: source, dark: scheme == .dark) }
     var body: some View {
         Group {
             if let mark = AgentMarkAssets.image(name) {
@@ -711,21 +712,14 @@ final class AgentActivityMarkView: NSView {
         self.working = working; self.reduceMotion = reduceMotion; self.source = source
         // A quarter period apart in dock order: neighbours are never in step.
         phase = CFTimeInterval(WorkSource.dockOrder.firstIndex(of: source) ?? 0) * Motion.swingPeriod / 4
-        let name: String
-        switch source {
-        case .codex: name = "chatgpt"
-        case .claude: name = "claude"
-        case .qoder: name = dark ? "qoder-dark" : "qoder"
-        case .workbuddy: name = "workbuddy"
-        case .hermes: name = "hermes"
-        case .dsh: name = "dsh"
-        }
+        let name = AgentMarkAssets.name(for: source, dark: dark)
         let key = name + (dark ? ":dark" : ":light")
         if assetKey != key {
             assetKey = key
-            if let image = AgentMarkAssets.image(name) ?? NSImage(systemSymbolName: source.dockSymbol, accessibilityDescription: nil) {
+            let asset = AgentMarkAssets.image(name)
+            if let image = asset ?? NSImage(systemSymbolName: source.dockSymbol, accessibilityDescription: nil) {
                 let rendered: NSImage
-                if source == .codex || source.isLocalAgent {
+                if source == .codex || (source.isLocalAgent && asset == nil) {
                     let tint = source == .codex ? Theme.accentColor.resolved(dark: dark) : (dark ? NSColor.white : NSColor.black)
                     rendered = NSImage(size: image.size, flipped: false) { rect in
                         image.draw(in: rect); tint.setFill(); rect.fill(using: .sourceIn); return true

@@ -33,11 +33,11 @@ DSH 已在本机 0.2.1-rc.2 上验证。限时问题依赖原客户端的等待�
 
 ## 安装与本机验收
 
-在 App 设置中勾选 Hermes / DSH，再点“接入增强监听”。按钮导出扩展、打开说明并复制命令；不会改写现有客户端配置。按 [扩展安装说明](../Sources/WhileAIWorks/Resources/LocalAgents/README.md) 选择实际 profile，安装并重启客户端。自定义 HERMES_HOME / DSH_HOME 用户需把相同环境传给 App；默认扫描 ~/.hermes、其 profiles 和 ~/.dsh。
+在 App 设置的“关注的 Agent”中开启 Hermes / DSH，再点“配置…” → “导出插件与接入说明”。按钮导出扩展、打开说明并复制命令；不会改写现有客户端配置。按 [扩展安装说明](../Sources/WhileAIWorks/Resources/LocalAgents/README.md) 选择实际 profile，安装并重启客户端。自定义 HERMES_HOME / DSH_HOME 用户需把相同环境传给 App；默认扫描 ~/.hermes、其 profiles 和 ~/.dsh。
 
 本地 Preview 使用独立偏好设置，关闭游戏和声音，不启动自动更新。为避免两个实例争用交互 socket，先退出当前正式版，再打开 Preview；首次打开同时展示 Codex、Claude、Hermes、DSH，之后保留 Preview 自己的关注设置。
 
-本地构建：`bash scripts/build-local-preview.sh`，产物在 `dist/While AI Works Preview.app`。这是本机 ad-hoc 签名的体验包，尚未公开发布 Beta。
+本地构建：`bash scripts/build-local-preview.sh`，产物在 `dist/While AI Works Preview.app`。这是使用独立偏好设置的本机 ad-hoc 签名体验包。正式版本的支持范围见 [0.20.0 发布说明](releases/0.20.0.md)。
 
 验收建议按以下顺序执行：
 
@@ -85,7 +85,7 @@ DSH 0.2.1-rc.2 沿用已有 Magpie 接入和 `tokenzz/deepseek-v4.1-flash` 模�
 - 实际 bash 工具提出扩大沙箱权限的审批，Swift 交互服务拒绝；DSH 确认命令未执行、未重试。
 - 另一条真实问题由正在运行的 Preview 接收，猫条显示待处理数量；取消 DSH 后提示撤回。自动化无法定位独立的工作卡片窗口，所以鼠标点击回答的体验仍需人工验收。
 
-测试日志保存在本机 `.build/live-acceptance/`，不随代码发布。没有发布 Beta。
+测试日志保存在本机 `.build/live-acceptance/`，不随代码发布。上述为发布前的本机验收记录；正式版打包与更新验收见 [0.20.0 发版验证](releases/0.20.0-validation.md)。
 
 Hermes 使用官方稳定版 v0.22.5（`bf0203a794a07aac3ff764972ab9087baa4e4f4e`），Python 3.14.9，沿用同一个 Magpie 接入。安装在 `~/.hermes/hermes-agent`，命令位于 `~/.local/bin/hermes`；增强监听已启用。
 

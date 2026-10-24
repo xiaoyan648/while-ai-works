@@ -26,6 +26,10 @@ import AgentHUDCore
         book.save(defaults: defaults)
         let state = AppState(defaults: defaults)
         state.soundEnabled = false
+        if ProcessInfo.processInfo.arguments.contains("--agent-settings") {
+            try agentSettings(state)
+            return
+        }
         state.selectedSources = [.codex, .qoder]
 
         let panels: [(String, MascotMood, (AppState) -> Void)] = [
@@ -201,7 +205,43 @@ import AgentHUDCore
         NSImage(contentsOf: stills.appendingPathComponent("\(coat.rawValue)-\(pose).png"))
     }
 
-    static func render<V: View>(_ view: V, name: String, dark: Bool, size: NSSize? = nil, background: NSColor) throws {
+    static func agentSettings(_ state: AppState) throws {
+        state.desktopPetEnabled = true
+        state.selectedSources = [.codex, .claude, .hermes, .dsh]
+        var fixture = AgentSettingsSnapshot(loaded: true)
+        fixture.hooks = [.claude: .configured, .qoder: .absent, .workbuddy: .partial]
+        fixture.interactions = [.codex]
+        fixture.exported = [.dsh]
+        fixture.pluginFiles = [.hermes]
+        fixture.localRecords = [.hermes, .dsh]
+        fixture.bridgeEvents[.hermes] = Date()
+        let ids = WorkSource.allCases.flatMap { ["agent-follow-" + $0.rawValue, "agent-configure-" + $0.rawValue] } + ["agent-interactions-enabled"]
+        for dark in [false, true] {
+            let theme = dark ? "dark" : "light"
+            for width in [480, 520, 680] {
+                try render(Form { AgentSettingsSections(state: state, fixture: fixture) }.formStyle(.grouped),
+                           name: "agent-settings-\(width)-\(theme)", dark: dark,
+                           size: NSSize(width: width, height: 720), background: .windowBackgroundColor, uniqueIDs: ids)
+            }
+            for source in WorkSource.dockOrder {
+                try render(AgentConfigurationView(state: state, source: source, snapshot: fixture, refresh: {}, dismiss: {}),
+                           name: "agent-configure-\(source.rawValue)-\(theme)", dark: dark,
+                           size: NSSize(width: 500, height: 580), background: .windowBackgroundColor)
+            }
+        }
+        // All read-only probes remain in a disposable home, including interaction settings.
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("agent-settings-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let empty = AgentSettingsSnapshot.read(home: root, environment: [:])
+        precondition(empty.interactions.isEmpty && empty.exported.isEmpty && empty.bridgeEvents.isEmpty)
+        let exported = root.appendingPathComponent("Library/Application Support/While AI Works/Integrations/dsh")
+        try FileManager.default.createDirectory(at: exported, withIntermediateDirectories: true)
+        let staged = AgentSettingsSnapshot.read(home: root, environment: [:])
+        precondition(staged.exported == [.dsh] && staged.bridgeEvents.isEmpty, "export is not a verified connection")
+        print("AgentSettings: 480/520/680pt light/dark layouts and six configuration sheets rendered; isolated absent/export-only probes passed")
+    }
+
+    static func render<V: View>(_ view: V, name: String, dark: Bool, size: NSSize? = nil, background: NSColor, uniqueIDs: [String] = []) throws {
         let appearance = NSAppearance(named: dark ? .darkAqua : .aqua)!
         let host = NSHostingView(rootView: view.background(Color(nsColor: background)))
         host.appearance = appearance
@@ -219,6 +259,27 @@ import AgentHUDCore
         rep.size = bounds.size
         appearance.performAsCurrentDrawingAppearance { host.cacheDisplay(in: host.bounds, to: rep) }
         try rep.representation(using: .png, properties: [:])!.write(to: output.appendingPathComponent(name + ".png"))
+        if !uniqueIDs.isEmpty {
+            var seen = Set<ObjectIdentifier>()
+            func identifiers(_ node: NSObject) -> [String] {
+                guard seen.insert(ObjectIdentifier(node)).inserted else { return [] }
+                var values: [String] = []
+                let identifier = NSSelectorFromString("accessibilityIdentifier")
+                if node.responds(to: identifier), let value = node.perform(identifier)?.takeUnretainedValue() as? String { values.append(value) }
+                let children = NSSelectorFromString("accessibilityChildren")
+                if node.responds(to: children), let nodes = node.perform(children)?.takeUnretainedValue() as? [NSObject] {
+                    for child in nodes { values += identifiers(child) }
+                }
+                return values
+            }
+            let values = identifiers(host)
+            try values.joined(separator: "\n").write(to: output.appendingPathComponent(name + "-identifiers.txt"), atomically: true, encoding: .utf8)
+            if values.isEmpty {
+                print("Offscreen AX unavailable: \(name); verify controls in the live Preview window")
+            } else {
+                for id in uniqueIDs { precondition(values.filter { $0 == id }.count == 1, "Missing or repeated settings control: \(id) in \(name)") }
+            }
+        }
         window.close()
     }
 }

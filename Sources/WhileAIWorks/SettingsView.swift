@@ -13,13 +13,13 @@ struct SettingsView: View {
             Section("AI 工作台") {
                 Toggle("在工作卡片预览回复", isOn: $state.agentReplyPreviews)
                     .accessibilityIdentifier("agent-reply-previews")
-                Text("用量由已登录客户端读取。回复仅在本机内存展示；关闭后隐藏正文。消息通过原会话发送，Claude 可回到客户端或复制恢复命令继续。")
+                Text("会话用量从本机记录读取；账户额度仅在客户端支持时显示。回复仅在本机内存展示，关闭后隐藏正文。")
                     .font(.caption).foregroundStyle(.secondary)
                 Button("刷新用量", action: state.refreshAgentData)
             }
             controls
             desktop
-            ai
+            AgentSettingsSections(state: state)
             appearance
             sound
             about
@@ -133,77 +133,6 @@ struct SettingsView: View {
             }
             .pickerStyle(.segmented)
             .accessibilityIdentifier("play-area")
-        }
-    }
-
-    private var ai: some View {
-        Section {
-            Picker("什么时候", selection: $state.followAI) {
-                Text("随时开启").tag(false)
-                Text("跟随 AI 工作").tag(true)
-            }
-            .pickerStyle(.segmented)
-            .accessibilityIdentifier("work-source")
-            ForEach(WorkSource.allCases) { source in
-                HStack(spacing: 8) {
-                    Toggle(isOn: Binding(get: { state.selectedSources.contains(source) },
-                                         set: { state.setSource(source, selected: $0) })) {
-                        HStack(spacing: 6) {
-                            Text(source.clientName)
-                            if (state.activeSessionCounts[source] ?? 0) > 0 {
-                                ActivityDot(active: true)
-                                Text("\(state.activeSessionCounts[source] ?? 0) 个会话").font(.caption).foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                    .disabled(!state.followAI && !state.desktopPetEnabled)
-                    Spacer()
-                    if source.isLocalAgent {
-                        Button("接入增强监听") { state.installLocalAgentBridge(source) }.controlSize(.small)
-                    } else if let provider = source.hookProvider {
-                        Button("安装监听") { state.installHooks(provider) }.controlSize(.small)
-                        Button("移除") { state.installHooks(provider, remove: true) }.controlSize(.small)
-                    } else {
-                        Text("自动读取本地会话").font(.caption).foregroundStyle(.secondary)
-                    }
-                }
-            }
-            if let message = state.hookSetupMessage {
-                Label(message, systemImage: "checkmark.circle")
-                    .font(.callout).foregroundStyle(Theme.accent)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Divider()
-            Toggle("在猫条接收授权与提问", isOn: $state.agentInteractionsEnabled)
-                .accessibilityIdentifier("agent-interactions-enabled")
-            ForEach([WorkSource.codex, .claude]) { source in
-            HStack {
-                Text(source.clientName + " 工具交互").font(.callout)
-                Spacer()
-                let installed = source == .codex ? state.codexInteractionInstalled : state.claudeInteractionInstalled
-                Button(installed ? "重新安装" : "安装交互监听") {
-                    if source == .codex { state.installCodexInteraction(false) } else { state.installClaudeInteraction(false) }
-                }.controlSize(.small).accessibilityIdentifier(source.rawValue + "-interaction-install")
-                if installed {
-                    Button("移除") {
-                        if source == .codex { state.installCodexInteraction(true) } else { state.installClaudeInteraction(true) }
-                    }.controlSize(.small)
-                }
-            }
-            }
-            Text("Hermes / DSH 自动读取本地记录；增强监听用于准确状态和交互，按安装说明在原客户端启用。Codex 桌面问题卡自动接入。工具授权需安装对应交互监听并重启会话；Codex 只接收人工审核请求。关闭小猫或超时后回到原客户端处理，不会自动批准。")
-                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            if let message = state.agentInteractionSetupMessage {
-                Text(message).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            }
-        } header: {
-            Text("跟随 AI")
-        } footer: {
-            Text("AI 工作时鱼群更活跃、污渍会冒出来；它歇下时水面也安静。桌面小猫也会关注这里勾选的工具，不受小游戏开关影响。Claude Code / Qoder / WorkBuddy 首次使用需安装监听并重启客户端，如有 Hooks 审核提示请在客户端启用。取消勾选停止关注，移除会删除本应用的监听配置。")
-                .font(.caption).foregroundStyle(.secondary)
-                .multilineTextAlignment(.leading)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
