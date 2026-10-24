@@ -82,6 +82,7 @@ private func check(_ condition: @autoclosure () -> Bool, _ message: @autoclosure
         for name in ["chatgpt", "claude", "qoder", "qoder-dark", "workbuddy"] {
             check(AgentMarkAssets.image(name) != nil, "client mark resource must be available")
         }
+        for source in [WorkSource.hermes, .dsh] { check(NSImage(systemSymbolName: source.dockSymbol, accessibilityDescription: nil) != nil, "local client icon exists on this OS") }
         state.desktopDockOrientation = .vertical
         state.desktopDockAttachment = .floating
         state.desktopCompanionAppearance = .dark
@@ -209,7 +210,7 @@ private func check(_ condition: @autoclosure () -> Bool, _ message: @autoclosure
         }
         let rail = marks(in: nativeRoot)
         func mark(_ source: WorkSource) -> AgentActivityMarkView { rail.first { $0.source == source }! }
-        check(rail.count == 4 && mark(.codex).isAnimating && mark(.claude).isAnimating && !mark(.qoder).isAnimating,
+        check(rail.count == WorkSource.allCases.count && mark(.codex).isAnimating && mark(.claude).isAnimating && !mark(.qoder).isAnimating,
                      "only working clients swing")
         settle(AgentActivityMarkView.rampDuration + 0.1)
         var samples: [(time: Double, codex: Double, claude: Double)] = []
@@ -295,6 +296,26 @@ private func check(_ condition: @autoclosure () -> Bool, _ message: @autoclosure
                 check(dock.panel.appearance?.name == appearance.native?.name)
             }
         }
+        }
+        // The new clients use the same native cards, input surface and child-session hierarchy.
+        state.desktopDockOrientation = .vertical; state.desktopDockAttachment = .floating
+        state.agentDashboard.sessions = [
+            .init(id: "hermes:fixture", source: .hermes, title: "检查网站改动", project: "/fixture/site", status: "工作中", running: true,
+                  tokensIn: 3000, tokensOut: 800, cacheRead: 1200, reply: nil, observedAt: Date(), navigationURL: nil, resumeCommand: "hermes --resume fixture", event: .working),
+            .init(id: "hermes:child", source: .hermes, title: "检查测试", project: "/fixture/site", status: "工作中", running: true,
+                  tokensIn: 600, tokensOut: 200, cacheRead: 0, reply: nil, observedAt: Date(), navigationURL: nil, resumeCommand: nil, event: .working, parentSessionID: "hermes:fixture"),
+            .init(id: "deepseek:fixture", source: .dsh, title: "整理改动说明", project: "/fixture/site", status: "已完成", running: false,
+                  tokensIn: 2200, tokensOut: 500, cacheRead: 900, reply: nil, observedAt: Date(), navigationURL: nil, resumeCommand: "dsh tui --resume fixture", event: .finished, eventAt: Date())
+        ]
+        for source in [WorkSource.hermes, .dsh] {
+            for appearance in [DesktopCompanionAppearance.light, .dark] {
+                state.desktopCompanionAppearance = appearance; dock.dismiss(); settle(0.2); dock.select(source); settle(0.6)
+                check(dock.cardVisible && state.dockQuota(for: source) == nil, "local clients have cards without account quota")
+                if captureEnabled { _ = try capture(dock, output: output, name: "local-\(source.rawValue)-\(appearance.rawValue)") }
+                state.desktopDockTab = .quota; settle(0.3)
+                if captureEnabled { _ = try capture(dock, output: output, name: "local-\(source.rawValue)-usage-\(appearance.rawValue)") }
+                state.desktopDockTab = .sessions
+            }
         }
         let companion = DesktopPetController(state: state, mascot: MascotController(bundle: bundle))
         state.desktopPetPresentation = .companion; settle(0.6)

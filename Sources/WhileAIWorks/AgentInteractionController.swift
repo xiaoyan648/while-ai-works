@@ -66,7 +66,7 @@ enum AgentInteractionResult { case accepted, gone, uncertain, failed }
         let sources = state.agentInteractionsEnabled && state.desktopPetEnabled ? state.selectedSources : []
         state.claudeInteractionInstalled = AgentInteractionHookInstallation.isInstalled(source: .claude)
         state.codexInteractionInstalled = AgentInteractionHookInstallation.isInstalled(source: .codex)
-        if !sources.intersection([.claude, .codex]).isEmpty {
+        if !sources.intersection([.claude, .codex, .hermes, .dsh]).isEmpty {
             if hookServer == nil {
                 let server = AgentInteractionHookServer(state: state)
                 if server.start() { hookServer = server }

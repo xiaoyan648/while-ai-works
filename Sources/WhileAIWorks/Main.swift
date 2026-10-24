@@ -3,15 +3,21 @@ import SwiftUI
 import Combine
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemValidation {
+    static var isLocalPreview: Bool {
+        ProcessInfo.processInfo.environment["WHILE_AI_WORKS_CAT_PREVIEW"] == "1"
+            || Bundle.main.object(forInfoDictionaryKey: "WAWLocalPreview") as? Bool == true
+    }
     let state: AppState = {
-        guard ProcessInfo.processInfo.environment["WHILE_AI_WORKS_CAT_PREVIEW"] == "1" else { return AppState() }
+        guard AppDelegate.isLocalPreview else { return AppState() }
         // A runnable review build reads real local work state, but never changes
         // the installed app's preferences or starts its games/audio.
-        let defaults = UserDefaults(suiteName: "WhileAIWorks.CatDockPreview")!
+        let localAgents = Bundle.main.object(forInfoDictionaryKey: "WAWLocalPreview") as? Bool == true
+        let defaults = UserDefaults(suiteName: localAgents ? "WhileAIWorks.HermesDSHPreview" : "WhileAIWorks.CatDockPreview")!
         let state = AppState(defaults: defaults)
         state.desktopEnabled = false; state.soundEnabled = false
         state.desktopPetEnabled = true
         state.agentReplyPreviews = true
+        if localAgents && defaults.object(forKey: "work.sources") == nil { state.selectedSources = [.codex, .claude, .hermes, .dsh] }
         return state
     }()
     private var statusItem: NSStatusItem!
@@ -60,7 +66,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
             DispatchQueue.main.async { [weak self] in self?.statusIconScheduled = false; self?.updateStatusIcon() }
         }.store(in: &subscriptions)
         if DebugSnapshots.directory != nil { runSnapshots(); return }
-        if ProcessInfo.processInfo.environment["WHILE_AI_WORKS_CAT_PREVIEW"] == "1" { return }
+        if AppDelegate.isLocalPreview { return }
         updater.start()
         // Greet with the panel so a first launch never looks like nothing happened.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in self?.showPanel() }

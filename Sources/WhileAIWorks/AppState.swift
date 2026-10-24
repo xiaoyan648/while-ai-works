@@ -32,12 +32,13 @@ enum PlayArea: String, CaseIterable, Identifiable {
 }
 
 enum WorkSource: String, CaseIterable, Identifiable {
-    case codex, qoder, workbuddy, claude
+    case codex, qoder, workbuddy, claude, hermes, dsh
     var id: String { rawValue }
     var clientName: String {
-        switch self { case .codex: return "Codex"; case .qoder: return "Qoder"; case .workbuddy: return "WorkBuddy"; case .claude: return "Claude Code" }
+        switch self { case .codex: return "Codex"; case .qoder: return "Qoder"; case .workbuddy: return "WorkBuddy"; case .claude: return "Claude Code"; case .hermes: return "Hermes"; case .dsh: return "DSH" }
     }
     var hookProvider: HookProvider? { HookProvider(rawValue: rawValue) }
+    var isLocalAgent: Bool { self == .hermes || self == .dsh }
 }
 
 /// What the menu bar cat is doing; see `AppState.mascotMood`.
@@ -203,6 +204,9 @@ final class AppState: ObservableObject {
     var sendAgentMessage: (AgentDockSession, String) async -> AgentMessageOutcome = { _, _ in .unavailable }
     var focusAgentComposer: () -> Void = {}
     @Published var workSourceDetails: [WorkSource: String] = [:]
+    @Published var localAgentCounts: [WorkSource: Int] = [:]
+    @Published var localAgentNotices: [WorkSource: String] = [:]
+    var installLocalAgentBridge: (WorkSource) -> Void = { _ in }
     var activeSessionCount: Int { activeSessionCounts.values.reduce(0, +) }
     var selectedClientsLabel: String {
         selectedSources.count == WorkSource.allCases.count ? "全部 AI" :

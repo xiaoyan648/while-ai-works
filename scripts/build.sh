@@ -24,6 +24,13 @@ cp -R Sources/WhileAIWorks/Resources/FishAssets "$app_path/Contents/Resources/"
 # Remove assets left by older incremental builds; aquarium data is downloaded on demand.
 rm -rf "$app_path/Contents/Resources/AquariumAssets"
 cp Sources/WhileAIWorks/Resources/AquariumPack.json "$app_path/Contents/Resources/"
+python3 - "$app_path/Contents/Resources/LocalAgents" <<'PYRESOURCES'
+import pathlib, shutil, sys
+path = pathlib.Path(sys.argv[1])
+if path.exists(): shutil.rmtree(path)
+shutil.copytree('Sources/WhileAIWorks/Resources/LocalAgents', path,
+                ignore=shutil.ignore_patterns('__pycache__', '*.pyc', '*.pyo'))
+PYRESOURCES
 cp -R Sources/WhileAIWorks/Resources/AgentMarks "$app_path/Contents/Resources/"
 cp -R Sources/WhileAIWorks/Resources/Rive "$app_path/Contents/Resources/"
 cp -R Sources/WhileAIWorks/Resources/Licenses "$app_path/Contents/Resources/"

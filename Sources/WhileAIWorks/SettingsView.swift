@@ -158,7 +158,9 @@ struct SettingsView: View {
                     }
                     .disabled(!state.followAI && !state.desktopPetEnabled)
                     Spacer()
-                    if let provider = source.hookProvider {
+                    if source.isLocalAgent {
+                        Button("接入增强监听") { state.installLocalAgentBridge(source) }.controlSize(.small)
+                    } else if let provider = source.hookProvider {
                         Button("安装监听") { state.installHooks(provider) }.controlSize(.small)
                         Button("移除") { state.installHooks(provider, remove: true) }.controlSize(.small)
                     } else {
@@ -189,7 +191,7 @@ struct SettingsView: View {
                 }
             }
             }
-            Text("Codex 桌面问题卡自动接入。工具授权需安装对应交互监听并重启会话；Codex 只接收人工审核请求。关闭小猫或超时后回到原客户端处理，不会自动批准。")
+            Text("Hermes / DSH 自动读取本地记录；增强监听用于准确状态和交互，按安装说明在原客户端启用。Codex 桌面问题卡自动接入。工具授权需安装对应交互监听并重启会话；Codex 只接收人工审核请求。关闭小猫或超时后回到原客户端处理，不会自动批准。")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             if let message = state.agentInteractionSetupMessage {
                 Text(message).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)

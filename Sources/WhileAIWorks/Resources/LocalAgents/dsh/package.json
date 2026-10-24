@@ -1,0 +1,12 @@
+{
+  "name": "dsh-while-ai-works",
+  "version": "0.1.0-beta.1",
+  "type": "module",
+  "main": "index.mjs",
+  "dsh": {
+    "bundle": {
+      "patch": "cordis.yml"
+    }
+  },
+  "license": "MIT"
+}

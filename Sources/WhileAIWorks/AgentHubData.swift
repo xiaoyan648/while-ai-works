@@ -89,11 +89,13 @@ final class AgentHubDataController {
     private var observation: UsageChangeObservation?
     private var subscriptions = Set<AnyCancellable>()
     private let interactions: AgentInteractionController
+    private let localAgents: LocalAgentDataController
     private var refreshing = false
 
     init(state: AppState) {
         self.state = state
         interactions = AgentInteractionController(state: state)
+        localAgents = LocalAgentDataController(state: state)
         L10n.setLanguage(.zhHans)
         settings = SettingsStore(defaults: UserDefaults(suiteName: "WhileAIWorks.AgentData")!)
         settings.update { $0.clientHooks = false; $0.language = .zhHans }
@@ -143,7 +145,12 @@ final class AgentHubDataController {
             providers.append(.init("Codex", provider))
         }
         if sources.contains(.claude) { providers.append(.init("Claude", ClaudeCodeProvider.standard(ledger: ledger, persistent: false))) }
-        guard !providers.isEmpty else { store = nil; state.agentDashboard = AgentDockData(); return }
+        guard !providers.isEmpty else {
+            store = nil
+            var data = AgentDockData(); data.sessions = state.agentDashboard.sessions.filter { $0.source.isLocalAgent }
+            data.notices = state.agentDashboard.notices.filter { $0.key.isLocalAgent }; state.agentDashboard = data
+            return
+        }
         let store = UsageStore(provider: CombinedUsageProvider(providers, ledger: ledger), settings: settings)
         self.store = store
         observation = store.observeChanges { [weak self] _ in self?.publish() }
@@ -152,11 +159,13 @@ final class AgentHubDataController {
 
     private func publish(showReplies: Bool? = nil) {
         guard let report = store?.report else { return }
-        let dashboard = Self.adapt(report, showReplies: showReplies ?? state.agentReplyPreviews)
+        var dashboard = Self.adapt(report, showReplies: showReplies ?? state.agentReplyPreviews)
+        dashboard.sessions += state.agentDashboard.sessions.filter { $0.source.isLocalAgent && state.selectedSources.contains($0.source) }
+        dashboard.notices.merge(state.localAgentNotices, uniquingKeysWith: { _, new in new })
         if state.agentDashboard != dashboard { state.agentDashboard = dashboard }
         interactions.updateSessions(report.sessions)
     }
-    func stop() { interactions.stop(); store?.stop(); observation?.cancel() }
+    func stop() { localAgents.stop(); interactions.stop(); store?.stop(); observation?.cancel() }
     private static func planTitle(_ value: String) -> String {
         switch value.lowercased() {
         case "pro": return "Pro"

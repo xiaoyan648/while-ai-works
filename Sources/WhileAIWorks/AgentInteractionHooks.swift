@@ -75,21 +75,55 @@ enum AgentInteractionHookInstallation {
     private let path: String
     private var listener: UnixSocketListener?
     private var waiting: [String: NWConnection] = [:]
-    private var sources: Set<WorkSource> = [.claude, .codex]
+    private struct LocalOwner {
+        let token: String
+        let pid: Int32
+        let started: Double
+        let expires: Date
+        var alive: Bool { Date() < expires && LocalAgentProcess.start(pid).map { abs($0.timeIntervalSince1970 - started) < 1.1 } == true }
+    }
+    private var localOwners: [String: LocalOwner] = [:]
+    private var ownerWatch: Task<Void, Never>?
+    private var sources: Set<WorkSource> = [.claude, .codex, .hermes, .dsh]
     init(state: AppState, path: String = AgentInteractionHookInstallation.socketPath) { self.state = state; self.path = path }
     func start() -> Bool {
         let listener = UnixSocketListener(path: path, requestLimit: 1024 * 1024, category: "cat-interactions") { [weak self] data, connection in
             self?.register(data, connection: connection)
         }
         guard listener.start() else { return false }
-        self.listener = listener; return true
+        self.listener = listener
+        ownerWatch = Task { [weak self] in
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .seconds(1)) } catch { return }
+                guard let self else { return }
+                for id in self.localOwners.keys.filter({ self.localOwners[$0]?.alive != true }) {
+                    waiting[id]?.cancel(); remove(id)
+                }
+            }
+        }
+        return true
     }
     private func register(_ data: Data, connection: NWConnection) {
+        let metadata = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        if let token = metadata?["_catHubCancel"] as? String {
+            if let id = localOwners.first(where: { $0.value.token == token })?.key {
+                waiting[id]?.cancel(); remove(id)
+            }
+            connection.cancel(); return
+        }
         guard state.agentInteractionsEnabled, state.desktopPetEnabled,
               let request = try? Self.parse(data, id: "agent-hook:" + UUID().uuidString),
-              let source = WorkSource(rawValue: request.source.rawValue), sources.contains(source), state.selectedSources.contains(source)
+              sources.contains(AgentInteraction(request: request).source), state.selectedSources.contains(AgentInteraction(request: request).source)
         else { connection.cancel(); return }
         let id = request.id
+        if AgentInteraction(request: request).source.isLocalAgent {
+            guard let token = metadata?["_catRequestToken"] as? String, UUID(uuidString: token) != nil,
+                  let pid = metadata?["_catOwnerPID"] as? Int32, let began = metadata?["_catOwnerStart"] as? Double,
+                  let expires = metadata?["_catExpiresAt"] as? Double else { connection.cancel(); return }
+            let owner = LocalOwner(token: token, pid: pid, started: began, expires: min(Date(timeIntervalSince1970: expires), Date().addingTimeInterval(600)))
+            guard owner.alive else { connection.cancel(); return }
+            localOwners[id] = owner
+        }
         waiting[id] = connection
         state.agentInteractions = (state.agentInteractions + [.init(request: request, viaHook: true)]).sorted { $0.request.at < $1.request.at }
         connection.stateUpdateHandler = { [weak self] status in
@@ -119,7 +153,9 @@ enum AgentInteractionHookInstallation {
               state.selectedSources.contains(state.agentInteractions[index].source),
               state.agentInteractions[index].canAnswer, let connection = waiting[id],
               AgentInteractionValidation.allows(decision, for: state.agentInteractions[index].request) else { return }
-        let bytes = decision.response(for: state.agentInteractions[index].request)
+        let item = state.agentInteractions[index]
+        if item.source.isLocalAgent && localOwners[id]?.alive != true { connection.cancel(); remove(id); return }
+        let bytes = item.source.isLocalAgent ? Self.localResponse(decision, request: item.request) : decision.response(for: item.request)
         guard !bytes.isEmpty else { return }
         state.agentInteractions[index].phase = .sending
         connection.send(content: bytes, contentContext: .finalMessage, isComplete: true, completion: .contentProcessed { [weak self] error in
@@ -143,11 +179,12 @@ enum AgentInteractionHookInstallation {
         })
     }
     private func remove(_ id: String) {
-        waiting.removeValue(forKey: id)
+        waiting.removeValue(forKey: id); localOwners.removeValue(forKey: id)
         state.agentInteractions.removeAll { $0.id == id }; state.agentInteractionDrafts[id] = nil
         if state.agentInteractionInputID == id { state.agentInteractionInputID = nil }
     }
     func stop() {
+        ownerWatch?.cancel(); ownerWatch = nil
         for (id, connection) in waiting { connection.cancel(); remove(id) }
         for id in state.agentInteractions.filter({ $0.viaHook }).map(\.id) { remove(id) }
         listener?.stop(); listener = nil
@@ -158,35 +195,53 @@ enum AgentInteractionHookInstallation {
             waiting[request.id]?.cancel(); remove(request.id)
         }
     }
+    static func localResponse(_ decision: PermissionDecision, request: PermissionRequest) -> Data {
+        var payload: [String: Any]
+        switch decision {
+        case .allow: payload = ["action": "allow"]
+        case .deny: payload = ["action": "deny"]
+        case .answer(let values):
+            payload = ["action": "answer", "answers": request.questions.map { question -> [String: Any] in
+                let value = values[question.answerKey] ?? .init()
+                var row: [String: Any] = ["id": question.answerKey, "selected": value.selected]
+                if let custom = value.custom { row["custom"] = custom }
+                return row
+            }]
+        default: return Data()
+        }
+        return (try? JSONSerialization.data(withJSONObject: payload)) ?? Data()
+    }
     /// Preserve full command/input for inspection; no truncation can conceal an approved suffix.
     static func parse(_ data: Data, id: String) throws -> PermissionRequest? {
         guard data.count <= 1024 * 1024, let payload = try JSONValue.parse(data).catObject,
-              let name = payload["_catHubSource"]?.catString, let source = PermissionHooks.Source(rawValue: name),
-              source == .claude || source == .codex,
+              let name = payload["_catHubSource"]?.catString, ["claude", "codex", "hermes", "dsh"].contains(name),
               let session = payload["session_id"]?.catString, !session.isEmpty,
               let tool = payload["tool_name"]?.catString, !tool.isEmpty,
               payload["hook_event_name"]?.catString == "PermissionRequest" else { return nil }
+        let source: PermissionHooks.Source = name == "dsh" ? .deepseek : name == "codex" ? .codex : .claude
+        let vendor = name == "hermes" ? "Hermes" : source.vendor
         let input = payload["tool_input"] ?? .null
         if source == .codex, payload["_catReviewer"]?.catString != "user" { return nil }
         var questions: [PermissionQuestion] = []
-        if tool == "AskUserQuestion", source == .claude {
+        if tool == "AskUserQuestion", source == .claude || source == .deepseek {
             guard let list = input[cat: "questions"].catArray, !list.isEmpty, list.count <= 32 else { return nil }
             for item in list {
                 guard let text = item[cat: "question"].catString, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                       let rawOptions = item[cat: "options"].catArray else { return nil }
+                if name == "dsh", item[cat: "id"].catString?.isEmpty != false { return nil }
                 var options: [PermissionQuestion.Option] = []
                 for option in rawOptions {
                     guard let label = option[cat: "label"].catString, !label.isEmpty else { return nil }
                     options.append(.init(label: label, description: option[cat: "description"].catString))
                 }
-                questions.append(.init(question: text, header: item[cat: "header"].catString, options: options, multiSelect: item[cat: "multiSelect"].catBool ?? false))
+                questions.append(.init(id: name == "dsh" ? item[cat: "id"].catString : nil, question: text, header: item[cat: "header"].catString, options: options, multiSelect: item[cat: "multiSelect"].catBool ?? false))
             }
             // Claude keys answers by question text: ambiguous duplicates must stay in its own prompt.
             guard Set(questions.map(\.answerKey)).count == questions.count else { return nil }
         }
         let detail = String(decoding: try RecordCoding.encoder().encode(input), as: UTF8.self)
-        let summary = !questions.isEmpty ? questions[0].question : tool == "ExitPlanMode" ? "计划需要你审阅" : "允许 \(source.vendor) 使用 " + tool + "？"
-        return .init(id: id, source: source, sessionID: session, toolName: tool, summary: summary,
+        let summary = !questions.isEmpty ? questions[0].question : tool == "ExitPlanMode" ? "计划需要你审阅" : "允许 \(vendor) 使用 " + tool + "？"
+        return .init(id: id, source: source, vendor: vendor, sessionID: session, toolName: tool, summary: summary,
             detail: questions.isEmpty ? detail : nil, cwd: payload["cwd"]?.catString,
             path: input[cat: "file_path"].catString, questions: questions, questionInput: input, at: Date())
     }

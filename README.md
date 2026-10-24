@@ -109,6 +109,8 @@ Intel 包已通过 Rosetta 下的运行与资源检查，尚未完成 Intel 真�
 
 **Codex** 可直接跟随工作状态；**Claude Code / Qoder / WorkBuddy** 首次需要点击对应的「安装监听」，再重启客户端。提问与授权另外通过「安装交互监听」接入 Codex / Claude Code，具体支持范围见 [连接与使用说明](INTEGRATIONS.md)。
 
+Hermes / DSH 接入已提供本地 Preview，工作状态、本机用量与交互范围见 [验收说明](docs/hermes-dsh.md)。正式 Beta 将在本机体验确认后发布。
+
 多个客户端同时工作时，只要还有一个会话在运行，玩法就会跟着变化。Qoder / WorkBuddy 的连接仍需更多真实使用反馈；状态没跟上时，可先切回「随时开启」。
 
 ## 数据留在自己的 Mac

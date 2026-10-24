@@ -5,13 +5,15 @@ import WhileCore
 import AgentHUDCore
 
 extension WorkSource {
-    static var dockOrder: [WorkSource] { [.codex, .claude, .qoder, .workbuddy] }
+    static var dockOrder: [WorkSource] { [.codex, .claude, .hermes, .dsh, .qoder, .workbuddy] }
     var dockSymbol: String {
         switch self {
         case .codex: return "terminal"
         case .claude: return "sparkles"
         case .qoder: return "chevron.left.forwardslash.chevron.right"
         case .workbuddy: return "person.2"
+        case .hermes: return "paperplane.fill"
+        case .dsh: return "terminal.fill"
         }
     }
     var dockName: String { self == .claude ? "Claude" : clientName }
@@ -283,6 +285,8 @@ struct AgentMark: View {
         case .claude: return "claude"
         case .qoder: return scheme == .dark ? "qoder-dark" : "qoder"
         case .workbuddy: return "workbuddy"
+        case .hermes: return "hermes"
+        case .dsh: return "dsh"
         }
     }
     var body: some View {
@@ -446,13 +450,14 @@ private struct DesktopDockTile: View {
         return (quota.remaining ?? 100) <= 15 ? Theme.attention : Theme.accent
     }
     private var quotaHint: String {
+        if source.isLocalAgent { return "本机会话用量" }
         guard let quota, let remaining = quota.remaining else {
             return source == .claude ? "当前会话额度暂无读数" : source == .codex ? "每周额度暂无读数" : "账户额度暂无读数"
         }
         return quota.title + "剩余 " + String(Int(remaining.rounded())) + "%" + (quota.stale ? " · 上次读数" : "")
     }
     @ViewBuilder private var ring: some View {
-        Circle().stroke(Theme.wellStrong, lineWidth: 2).frame(width: 36, height: 36)
+        if !source.isLocalAgent { Circle().stroke(Theme.wellStrong, lineWidth: 2).frame(width: 36, height: 36) }
         if let remaining = quota?.remaining {
             Circle().trim(from: 0, to: CGFloat(min(1, max(0, remaining / 100))))
                 .stroke(ringColor, style: StrokeStyle(lineWidth: 2, lineCap: .round))
@@ -712,14 +717,16 @@ final class AgentActivityMarkView: NSView {
         case .claude: name = "claude"
         case .qoder: name = dark ? "qoder-dark" : "qoder"
         case .workbuddy: name = "workbuddy"
+        case .hermes: name = "hermes"
+        case .dsh: name = "dsh"
         }
         let key = name + (dark ? ":dark" : ":light")
         if assetKey != key {
             assetKey = key
             if let image = AgentMarkAssets.image(name) ?? NSImage(systemSymbolName: source.dockSymbol, accessibilityDescription: nil) {
                 let rendered: NSImage
-                if source == .codex {
-                    let tint = Theme.accentColor.resolved(dark: dark)
+                if source == .codex || source.isLocalAgent {
+                    let tint = source == .codex ? Theme.accentColor.resolved(dark: dark) : (dark ? NSColor.white : NSColor.black)
                     rendered = NSImage(size: image.size, flipped: false) { rect in
                         image.draw(in: rect); tint.setFill(); rect.fill(using: .sourceIn); return true
                     }
@@ -887,7 +894,9 @@ struct DesktopDockDetailView: View {
                 Spacer(minLength: 2)
                 HStack(spacing: 2) {
                     tab(.sessions, title: "会话", symbol: "bubble.left.and.bubble.right", hasRequests: !requests.isEmpty)
-                    tab(.quota, title: "额度", symbol: "chart.bar.xaxis")
+                    if sources.contains(where: { source in !source.isLocalAgent || state.agentDashboard.sessions.contains(where: { $0.source == source && $0.tokensIn + $0.tokensOut + $0.cacheRead > 0 }) }) {
+                        tab(.quota, title: "用量", symbol: "chart.bar.xaxis")
+                    }
                 }.padding(3).background(Theme.well, in: RoundedRectangle(cornerRadius: 8))
                     .accessibilityElement(children: .contain).accessibilityLabel("工作卡片页签")
                 Button(action: close) {
@@ -903,7 +912,7 @@ struct DesktopDockDetailView: View {
                     } else {
                         let quota = state.desktopDockTab == .quota
                         if quota {
-                            ForEach(sources) { source in quotaRows(source) }
+                            ForEach(sources.filter { !$0.isLocalAgent }) { source in quotaRows(source) }
                             AgentDockTopSessions(sessions: state.agentDashboard.sessions.filter { sources.contains($0.source) },
                                                  showSource: state.desktopDockSource == nil)
                         }

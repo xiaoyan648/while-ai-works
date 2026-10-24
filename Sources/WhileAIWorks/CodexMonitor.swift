@@ -12,6 +12,9 @@ final class CodexMonitor {
     private let queue = DispatchQueue(label: "work-state.codex", qos: .utility)
     private var timer: DispatchSourceTimer?
     private var subscription: AnyCancellable?
+    private var localSubscription: AnyCancellable?
+    private var localCounts: [WorkSource: Int] = [:]
+    private var localNotices: [WorkSource: String] = [:]
     private var enabled = false
     private var sources: Set<WorkSource> = []
     // Main-thread revision rejects a queued result even if selection changes away and back.
@@ -63,6 +66,9 @@ final class CodexMonitor {
                 self.poll()
             }
         }
+        localSubscription = state.$localAgentCounts.combineLatest(state.$localAgentNotices).sink { [weak self] counts, notices in
+            self?.queue.async { [weak self] in self?.localCounts = counts; self?.localNotices = notices; self?.poll() }
+        }
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now(), repeating: 1.5)
         timer.setEventHandler { [weak self] in self?.poll() }
@@ -80,7 +86,10 @@ final class CodexMonitor {
         if enabled {
             for source in WorkSource.allCases where sources.contains(source) {
                 let result: (count: Int, intensity: Double, detail: String)
-                if let provider = source.hookProvider { result = pollHooks(provider) }
+                if source.isLocalAgent {
+                    let count = localCounts[source] ?? 0
+                    result = (count, count > 0 ? 0.3 : 0, localNotices[source] ?? "")
+                } else if let provider = source.hookProvider { result = pollHooks(provider) }
                 else { result = pollCodex() }
                 counts[source] = result.count
                 sourceDetails[source] = result.detail

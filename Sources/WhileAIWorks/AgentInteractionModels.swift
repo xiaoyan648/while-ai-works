@@ -33,7 +33,11 @@ struct AgentInteraction: Identifiable, Equatable {
     var fresh = true
     var notice: String?
     var id: String { request.id }
-    var source: WorkSource { request.source == .claude ? .claude : .codex }
+    var source: WorkSource {
+        if request.vendor == "Hermes" { return .hermes }
+        if request.source == .deepseek { return .dsh }
+        return request.source == .claude ? .claude : .codex
+    }
     var canAnswer: Bool { fresh && !request.isPlan && (viaHook || request.nativeApproval != nil) && (phase == .ready || phase == .failed) }
     var status: String {
         if let notice { return notice }

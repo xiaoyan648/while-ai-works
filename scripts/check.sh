@@ -16,7 +16,7 @@ xcrun swiftc "${swift_flags[@]}" -parse-as-library -I .build/native -L .build/na
 .build/native/NativeAudioChecks
 for interaction_check in NativeInteractionChecks NativeMotionChecks; do
 xcrun swiftc "${swift_flags[@]}" -parse-as-library -I .build/native -L .build/native -lWhileCore "${agent_hud_flags[@]}" \
-    Sources/WhileAIWorks/AppState.swift Sources/WhileAIWorks/AgentInteractionModels.swift Sources/WhileAIWorks/Audio.swift Sources/WhileAIWorks/PlaySurface.swift \
+    Sources/WhileAIWorks/LocalAgentData.swift Sources/WhileAIWorks/LocalAgentInstallation.swift Sources/WhileAIWorks/AppState.swift Sources/WhileAIWorks/AgentInteractionModels.swift Sources/WhileAIWorks/Audio.swift Sources/WhileAIWorks/PlaySurface.swift \
     Sources/WhileAIWorks/BubbleDrawing.swift Sources/WhileAIWorks/WoodfishDrawing.swift Sources/WhileAIWorks/InteractionDrawing.swift \
     Sources/WhileAIWorks/FishingSprites.swift Sources/WhileAIWorks/FishingDrawing.swift Sources/WhileAIWorks/InteractionShortcut.swift "Tests/${interaction_check}.swift" -o ".build/native/${interaction_check}"
 ".build/native/${interaction_check}"
