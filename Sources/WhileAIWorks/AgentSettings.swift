@@ -117,6 +117,9 @@ struct AgentSettingsSections: View {
                     AgentSettingsRow(state: state, source: source,
                                      summary: (fixture ?? snapshot).statusSummary(for: source)) { configuring = source }
                 }
+                if state.selectedSources.contains(.claude) && state.claudeSubscriptionConnection != .signedIn && state.claudeSubscriptionConnection != .inactive {
+                    ClaudeSubscriptionConnectionView(state: state)
+                }
             } header: { Text("关注的 Agent") } footer: {
                 footer("关注开关控制猫条和工作状态检测，不会安装或移除接入配置。")
             }
@@ -183,6 +186,9 @@ struct AgentConfigurationView: View {
                 Button("完成", action: dismiss).keyboardShortcut(.defaultAction)
             }.padding(20)
             Form {
+                if source == .claude {
+                    Section("订阅额度") { ClaudeSubscriptionConnectionView(state: state) }
+                }
                 Section("工作状态") {
                     if source == .codex || source.isLocalAgent {
                         Text("自动读取本地会话，无需安装状态监听。")
@@ -196,10 +202,12 @@ struct AgentConfigurationView: View {
                         HStack {
                             Button(snapshot.hooks[source]?.hasConfiguration == true ? "重新安装状态监听" : "安装状态监听") {
                                 state.installHooks(provider); feedback = state.hookSetupMessage; refresh()
+                                if source == .claude { state.checkClaudeSubscription() }
                             }.accessibilityIdentifier("status-install-" + source.rawValue)
                             if snapshot.hooks[source]?.hasConfiguration == true {
                                 Button("移除状态监听") {
                                     state.installHooks(provider, remove: true); feedback = state.hookSetupMessage; refresh()
+                                    if source == .claude { state.checkClaudeSubscription() }
                                 }.accessibilityIdentifier("status-remove-" + source.rawValue)
                             }
                         }.disabled(!snapshot.loaded)
@@ -248,7 +256,10 @@ struct AgentConfigurationView: View {
                 if let feedback { Section("操作结果") { Text(feedback).font(.callout).textSelection(.enabled) } }
             }.formStyle(.grouped)
             HStack {
-                Button("重新检测", action: refresh).accessibilityIdentifier("agent-setup-refresh")
+                Button("重新检测") {
+                    refresh()
+                    if source == .claude { state.checkClaudeSubscription() }
+                }.accessibilityIdentifier("agent-setup-refresh")
                 Spacer()
                 Text("仅管理本应用的接入配置").font(.caption).foregroundStyle(.secondary)
             }.padding(20)
@@ -262,6 +273,7 @@ struct AgentConfigurationView: View {
     }
     private func installInteraction(remove: Bool) {
         if source == .codex { state.installCodexInteraction(remove) } else { state.installClaudeInteraction(remove) }
+        if source == .claude { state.checkClaudeSubscription() }
         feedback = state.agentInteractionSetupMessage; state.agentInteractionSetupMessage = nil; refresh()
     }
 }

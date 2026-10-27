@@ -26,6 +26,28 @@ import AgentHUDCore
         book.save(defaults: defaults)
         let state = AppState(defaults: defaults)
         state.soundEnabled = false
+        if ProcessInfo.processInfo.arguments.contains("--claude-subscription") {
+            state.selectedSources = [.claude]
+            state.desktopDockSource = .claude
+            state.desktopDockTab = .quota
+            for dark in [false, true] {
+                let theme = dark ? "dark" : "light"
+                for (name, status) in [("needs-login", ClaudeSubscriptionConnection.needsLogin), ("signing-in", .signingIn), ("failed", .loginFailed), ("missing", .engineMissing)] {
+                    state.claudeSubscriptionConnection = status
+                    try render(ClaudeSubscriptionConnectionView(state: state, compact: true).padding(14),
+                               name: "claude-subscription-\(name)-\(theme)", dark: dark,
+                               size: NSSize(width: 390, height: 130), background: .windowBackgroundColor)
+                }
+                state.claudeSubscriptionConnection = .needsLogin
+                try render(AgentConfigurationView(state: state, source: .claude, snapshot: .init(loaded: true), refresh: {}, dismiss: {}),
+                           name: "claude-subscription-settings-\(theme)", dark: dark,
+                           size: NSSize(width: 500, height: 580), background: .windowBackgroundColor)
+                try render(DockReviewComposition(state: state, perch: MascotController(bundle: nil, placeholder: still(.ink, "perched"))),
+                           name: "claude-subscription-dock-\(theme)", dark: dark, background: .windowBackgroundColor)
+            }
+            print("Claude subscription UI: missing login, pending authorization, failure, missing engine, settings and quota layouts rendered")
+            return
+        }
         if ProcessInfo.processInfo.arguments.contains("--agent-settings") {
             try agentSettings(state)
             return

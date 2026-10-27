@@ -18,8 +18,8 @@ public enum ClaudeDataError: Error, Hashable, Sendable, LocalizedError {
         case .planLimitsUnavailable:
             return L10n.text("当前登录方式没有订阅额度（API key 或第三方平台）", "No plan limits for this login (API key or third-party platform)")
         case .signedOut:
-            return L10n.text("Claude Code 已退出登录，运行 claude 重新登录后恢复额度",
-                             "Claude Code is signed out. Run claude to sign in again and the quota returns")
+            return L10n.text("猫条尚未检测到可用的 Claude 命令行登录，请连接订阅账户以读取额度",
+                             "No Claude CLI sign-in is available to this app. Connect your subscription to read quota")
         case .malformedUsage:
             return L10n.text("Claude Code 引擎返回了无法识别的额度数据", "The Claude Code engine returned unrecognised usage data")
         case .accountChanged:
@@ -27,6 +27,16 @@ public enum ClaudeDataError: Error, Hashable, Sendable, LocalizedError {
         }
     }
 }
+
+/// Only authentication metadata is decoded. Credentials and account identifiers are never retained here.
+public struct ClaudeEngineAuthStatus: Decodable, Equatable, Sendable {
+    public let loggedIn: Bool
+    public let authMethod: String?
+    public let subscriptionType: String?
+    public let apiProvider: String?
+}
+
+public enum ClaudeEngineLoginResult: Sendable { case completed, failed, timedOut }
 
 /// Payload of the engine's `get_usage` control response.
 public struct ClaudeEngineUsage: Hashable, Sendable {
@@ -96,15 +106,34 @@ public struct ClaudeEngineUsageClient: Sendable {
     /// Whether the engine has a sign-in of its own. `get_usage` reports no plan limits both for an API-key login and for
     /// no login at all, and only this tells the two apart; nil when the engine does not answer the question.
     public func isSignedIn() async -> Bool? {
+        await authStatus()?.loggedIn
+    }
+
+    public func authStatus() async -> ClaudeEngineAuthStatus? {
+        guard !Task.isCancelled else { return nil }
         try? FileManager.default.createDirectory(at: workingDirectory, withIntermediateDirectories: true)
         guard let engine = try? ChildProcess(executable, ["auth", "status", "--json"], environment: environment(),
                                              directory: workingDirectory, stdoutLimit: 64 * 1024) else { return nil }
         defer { engine.stop() }
-        let deadline = Date().addingTimeInterval(10)
-        var lines: [String] = []
-        while let line = try? await engine.line(before: deadline) { lines.append(line) }
-        let object = (try? JSONSerialization.jsonObject(with: Data(lines.joined().utf8))) as? [String: Any]
-        return object?["loggedIn"] as? Bool
+        do { try await engine.waitForExit(before: Date().addingTimeInterval(10)) }
+        catch { return nil }
+        let output = engine.output
+        // The CLI exits with 1 for a valid signed-out response. A timeout is not a logout.
+        guard output.status == 0 || output.status == 1, !output.truncated else { return nil }
+        return try? JSONDecoder().decode(ClaudeEngineAuthStatus.self, from: output.stdout)
+    }
+
+    /// Explicit user action only. The official CLI owns browser authorization and credential storage.
+    /// Keep stdin open for the local browser callback; no prompt or account secret is sent by this app.
+    public func signInToSubscription(timeout: TimeInterval = 300) async throws -> ClaudeEngineLoginResult {
+        try Task.checkCancellation()
+        try FileManager.default.createDirectory(at: workingDirectory, withIntermediateDirectories: true)
+        let engine = try ChildProcess(executable, ["auth", "login", "--claudeai"], environment: environment(),
+                                      directory: workingDirectory, input: true, stdoutLimit: 64 * 1024)
+        defer { engine.stop() }
+        try await engine.waitForExit(before: Date().addingTimeInterval(timeout))
+        guard let status = engine.output.status else { return .timedOut }
+        return status == 0 ? .completed : .failed
     }
 
     public func fetch() async throws -> ClaudeEngineUsage {

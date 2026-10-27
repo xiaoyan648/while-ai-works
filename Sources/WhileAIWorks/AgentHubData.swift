@@ -90,6 +90,7 @@ final class AgentHubDataController {
     private var subscriptions = Set<AnyCancellable>()
     private let interactions: AgentInteractionController
     private let localAgents: LocalAgentDataController
+    private var claudeSubscription: ClaudeSubscriptionController?
     private var refreshing = false
 
     init(state: AppState) {
@@ -100,6 +101,7 @@ final class AgentHubDataController {
         settings = SettingsStore(defaults: UserDefaults(suiteName: "WhileAIWorks.AgentData")!)
         settings.update { $0.clientHooks = false; $0.language = .zhHans }
         state.refreshAgentData = { [weak self] in
+            self?.claudeSubscription?.check()
             // Repeated taps while a refresh is running join it instead of queueing more.
             guard let self, !self.refreshing else { return }
             self.refreshing = true
@@ -131,6 +133,12 @@ final class AgentHubDataController {
         state.$agentReplyPreviews.removeDuplicates().sink { [weak self] enabled in
             self?.publish(showReplies: enabled)
         }.store(in: &subscriptions)
+        claudeSubscription = ClaudeSubscriptionController(state: state) { [weak self] in
+            guard let self else { return }
+            // A fresh provider drops the pre-login reading and its account-query cooldown.
+            // This occurs only after a confirmed authentication change, not on every focus event.
+            self.configure(sources: self.state.selectedSources)
+        }
     }
 
     private func configure(sources: Set<WorkSource>) {
@@ -171,7 +179,7 @@ final class AgentHubDataController {
         if state.agentDashboard != dashboard { state.agentDashboard = dashboard }
         interactions.updateSessions(report.sessions)
     }
-    func stop() { localAgents.stop(); interactions.stop(); store?.stop(); observation?.cancel() }
+    func stop() { claudeSubscription?.stop(); localAgents.stop(); interactions.stop(); store?.stop(); observation?.cancel() }
     private static func planTitle(_ value: String) -> String {
         switch value.lowercased() {
         case "pro": return "Pro"

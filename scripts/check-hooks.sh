@@ -8,6 +8,6 @@ xcrun swiftc "${swift_flags[@]}" -O -parse-as-library -I .build/native -L .build
     -lWhileCore Tests/HookChecks.swift -o .build/native/HookChecks
 .build/native/HookChecks
 xcrun swiftc "${swift_flags[@]}" -O -parse-as-library -I .build/native -L .build/native -lWhileCore "${agent_hud_flags[@]}" \
-    Sources/WhileAIWorks/LocalAgentData.swift Sources/WhileAIWorks/LocalAgentInstallation.swift Sources/WhileAIWorks/AppState.swift Sources/WhileAIWorks/AgentInteractionModels.swift Sources/WhileAIWorks/Audio.swift Sources/WhileAIWorks/CodexMonitor.swift \
+    Sources/WhileAIWorks/LocalAgentData.swift Sources/WhileAIWorks/LocalAgentInstallation.swift Sources/WhileAIWorks/AppState.swift Sources/WhileAIWorks/ClaudeSubscriptionConnection.swift Sources/WhileAIWorks/AgentInteractionModels.swift Sources/WhileAIWorks/Audio.swift Sources/WhileAIWorks/CodexMonitor.swift \
     Tests/NativeHookMonitorChecks.swift -o .build/native/NativeHookMonitorChecks
 .build/native/NativeHookMonitorChecks

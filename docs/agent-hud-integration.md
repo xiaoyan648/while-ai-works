@@ -1,6 +1,6 @@
 # Agent HUD 数据接入
 
-参照 [jazzenchen/agent-hud-open](https://github.com/jazzenchen/agent-hud-open)，固定提交 `faa3a06fcf06510855ada332ea454f1f6df30ab4`。`Vendor/AgentHUDOpen` 保留未修改的 Support / Core 和 Apache-2.0 许可；应用资源包含许可证。界面由本项目原生实现。
+参照 [jazzenchen/agent-hud-open](https://github.com/jazzenchen/agent-hud-open)，固定提交 `faa3a06fcf06510855ada332ea454f1f6df30ab4`。`Vendor/AgentHUDOpen` 保留 Support / Core 和 Apache-2.0 许可；本地适配记录在该目录的 README 中，应用资源包含许可证。界面由本项目原生实现。
 
 ## 已接入
 
@@ -22,9 +22,11 @@ Claude 原会话入口使用 provider 给出的 native destination；没有入�
 
 ## Claude 官方引擎查询
 
-Claude 额度沿用未修改的 `ClaudeCodeProvider.standard`：启动本机 `claude`，以 stream-json 向引擎发出 `get_usage` 控制请求。查询关闭 hooks，不发送模型提示词；引擎自行处理登录和联网。会话与 tokens 仍读本地记录。应用不再包含桌面钥匙串解密或直接请求订阅 HTTP 端点的备用路径，也没有该授权入口。
+Claude 额度沿用 `ClaudeCodeProvider.standard`：启动本机 `claude`，以 stream-json 向引擎发出 `get_usage` 控制请求。查询关闭 hooks，不发送模型提示词；引擎自行处理登录和联网。会话与 tokens 仍读本地记录。应用不包含桌面钥匙串解密或直接请求订阅 HTTP 端点的备用路径。
 
-切换 API 供应商和完成 Claude 订阅登录是两步；官方 CLI 的 `claude auth login` 使用 Claude 订阅，`--console` 才是 API 计费。账户登录应由用户在原客户端完成。若应用仍读到旧网关配置，应重启应用并检查其继承的环境；不要把桌面 App 的 Pro 资料当作 CLI 已登录的证据。
+启动应用、修改 Claude 关注/交互监听开关、启动猫条及修改 Claude 接入配置时，以额度查询相同的引擎和环境运行 `claude auth status --json`。没有登录时，在设置和猫条额度页提供“登录 Claude 订阅”；点击后才运行官方 `claude auth login --claudeai`，由用户完成浏览器授权。成功退出后再次确认登录，再重建数据采集以立即读取额度，避免旧的未登录结果与一分钟查询间隔阻碍刷新。检查失败、未登录、非订阅登录、登录失败和超时分别显示；取消、关闭关注或退出应用会结束本应用启动的登录子进程。前台重新激活及手动检测也可识别外部终端完成的登录。
+
+切换 API 供应商和完成 Claude 订阅登录是两步；`--console` 是 API 计费。没有自动导入终端环境 token 或桌面端凭据；用户的环境和登录目录保持原样。复制的终端登录命令使用相同的引擎路径与配置目录。若应用继承了中转站环境，命令行登录也未必能提供订阅额度；不要把桌面 App 的 Pro 资料或仅 `loggedIn: true` 当作额度已可读取的证据。
 
 Codex 的状态、回复和会话 tokens 来自本地 `sessions` / `archived_sessions`。账户额度另经本机官方 `codex app-server --listen stdio://` 的 `account/rateLimits/read` 获取，会由官方客户端联网刷新；应用不自行提取 Codex token 拼装 HTTP 请求。该方法在 [OpenAI 官方 App Server 文档](https://learn.chatgpt.com/docs/app-server) 中公开。当前 provider 自动查询约 300–360 秒一次，collector 限制手动账户刷新最小间隔 60 秒。额度查询不发起模型 turn，但公开接口与低频查询不构成账户风控的零风险保证。
 
@@ -32,6 +34,8 @@ Codex 的状态、回复和会话 tokens 来自本地 `sessions` / `archived_ses
 
 `check-agent-data.sh` 验证剩余量语义、失效读数、重置时间、缓存维度、预览隐私、UUID 入口、canonical turn / idle / malformed 状态，以及原 owner 回执匹配。不会输出真实凭据。
 
+`check-claude-subscription.sh` 验证启动/开关触发、检查和登录去重、登录后刷新、外部登录、失败/超时及子进程清理；使用隔离假 CLI，不替用户登录。`--live-auth-probe` 只报告本机检测状态。`check-ui.sh --claude-subscription` 渲染设置和猫条的登录入口、等待、失败与缺少引擎状态；真实浏览器授权和订阅额度仍需登录后验收。
+
 `--ipc-probe <thread-uuid>` 可读取真实 owner snapshot 并准备请求，**不会提交**。原会话能力以当前 owner snapshot 为准。没有向用户正在运行的会话发送测试消息；因此真实消息送达端到端尚未验收。
 
-上游 manifest 在本机 SwiftPM 中报 `SwiftSetting.swiftLanguageMode` 不可用。直接用 Swift 6 编译未修改模块，构建缓存按完整源文件哈希及目标架构更新，未修改上游 SDK 或 manifest。
+上游 manifest 在本机 SwiftPM 中报 `SwiftSetting.swiftLanguageMode` 不可用。直接用 Swift 6 编译模块，构建缓存按完整源文件哈希及目标架构更新，无需修改 manifest。

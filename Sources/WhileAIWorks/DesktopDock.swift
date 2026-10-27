@@ -1798,8 +1798,12 @@ private struct AgentDockQuotaView: View {
                     .accessibilityLabel("刷新用量").accessibilityIdentifier("cat-dock-refresh-quota")
             }
             if quotas.isEmpty {
-                Text(state.agentDashboard.notices[source] ?? (state.agentDashboard.updatedAt == nil ? "正在连接本机客户端…" : "客户端暂未提供账户额度"))
-                    .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
+                if source == .claude && state.claudeSubscriptionConnection != .signedIn && state.claudeSubscriptionConnection != .inactive {
+                    ClaudeSubscriptionConnectionView(state: state, compact: true)
+                } else {
+                    Text(state.agentDashboard.notices[source] ?? (state.agentDashboard.updatedAt == nil ? "正在连接本机客户端…" : "客户端暂未提供账户额度"))
+                        .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
+                }
             }
             ForEach(quotas) { quota in
                 let primary = state.dockQuota(for: source)?.id == quota.id

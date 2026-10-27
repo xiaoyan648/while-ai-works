@@ -193,6 +193,10 @@ final class AppState: ObservableObject {
     var installClaudeInteraction: (Bool) -> Void = { _ in }
     var installCodexInteraction: (Bool) -> Void = { _ in }
     var refreshAgentData: () -> Void = {}
+    @Published var claudeSubscriptionConnection = ClaudeSubscriptionConnection.inactive
+    var checkClaudeSubscription: () -> Void = {}
+    var loginClaudeSubscription: () -> Void = {}
+    var cancelClaudeSubscriptionLogin: () -> Void = {}
     @Published var canCheckForUpdates = false
     @Published var automaticallyChecksForUpdates = false
     @Published var lastUpdateCheck: Date?
