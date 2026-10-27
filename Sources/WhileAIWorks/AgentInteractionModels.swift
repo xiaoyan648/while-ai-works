@@ -130,6 +130,13 @@ extension AppState {
     func interactions(for source: WorkSource) -> [AgentInteraction] { agentInteractions.filter { $0.source == source } }
     func openInteractionSession(_ request: PermissionRequest) {
         if let session = agentDashboard.sessions.first(where: { $0.id == request.sessionID }) { openAgentSession(session); return }
+        if request.source == .deepseek {
+            Task { @MainActor in
+                let snapshot = await LocalAgentReader().read(sources: [.dsh], previews: false)
+                if let session = snapshot.sessions.first(where: { $0.id == request.sessionID }) { openAgentSession(session) }
+            }
+            return
+        }
         guard UUID(uuidString: request.sessionID) != nil else { return }
         let source: WorkSource = request.source == .claude ? .claude : .codex
         let url = source == .codex ? URL(string: "codex://threads/" + request.sessionID) : nil

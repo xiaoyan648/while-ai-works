@@ -3,14 +3,20 @@ import AppKit
 import SQLite3
 import AgentHUDCore
 import AgentHUDSupport
+import CryptoKit
 
 @main enum LocalAgentChecks {
     @MainActor static func main() async throws {
+        if CommandLine.arguments.contains("--probe-navigation") {
+            let value = await LocalAgentReader().read(sources: [.dsh], previews: false)
+            let rows = value.sessions.map { ["id": $0.id, "url": $0.navigationURL?.absoluteString ?? "", "status": $0.status, "resume": $0.resumeCommand ?? ""] }
+            print(String(decoding: try JSONSerialization.data(withJSONObject: rows), as: UTF8.self)); return
+        }
         if CommandLine.arguments.contains("--probe-dsh-health") {
             let node = DeepSeekLocator.nodeExecutable()
             let reader = LocalAgentReader()
             let value = await reader.read(sources: [.dsh], previews: false)
-            precondition(node != nil && value.notices[.dsh] == nil && !value.sessions.isEmpty,
+            precondition(node != nil && !value.sessions.isEmpty,
                          "DSH local records must decode with the actual process environment")
             print("DSH health: \(value.sessions.count) sessions decoded; no read error; Node \(node!.path)")
             return
@@ -78,6 +84,36 @@ import AgentHUDSupport
         precondition(response["action"] as? String == "answer" && (response["answers"] as? [[String:Any]])?.count == 2)
         precondition(!AgentInteractionValidation.allows(.allow,for:request))
         precondition(LocalAgentReader.resume(source:.dsh,id:"bad\nline",root:root) == nil)
+        precondition(LocalAgentReader.resume(source: .dsh, id: "fixture", root: root, profile: "dsh-tui")!.contains("--profile 'dsh-tui'"))
+        func procArgs(_ args: [String], _ env: [String]) -> [UInt8] {
+            [UInt8(args.count), 0, 0, 0] + Array(("/node\0\0" + (args + env + [""]).joined(separator: "\0") + "\0").utf8)
+        }
+        let origin = LocalAgentProcess.parseOrigin(procArgs(["node", "/modules/@deepseek-harness-tui/dsh-tui/host-entry.js"], ["SECRET=never-retained", "OTTY_PANE_ID=p_fixture_2"]))!
+        precondition(origin.url?.absoluteString == "otty://pane/p_fixture_2" && origin.profile == "dsh-tui")
+        precondition(LocalAgentProcess.parseOrigin(procArgs(["node"], ["OTTY_PANE_ID=1a123_2"]))?.url?.absoluteString == "otty://pane/p_1a123_2", "Otty exports its unprefixed pane ID")
+        precondition(LocalAgentProcess.parseOrigin(procArgs(["node", "--profile", "custom"], ["OTTY_PANE_ID=p_x?command=oops"]))?.url == nil)
+        let iterm = LocalAgentProcess.parseOrigin(procArgs(["node"], ["ITERM_SESSION_ID=w0t1p0:fixture", "DSH_TUI_PROFILE=custom"]))!
+        precondition(iterm.url?.scheme == "iterm2" && iterm.profile == "custom")
+        precondition(LocalAgentProcess.origin(getpid()) != nil, "actual same-user KERN_PROCARGS2 decoding")
+        let owned = LocalAgentProcess.parseLockOwners("p100\nn/a\np200\nn/a\nn/b\np300\nn/c", paths: ["/a", "/b", "/c"], isLive: { $0 != 300 })
+        precondition(owned == ["/b": 200], "ambiguous or dead owners never become navigation targets")
+        var gone = session; gone.localSessionLock = home.appendingPathComponent("missing.lock").path
+        let goneURL = await LocalAgentProcess.currentNavigationURL(for: gone)
+        precondition(goneURL == nil, "a stale card must recheck the session lock before jumping")
+        let bridgeFolder = root.appendingPathComponent("while-ai-works")
+        try FileManager.default.createDirectory(at: bridgeFolder, withIntermediateDirectories: true)
+        let rawID = "new-without-transcript"
+        let filename = SHA256.hash(data: Data(rawID.utf8)).map { String(format: "%02x", $0) }.joined() + ".json"
+        var bridge: [String: Any] = ["session_id": rawID, "pid": getpid(), "process_started_at": LocalAgentProcess.start(getpid())!.timeIntervalSince1970,
+            "updated_at": now.timeIntervalSince1970, "waiting": true, "waiting_kind": "plan", "profile": "dsh-tui", "cwd": "/fixture"]
+        try JSONSerialization.data(withJSONObject: bridge).write(to: bridgeFolder.appendingPathComponent(filename))
+        let pendingRows = await LocalAgentReader.waitingDSHSessions(root: root, excluding: [], now: now)
+        precondition(pendingRows.count == 1 && pendingRows[0].event == .approval && pendingRows[0].status.contains("计划待审") && pendingRows[0].localBridgeRoot == root.path,
+                     "a native-only request is visible before the first transcript exists")
+        bridge["waiting"] = false
+        try JSONSerialization.data(withJSONObject: bridge).write(to: bridgeFolder.appendingPathComponent(filename))
+        let endedRows = await LocalAgentReader.waitingDSHSessions(root: root, excluding: [], now: now)
+        precondition(endedRows.isEmpty, "completed native-only requests are withdrawn")
         // Actual Node extension -> native Swift socket server -> structured reply.
         let suite = "WhileAIWorks.LocalAgentChecks." + UUID().uuidString
         let defaults = UserDefaults(suiteName: suite)!

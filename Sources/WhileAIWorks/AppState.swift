@@ -741,6 +741,10 @@ struct AgentDockSession: Equatable, Identifiable, Sendable {
     var turnStartedAt: Date? = nil
     /// Source-owned hierarchy; nil identifies a main session.
     var parentSessionID: String? = nil
+    /// Recheck the exact session's live owner before opening a local terminal.
+    var localSessionLock: String? = nil
+    /// A live pending request may precede creation of the durable session lock.
+    var localBridgeRoot: String? = nil
     var dockIdentity: String { source.rawValue + ":" + id }
     var canSend: Bool { source == .codex && navigationURL?.scheme == "codex" && navigationURL?.lastPathComponent == id }
 }

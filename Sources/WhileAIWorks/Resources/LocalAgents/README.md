@@ -6,11 +6,13 @@
 
 ## DSH
 
-安装按钮已复制命令。把 `--profile web` 改为实际使用的 `desktop` / `tui` 等 profile，再执行。
+安装按钮已复制命令。检测到 `dst` 的 `dsh-tui` profile 时默认选择它，否则选择 `web`。请核对实际使用的 profile；`tui` 和 `dsh-tui` 是两个独立安装。
 本机验证版本：0.2.1-rc.2。启用后重启该 profile。
-支持普通结构化问题、带完整工具参数的单次允许/拒绝。计划审阅、限时问题及无法确认参数的审批留在原客户端。
+支持普通结构化问题、带完整工具参数的单次允许/拒绝。计划审阅、限时问题及无法确认参数的审批会显示待处理提醒，回答仍在原客户端完成；取消或处理后撤回提醒。
+Otty / iTerm2 中的本地 DSH 会话可跳回原终端面板。每次点击重新校验该会话的进程锁；原会话已退出或终端未提供定位标识时，复制恢复命令，保留已知 profile。
 小猫关闭、未关注 DSH、断开或等待超时后交回原客户端；不自动批准。
-移除：`dsh plugin --profile web remove dsh-while-ai-works`，然后重启。
+使用 `dst` 时安装：`dsh plugin --profile dsh-tui add "$HOME/Library/Application Support/While AI Works/Integrations/dsh"`，然后重启对应客户端。
+移除：`dsh plugin --profile dsh-tui remove dsh-while-ai-works`（其他客户端替换 profile），然后重启。
 
 ## Hermes
 

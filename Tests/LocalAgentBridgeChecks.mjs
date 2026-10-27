@@ -23,6 +23,31 @@ try {
  apply(ctx);
  const session={id:'fixture',header:{cwd:'/fixture',delegationDepth:0}},agent={id:'fixture',session,status:'running'};
  const fallback=async()=>({fallback:true});
+ const state=()=>JSON.parse(readFileSync(join(dir,'while-ai-works',readdirSync(join(dir,'while-ai-works')).find(x=>x.endsWith('.json'))),'utf8'));
+ // Requests handled by the native UI remain visible until its actual promise settles.
+ for (const question of [{id:'q',question:'Plan',intent:{kind:'plan-review'}}, {id:'q',question:'Detailed',detail:'Native-only detail'}, {id:'q',question:'Timed'}]) {
+   let release;
+   const task=ctx.waterfall('user-questions/request',{agent,wait:question.question==='Timed'?{timed:true}:undefined,questions:[question]},()=>new Promise(r=>release=r));
+   assert.equal(state().waiting,true);assert.equal(state().waiting_kind,question.question==='Plan'?'plan':'question');
+   release({native:true});assert.deepEqual(await task,{native:true});assert.equal(state().waiting,false);
+ }
+ let releaseMissing;
+ const missing=ctx.waterfall('approval/request',{agent,toolName:'bash',callId:'unknown'},()=>new Promise(r=>releaseMissing=r));
+ assert.equal(state().waiting,true);assert.equal(state().waiting_kind,'approval');
+ releaseMissing('rejected');assert.equal(await missing,'rejected');assert.equal(state().waiting,false);
+ // Aborting one native-only request must not clear another request in the same session.
+ let releaseOne, releaseTwo; const nativeAbort=new AbortController();
+ const one=ctx.waterfall('user-questions/request',{agent,signal:nativeAbort.signal,wait:{timed:true},questions:[{id:'1',question:'one'}]},()=>new Promise(r=>releaseOne=r));
+ const two=ctx.waterfall('approval/request',{agent,toolName:'bash',callId:'missing'},()=>new Promise(r=>releaseTwo=r));
+ nativeAbort.abort();assert.equal(state().waiting,true);assert.equal(state().waiting_kind,'approval');
+ releaseTwo('rejected');await two;assert.equal(state().waiting,false);releaseOne({});await one;
+ let continued=true;
+ ctx.provide('sessionProjections',{stateOf:()=>({questions:{active:continued?[{state:'continued'}]:[]}})});
+ ctx.emit('session/event',session,{type:'tool/result',data:{message:{callId:'timed'}}});await Promise.resolve();
+ assert.equal(state().waiting,true,'timed-out questions remain answerable in the native client');
+ ctx.emit('session/event',session,{type:'turn/end',data:{reason:{kind:'completed'}}});await Promise.resolve();
+ assert.equal(state().waiting,true,'completion does not discard a continued question');
+ continued=false;ctx.emit('session/event',session,{type:'user/message',data:{}});await Promise.resolve();assert.equal(state().waiting,false);
  const answer=await ctx.waterfall('user-questions/request',{agent,questions:[{id:'q1',question:'Which?',options:[{label:'A'}]}]},fallback);
  assert.deepEqual(answer,{answers:response.answers});assert.equal(seen.session_id,'deepseek:fixture');
  assert.deepEqual(await ctx.waterfall('user-questions/request',{agent,wait:{timed:true},questions:[{id:'q',question:'Timed'}]},fallback),{fallback:true});
@@ -34,8 +59,13 @@ try {
  response={action:'deny'};
  assert.equal(await ctx.waterfall('approval/request',{agent,toolName:'bash',callId:'call1'},fallback),'rejected');
  const abort=new AbortController();abort.abort();
- assert.deepEqual(await ctx.waterfall('approval/request',{agent,toolName:'bash',callId:'call1',signal:abort.signal},fallback),{fallback:true});
+ assert.equal(await ctx.waterfall('approval/request',{agent,toolName:'bash',callId:'call1',signal:abort.signal},fallback),'cancelled');
  pending=true;
+ const questionAbort=new AbortController();let forwarded=false;
+ const cancelledQuestion=ctx.waterfall('user-questions/request',{agent,signal:questionAbort.signal,questions:[{id:'cancel',question:'Cancel'}]},async()=>{forwarded=true;return {};});
+ for(let i=0;i<100&&!waitingSocket;i++)await new Promise(r=>setTimeout(r,5));
+ const rejected=assert.rejects(cancelledQuestion);questionAbort.abort();await rejected;
+ assert.equal(forwarded,false,'cancelled requests must not reopen in the native UI');waitingSocket?.destroy();waitingSocket=null;
  const controller=new AbortController();
  const active=request({test:'cancellation'},controller.signal);
  for(let i=0;i<100 && !waitingSocket;i++)await new Promise(r=>setTimeout(r,5));
@@ -47,5 +77,5 @@ try {
  const file=readdirSync(join(dir,'while-ai-works')).find(x=>x.endsWith('.json'));
  const raw=readFileSync(join(dir,'while-ai-works',file),'utf8');
  assert.equal(JSON.parse(raw).completed,true);assert(!raw.includes('echo fixture'));assert(!raw.includes('Which?'));
- console.log('PASS: installed DSH Cordis waterfall, structured answers, exact-call approvals, deny, cancellation, native fallback, metadata privacy');
+ console.log('PASS: DSH Cordis answers/approvals, native plan/timed/detail/missing-argument reminders, concurrent waits, cancellation, metadata privacy');
 } finally { await new Promise(r=>server.close(r));rmSync(dir,{recursive:true,force:true}); }

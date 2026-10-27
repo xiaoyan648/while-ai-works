@@ -6,6 +6,39 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <channel>
         <title>While AI Works</title>
         <item>
+            <title>0.20.2</title>
+            <pubDate>Tue, 27 Oct 2026 02:26:45 -0400</pubDate>
+            <link>https://github.com/xiaoyan648/while-ai-works/releases/tag/v0.20.2</link>
+            <sparkle:version>40</sparkle:version>
+            <sparkle:shortVersionString>0.20.2</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="markdown"><![CDATA[# 0.20.2 · DSH 原会话跳转与确认提醒
+
+版本 0.20.2，构建号 40。需要 macOS 14 或更新版本。
+
+## 修复
+
+- 本地 DSH 会话支持跳回 Otty / iTerm2 的原终端面板。点击前重新校验会话进程；原会话已退出时，复制保留已知 profile 的恢复命令。
+- 增强监听安装入口优先识别 `dst` 使用的 `dsh-tui` profile，避免误装到独立的 `tui` 或 `web` profile。
+- 计划审阅、限时问题、含详细内容的问题和缺少完整参数的审批也会显示待处理提醒，保留原会话入口。新会话尚未写出日志时仍能收到提醒。
+- 普通确认问题与单次工具审批可在猫条处理。回答或取消后清理提醒，已取消问题不再重新弹回原客户端。
+- 改善工作卡片的辅助功能操作，展开后可直接访问内容。
+
+## 使用说明
+
+使用 `dst` 的用户需为 `dsh-tui` 安装或更新增强监听，并在当前任务完成后重启客户端。安装说明见 [DSH 接入](https://github.com/xiaoyan648/while-ai-works/blob/main/docs/hermes-dsh.md)。计划审阅等原生专属交互仍在原客户端完成。
+
+## 下载
+
+- M 系列 Mac：`While-AI-Works-0.20.2-macOS-arm64.dmg`
+- Intel Mac：`While-AI-Works-0.20.2-macOS-x86_64.dmg`
+- ZIP 用于应用内更新，也可手动安装。
+
+当前使用 ad-hoc 签名，尚无 Developer ID 签名或 Apple 公证。Otty 已做实机验证；iTerm2 完成定位格式检查，Intel 包完成交叉构建和归档检查，未做对应真机验收。
+]]></description>
+            <enclosure url="https://github.com/xiaoyan648/while-ai-works/releases/download/v0.20.2/While-AI-Works-0.20.2-macOS-x86_64.zip" length="32493081" type="application/octet-stream" sparkle:edSignature="fEfsYGvMPRT3LKTIKuFf7JwafZnrJBRwWIwoMvfLlj51MBIsme6u4ao53O+/E5/2eeudluZo4Kuyqtgb+JxCAQ=="/>
+        </item>
+        <item>
             <title>0.20.1</title>
             <pubDate>Sat, 24 Oct 2026 13:34:11 -0400</pubDate>
             <link>https://github.com/xiaoyan648/while-ai-works/releases/tag/v0.20.1</link>
@@ -76,45 +109,9 @@ Hermes 的原生提问、DSH 的限时问题与计划审阅仍在原客户端处
 ]]></description>
             <enclosure url="https://github.com/xiaoyan648/while-ai-works/releases/download/v0.20.0/While-AI-Works-0.20.0-macOS-x86_64.zip" length="32459706" type="application/octet-stream" sparkle:edSignature="heVaMuL1qS3TCiU6cOPbU0nrPO/Zw7KMPDFPhKMUq+XNHm94Ib21ZgulAwpcy+l6HGA5xx7fTsQRiX4+vVBrDA=="/>
         </item>
-        <item>
-            <title>0.19.1</title>
-            <pubDate>Mon, 19 Oct 2026 01:30:04 -0400</pubDate>
-            <link>https://github.com/xiaoyan648/while-ai-works/releases/tag/v0.19.1</link>
-            <sparkle:version>35</sparkle:version>
-            <sparkle:shortVersionString>0.19.1</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <description sparkle:format="markdown"><![CDATA[# 0.19.1 · 额度读取更稳，卡片切换更顺
-
-版本 0.19.1，构建号 35。需要 macOS 14 或更新版本。
-
-## Codex 额度读取
-
-- 官方额度请求超时由 3 秒调整为 20 秒，避免正常请求尚未返回就被判定超时。
-- 仅根据顶层配置和当前选中的配置档判断服务提供方，避免未启用的配置档或其他配置段误关官方额度读取。
-- 自定义中转站仍跳过官方账户额度接口；重复点击刷新时复用正在执行的刷新。
-
-## 猫条与工作卡片
-
-- 切换「会话／额度」页签时保留会话列表，减少重复创建和布局。
-- 合并卡片高度、桌面小猫和状态栏图标的重复刷新，仅在会话或交互数据发生变化时更新界面。
-- 保留 0.19.0 的主 Agent／子 Agent 层级展示、默认折叠和待处理提醒汇总。
-
-## 更新与安装
-
-0.17.1 及更新版本可在「设置 → 关于 → 检查更新」中升级。原有设置和鱼获保留。
-
-- M 系列 Mac：`While-AI-Works-0.19.1-macOS-arm64.dmg`
-- Intel Mac：`While-AI-Works-0.19.1-macOS-x86_64.dmg`
-
-退出旧版，打开 DMG，将 **While AI Works.app** 拖入 **Applications（应用程序）**。同时提供两种架构的 ZIP、签名更新清单和 `SHA256SUMS.txt`。
-
-应用采用 ad-hoc 签名，尚无 Developer ID 签名或 Apple 公证。更新包和更新清单验证 Ed25519 签名；首次安装可能需要在 macOS「隐私与安全性」中允许打开。Intel 版本为交叉编译，未经 Intel 真机验收。
-]]></description>
-            <enclosure url="https://github.com/xiaoyan648/while-ai-works/releases/download/v0.19.1/While-AI-Works-0.19.1-macOS-x86_64.zip" length="32278374" type="application/octet-stream" sparkle:edSignature="bhPBgYNv+k8yWRwj3RjjcEmM1bh+0uGTWb9Cr4m1AV1lCUhBM/fzEGQbuH9vP+giBwzEaiw7esaIQ0hFRZ4fBw=="/>
-        </item>
     </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: NKyRqptvfK5g2/5GKWUTGu1hTZWgOJglARHcXGp+y9Nbb+E8+OsSu6reHZzMpND4twjFKqInMLnhbS2poGd0CQ==
-length: 7916
+edSignature: dRXnAgEV+rv8y68I2NJRNIWUaynm8OxO5A/FBUzKLcPC6EEuIt0ITOGzd1rUhdzxU27xMKgVl8wsqR+Z18byCg==
+length: 7915
 -->

@@ -110,11 +110,17 @@ final class AgentHubDataController {
             }
         }
         state.openAgentSession = { [weak self] session in
-            if let url = session.navigationURL, NSWorkspace.shared.open(url) { return }
-            if let command = session.resumeCommand {
-                NSPasteboard.general.clearContents(); NSPasteboard.general.setString(command, forType: .string)
-                self?.state.agentMessageStatus[session.id] = "已复制原会话恢复命令，在原终端执行"
-            } else { self?.state.agentMessageStatus[session.id] = "客户端未提供原会话入口" }
+            Task { @MainActor [weak self] in
+                let local = session.localSessionLock != nil || session.localBridgeRoot != nil
+                let url = local ? await LocalAgentProcess.currentNavigationURL(for: session) : session.navigationURL
+                if let url, NSWorkspace.shared.open(url) {
+                    self?.state.agentMessageStatus[session.id] = "已打开原会话"; return
+                }
+                if let command = session.resumeCommand {
+                    NSPasteboard.general.clearContents(); NSPasteboard.general.setString(command, forType: .string)
+                    self?.state.agentMessageStatus[session.id] = "原会话当前不可定位，已复制恢复命令"
+                } else { self?.state.agentMessageStatus[session.id] = "客户端未提供原会话入口" }
+            }
         }
         state.sendAgentMessage = { session, text in
             await Task.detached(priority: .userInitiated) { CodexOriginalConversation.send(session: session, text: text) }.value

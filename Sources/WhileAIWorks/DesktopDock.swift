@@ -467,9 +467,9 @@ private struct DesktopDockTile: View {
         }
     }
     private var spokenLabel: String { "\(source.clientName)，\(state.desktopPetStatus(for: source))，\(quotaHint)" }
-    private var waiting: [AgentInteraction] { state.interactions(for: source) }
+    private var waiting: [AgentDockSessionRow] { state.sessionRows(for: [source]).filter { $0.event == .input || $0.event == .approval } }
     private var requestGlyph: String? {
-        waiting.isEmpty ? nil : waiting.count > 1 ? String(min(99, waiting.count)) : waiting[0].request.isQuestion ? "?" : "!"
+        waiting.isEmpty ? nil : waiting.count > 1 ? String(min(99, waiting.count)) : waiting[0].event == .input ? "?" : "!"
     }
     private var attentionLabel: String { waiting.isEmpty ? "" : "，\(waiting.count) 个待处理请求" }
     private var completionLabel: String { pawShown ? "，有新完成" : "" }
@@ -503,6 +503,10 @@ private struct DesktopDockTile: View {
         }
         .accessibilityLabel(spokenLabel + attentionLabel + completionLabel)
         .accessibilityIdentifier("cat-dock-" + source.rawValue)
+        .accessibilityAction {
+            action()
+            if state.desktopPetShowsStatus { state.focusAgentComposer() }
+        }
         .help(tooltip)
     }
     /// A completion that arrives while the dock is up is stamped: the swing comes to
@@ -1887,8 +1891,8 @@ private struct AgentDockSessionView: View, Equatable {
             }
         }
         switch displayEvent {
-        case .input: return "待回答"
-        case .approval: return "待审批"
+        case .input: return row.requests.isEmpty ? session.status : "待回答"
+        case .approval: return row.requests.isEmpty ? session.status : "待审批"
         case .finished: return "已完成"
         case .working: return phase.map { $0.title.replacingOccurrences(of: "正在", with: "") } ?? "运行中"
         case .recent: return session.status
@@ -1950,7 +1954,8 @@ private struct AgentDockSessionView: View, Equatable {
                         }.buttonStyle(.plain).foregroundStyle(.secondary).help("在独立浮窗中处理长内容")
                             .accessibilityLabel("展开待处理请求").accessibilityIdentifier("agent-interaction-expand")
                     }
-                } else if session.navigationURL != nil || session.resumeCommand != nil {
+                }
+                if session.navigationURL != nil || session.resumeCommand != nil {
                     Button { state.openAgentSession(session) } label: {
                         Image(systemName: session.navigationURL != nil ? "arrow.up.forward" : "doc.on.doc")
                             .font(.system(size: 10)).frame(width: 24, height: 24)
