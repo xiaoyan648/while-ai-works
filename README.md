@@ -68,6 +68,7 @@ https://github.com/user-attachments/assets/db49fc4e-1adf-49a4-b173-da68e032c6b1
 
 | 版本 | 这次带来了什么 |
 | --- | --- |
+| [**0.20.3**](docs/releases/0.20.3.md) | **复用 Claude 已有登录**：优先读取桌面端订阅额度，再尝试 Claude Code；启动和监听开关静默检查，需要授权时由用户手动操作。 |
 | [**0.20.2**](docs/releases/0.20.2.md) | **DSH 原会话跳转与确认提醒**：接好 `dsh-tui` 监听，返回原终端面板，补齐计划审阅与限时问题提醒。 |
 | [**0.20.1**](docs/releases/0.20.1.md) | **DSH 桌面读取修复**：支持 fnm、nvm、Volta 的 Node 安装目录，纠正“等待连接”的误导状态。 |
 | [**0.20.0**](docs/releases/0.20.0.md) | **Hermes / DSH 加入猫条**：本机会话与 Token、增强监听和工具审批；设置按 Agent 整理，开关对齐、接入配置集中管理。 |

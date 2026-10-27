@@ -16,6 +16,10 @@ interaction_architecture=$(lipo -archs "$app_path/Contents/Resources/while-ai-wo
 if [[ "$interaction_architecture" != "$architecture" ]]; then
     echo "Application and interaction helper architectures differ" >&2; exit 1
 fi
+claude_usage_architecture=$(lipo -archs "$app_path/Contents/Resources/while-ai-works-claude-usage")
+if [[ "$claude_usage_architecture" != "$architecture" ]]; then
+    echo "Application and Claude usage helper architectures differ" >&2; exit 1
+fi
 codesign --verify --deep --strict "$app_path"
 release_dir="$task_root/dist/releases/$version"
 mkdir -p "$release_dir"

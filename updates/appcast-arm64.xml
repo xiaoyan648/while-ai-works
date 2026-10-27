@@ -6,6 +6,42 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <channel>
         <title>While AI Works</title>
         <item>
+            <title>0.20.3</title>
+            <pubDate>Tue, 27 Oct 2026 04:21:50 -0400</pubDate>
+            <link>https://github.com/xiaoyan648/while-ai-works/releases/tag/v0.20.3</link>
+            <sparkle:version>43</sparkle:version>
+            <sparkle:shortVersionString>0.20.3</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description sparkle:format="markdown"><![CDATA[# 0.20.3 · 复用 Claude 已有登录
+
+版本 0.20.3，构建号 43。需要 macOS 14 或更新版本。
+
+## 改进
+
+- 查询订阅额度时优先复用 Claude 桌面端当前账户的登录，再尝试 Claude Code 的订阅登录，无需保持命令行客户端运行。
+- 启动猫条、开启关注或调整 Claude 监听只做静默检查，不自动弹出登录或钥匙串授权。
+- 设置和猫条用量页提供手动“复用 Claude 桌面登录”入口。只有用户点击后才申请系统读取授权；没有可复用登录时，可手动登录订阅账户。
+- 区分尚未授权、登录过期、网络查询失败等情况，不再把读取失败统一显示为“已退出登录”。
+- 核对当前账号和组织，避免切换账户后显示旧账户额度；凭据仅用于向 Anthropic 查询，不复制到猫条设置。
+
+## 使用说明
+
+Claude 已登录但猫条尚无读取权限时，在设置的 Claude 接入配置或猫条用量页点击“复用 Claude 桌面登录”，由用户完成 macOS 钥匙串授权。允许后可后台刷新；如果原登录过期，按提示打开 Claude 更新登录状态。
+
+桌面读取兼容当前 Claude 客户端的本地格式，格式变化时会停止读取并尝试 Claude Code。API Key 或中转站认证不等于订阅账户登录；本机会话 Token 统计仍可独立显示。
+
+## 下载
+
+- M 系列 Mac：`While-AI-Works-0.20.3-macOS-arm64.dmg`
+- Intel Mac：`While-AI-Works-0.20.3-macOS-x86_64.dmg`
+- ZIP 用于应用内更新，也可手动安装。
+
+当前使用 ad-hoc 签名，尚无 Developer ID 签名或 Apple 公证。macOS 可能在应用签名变化后要求重新授权读取钥匙串；只有手动操作才会触发。Intel 包仅做交叉构建和归档检查，未做 Intel 真机验收。
+]]></description>
+            <enclosure url="https://github.com/xiaoyan648/while-ai-works/releases/download/v0.20.3/While-AI-Works-0.20.3-macOS-arm64.zip" length="34869124" type="application/octet-stream" sparkle:edSignature="duKC+SfUe3n0cywlwCDrNP/vxkEEn1Ntg/I3emU54kaq3idl6+XNdqQx9JE5zqdpqIeWpvVXn0vXlqPf8aeFBA=="/>
+        </item>
+        <item>
             <title>0.20.2</title>
             <pubDate>Tue, 27 Oct 2026 02:26:36 -0400</pubDate>
             <link>https://github.com/xiaoyan648/while-ai-works/releases/tag/v0.20.2</link>
@@ -68,53 +104,9 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
 ]]></description>
             <enclosure url="https://github.com/xiaoyan648/while-ai-works/releases/download/v0.20.1/While-AI-Works-0.20.1-macOS-arm64.zip" length="31992456" type="application/octet-stream" sparkle:edSignature="gG2rJ6rnAARncoiQd1AgoJmsni6AShWmxYqJoiggwHuOf/YOG2X2IHImyzmi23v72TedcLmVMOTdrssh46xrAA=="/>
         </item>
-        <item>
-            <title>0.20.0</title>
-            <pubDate>Sat, 24 Oct 2026 12:16:12 -0400</pubDate>
-            <link>https://github.com/xiaoyan648/while-ai-works/releases/tag/v0.20.0</link>
-            <sparkle:version>37</sparkle:version>
-            <sparkle:shortVersionString>0.20.0</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <description sparkle:format="markdown"><![CDATA[# 0.20.0 · Hermes / DSH 加入猫条
-
-版本 0.20.0，构建号 37。需要 macOS 14 或更新版本。
-
-## 新增 Hermes 与 DeepSeek Harness
-
-- 猫条显示 Hermes、DSH 的官方图标、工作状态、会话列表、完成提醒和本机 Token 用量。
-- 本地记录独立读取，不等待账户额度接口。使用自备 API Key 时，不显示无法取得的账户余额或剩余额度。
-- 按真实委托关系展示子 Agent，复制恢复命令可回到原客户端继续会话。
-- 可选增强监听补充准确状态和待处理提醒。DSH 支持普通结构化提问与一次性工具审批；Hermes 显式配置官方 approval transport 后支持一次性工具审批。
-- 请求取消、进程退出或超时后失效；无法接管时回到原客户端，不自动批准。
-
-Hermes 的原生提问、DSH 的限时问题与计划审阅仍在原客户端处理。本版尚未接入两者的回复预览和猫条主动发送新消息。已在 Hermes v0.22.5、DSH 0.2.1-rc.2 上完成本机真实模型与审批链路验证，上游接口变化时需重新核对兼容性。
-
-## 设置更清楚
-
-- 分开显示“小游戏启动时机”“关注的 Agent”“授权与提问”。每个 Agent 只出现一次，配置按钮与关注开关统一对齐。
-- 修复 Codex、Claude 设置行重复或开关缺失的问题，移除多余空白分隔行。
-- 安装、重新安装和移除放入各 Agent 的配置详情，明确区分工作状态监听与授权交互监听。
-- 区分未配置、配置不完整、组件缺失、配置已写入和收到监听事件。导出插件不会被显示为已经接通。
-
-首次使用 Hermes / DSH，在“关注的 Agent”中开启对应开关，再进入“配置…”查看增强监听接入说明。安装、重装和移除按原客户端及实际 profile 执行；不会覆盖已有 API Key 或替代原审批机制。
-
-## 更新与安装
-
-0.17.1 及更新版本可通过“设置 → 关于 → 检查更新”升级，原有设置和鱼获保留。
-
-- M 系列 Mac：`While-AI-Works-0.20.0-macOS-arm64.dmg`
-- Intel Mac：`While-AI-Works-0.20.0-macOS-x86_64.dmg`
-
-退出旧版，打开 DMG，将 **While AI Works.app** 拖入 **Applications（应用程序）**。同时提供两种架构的 ZIP、签名更新清单和 `SHA256SUMS.txt`。
-
-应用采用 ad-hoc 签名，尚无 Developer ID 签名或 Apple 公证；更新包和更新清单使用 Ed25519 签名验证。Intel 版本为交叉编译，未经 Intel 真机验收。
-]]></description>
-            <enclosure url="https://github.com/xiaoyan648/while-ai-works/releases/download/v0.20.0/While-AI-Works-0.20.0-macOS-arm64.zip" length="31984176" type="application/octet-stream" sparkle:edSignature="VBJE6elvm19z72ucIXCQI63yPUx9nFjwIdd9UNJY600HvvM1MRADTA/Rb3IZVsEv0shunct+KkclGonc93Y5Bg=="/>
-        </item>
     </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: qCq3o4cmDqZxeoNjxWIb+C9PiDm67rgK553BM7+zgraEOaN1+EzZM/uh85Y5LvaAMNdkKudcq8+yZZNOdKpwAg==
-length: 8149
+edSignature: /OQS/ZE1rQ/K2UbmGmUkiWweCdmzFvj3KdlHyETwo+5oYVpR9BzdmOCk/PVRxpoipKNLN0Wn6RvoKEaDnkzMCA==
+length: 7444
 -->

@@ -6,7 +6,7 @@
 
 只读检查本机 Claude 的 `app.asar`：`.vite/build/index.chunk-OfNecTbZ.js` 中的 `readPlanUsage` 使用已保存的 Code OAuth bearer 请求 `https://api.anthropic.com/api/oauth/usage`，附带 `anthropic-beta: oauth-2025-04-20`。主 bundle 中的 OAuth 实现使用 `config.json` 的 `oauth:tokenCache` / `oauth:tokenCacheV2`，按账户、client、组织、主机、scope 组合键保存加密缓存；`/api/oauth/profile` 用于核对账号和组织。
 
-REA 静态分析 Evidence：`ev_ce0b70aa628adae220d39778795580968780eb3b564725dfa621f8b22f3f2553`，ASAR SHA-256 `b2dfbbb40325d978dcb7561ad12a6f9bc199f8f46b7d3d2897af74ce8965d68a`。仅选择额度模块进行静态图分析，其他依赖通过本地只读文本检查；不宣称覆盖整个程序。包内部分 unpacked native 文件和 ASAR 声明的摘要不一致，工具标记为不可信；未执行这些文件，额度模块观察只代表静态实现，真实查询仍需验证。
+REA 静态分析 Evidence：`ev_ce0b70aa628adae220d39778795580968780eb3b564725dfa621f8b22f3f2553`，ASAR SHA-256 `b2dfbbb40325d978dcb7561ad12a6f9bc199f8f46b7d3d2897af74ce8965d68a`。仅选择额度模块进行静态图分析，其他依赖通过本地只读文本检查；不宣称覆盖整个程序。包内部分 unpacked native 文件和 ASAR 声明的摘要不一致，工具标记为不可信；未执行这些文件。真实额度查询另行完成了下述实机验证。
 
 Safe Storage 格式参考 Chromium [macOS OSCrypt 源码](https://chromium.googlesource.com/chromium/src/+/93d0dcd55046ac06154f4d642c26d7697c4b0304/components/os_crypt/sync/os_crypt_mac.mm)。实现使用系统 Security、CommonCrypto、CryptoKit 和 SQLite，没有新增外部依赖。
 
@@ -26,4 +26,11 @@ Safe Storage 格式参考 Chromium [macOS OSCrypt 源码](https://chromium.googl
 - `scripts/check-claude-subscription.sh`：启动和开关不会登录或请求钥匙串授权，手动复用、桌面优先、CLI 回退、不需要 CLI 也能读取桌面额度、缓存合并、实际 provider 额度输出，及原有 CLI 登录/取消/超时清理。
 - `scripts/check-agent-data.sh` 与 `scripts/check-ui.sh --claude-subscription`：既有额度语义回归及设置/猫条手动入口的明暗布局。
 
-本机静默读取已实际返回 `locked`，未弹出钥匙串授权。系统目前未允许新的 helper 读取 Claude Safe Storage，所以真实远端额度查询尚不能宣称通过。用户在设置或猫条用量页手动允许后，才能验收真实额度。该授权复用现有登录，不要求重新输入 Claude 账户。
+2026-10-27 在本机完成真实验证：
+
+- 未授权时，启动及关闭/开启 Claude 关注均静默返回 `locked`，没有登录或钥匙串弹窗。
+- 用户通过设置中的“复用 Claude 桌面登录”手动完成系统授权后，独立 helper 静默返回 `available`，真实远端 profile 与 usage 校验通过；未重新登录 Claude。
+- 猫条显示订阅计划和当前会话/每周剩余额度，与 Claude 桌面端的每周已用比例一致。手动刷新成功。
+- 退出并重新启动同一安装包后，自动恢复真实额度，没有授权弹窗；重启以来的 Security 日志没有新的授权提示。
+
+实机记录与截图保存在本机 `.build/claude-desktop-reuse/`，不发布账户标识或凭据。钥匙串授权取决于用户选择及应用签名；客户端或 helper 签名变化后，系统可能要求再次手动授权读取，这不等于重新登录 Claude。
