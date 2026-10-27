@@ -133,6 +133,24 @@ import WhileCore
         await eventually({ refreshed == 3 }, "installing and logging into a previously missing CLI refreshes the provider")
         controller.stop()
 
+        let desktopLocked = ClaudeEngineAuthStatus(loggedIn: false, authMethod: "desktop_locked", subscriptionType: nil)
+        let desktopSignedIn = ClaudeEngineAuthStatus(loggedIn: true, authMethod: "desktop", subscriptionType: "pro")
+        var connects = 0
+        let desktopController = ClaudeSubscriptionController(state: state, locate: {
+            .init(check: { desktopLocked }, login: { fatalError("desktop access must not start CLI login") }, connectDesktop: {
+                connects += 1
+                return desktopSignedIn
+            })
+        }, authenticated: { refreshed += 1 })
+        await eventually({ state.claudeSubscriptionConnection == .needsDesktopAccess }, "locked desktop login is distinct from signed out")
+        state.agentInteractionsEnabled.toggle()
+        await eventually({ state.claudeSubscriptionConnection == .needsDesktopAccess }, "switch remains a silent check")
+        precondition(connects == 0, "startup and switches must never ask for keychain authorization")
+        state.connectClaudeDesktop()
+        await eventually({ state.claudeSubscriptionConnection == .signedIn }, "manual keychain access reuses login")
+        precondition(connects == 1 && refreshed == 4)
+        desktopController.stop()
+
         // Exercise the actual process adapter against an isolated fake CLI, including no trailing newline,
         // signed-out exit 1, malformed output, login exit codes, timeout and process cancellation.
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("Claude Check ' " + UUID().uuidString)
@@ -183,6 +201,53 @@ import WhileCore
         pending.cancel()
         do { _ = try await pending.value; fatalError("cancellation must propagate") } catch is CancellationError { }
         await eventually({ kill(cancelledPID, 0) != 0 }, "cancelled login process must stop")
+        // The real resolver prefers Desktop, falls back to Code, and never labels a transient failure as logout.
+        let helper = root.appendingPathComponent("desktop-helper")
+        let replyURL = root.appendingPathComponent("reply.json")
+        try ("#!/bin/sh\ncd \"$(dirname \"$0\")\"\necho call >> desktop-calls\n/bin/cat reply.json\n").write(to: helper, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: helper.path)
+        let desktop = ClaudeDesktopUsageClient(helper: helper)
+        func reply(_ status: ClaudeDesktopUsageReply.Status) async throws {
+            let value = ClaudeDesktopUsageReply(status: status, limits: Data(#"{"five_hour":{"utilization":47},"seven_day":{"utilization":27}}"#.utf8),
+                                                account: "11111111-1111-4111-8111-111111111111", organization: "22222222-2222-4222-8222-222222222222", plan: "pro")
+            try JSONEncoder().encode(value).write(to: replyURL)
+            await desktop.invalidate()
+        }
+        try setMode("bad"); try await reply(.available)
+        let preferred = await ClaudeSubscriptionController.existingLogin(desktop: desktop, engine: engine)
+        precondition(preferred?.authMethod == "desktop" && preferred?.loggedIn == true)
+        let noCLI = await ClaudeSubscriptionController.existingLogin(desktop: desktop, engine: nil)
+        precondition(noCLI?.authMethod == "desktop", "Desktop does not require Claude Code installation")
+        async let repeatedA = desktop.fetch()
+        async let repeatedB = desktop.fetch()
+        _ = await (repeatedA, repeatedB)
+        let callCount = try String(contentsOf: root.appendingPathComponent("desktop-calls"), encoding: .utf8).split(separator: "\n").count
+        precondition(callCount == 1, "connection and collector share the desktop read")
+        let ledger = UsageLedger.inMemory()
+        let provider = ClaudeCodeProvider(engine: nil, transcripts: ClaudeTranscriptStore(roots: [], ledger: ledger),
+                                          history: QuotaHistoryStore(ledger: ledger, scope: "desktop-test"), desktopUsage: desktop)
+        await provider.refreshAccountUsage(historyHours: 24)
+        let report = try await provider.fetchUsage(agents: [], historyHours: 24)
+        precondition(report.snapshots.count == 2 && report.snapshots.contains { $0.remainingPct == 53 }, "provider publishes real desktop quota windows")
+        precondition(report.accounts?["Claude"]?.count == 1, "desktop quota is scoped to its verified account")
+        try setMode("in"); try await reply(.locked)
+        let fallback = await ClaudeSubscriptionController.existingLogin(desktop: desktop, engine: engine)
+        precondition(ClaudeSubscriptionConnection.reading(fallback) == .signedIn, "existing CLI subscription works without desktop authorization")
+        try setMode("out")
+        let access = await ClaudeSubscriptionController.existingLogin(desktop: desktop, engine: engine)
+        precondition(ClaudeSubscriptionConnection.reading(access) == .needsDesktopAccess)
+        try await reply(.expired)
+        let stale = await ClaudeSubscriptionController.existingLogin(desktop: desktop, engine: engine)
+        precondition(ClaudeSubscriptionConnection.reading(stale) == .desktopExpired)
+        try await reply(.failed)
+        let offline = await ClaudeSubscriptionController.existingLogin(desktop: desktop, engine: engine)
+        precondition(ClaudeSubscriptionConnection.reading(offline) == .checkFailed)
+        try await reply(.missing)
+        let missing = await ClaudeSubscriptionController.existingLogin(desktop: desktop, engine: engine)
+        precondition(ClaudeSubscriptionConnection.reading(missing) == .needsLogin)
+        let neither = await ClaudeSubscriptionController.existingLogin(desktop: desktop, engine: nil)
+        precondition(ClaudeSubscriptionConnection.reading(neither) == .engineMissing)
+
         print("ClaudeSubscriptionChecks: startup, switches, deduplication, verified refresh, failures and subprocess cleanup passed")
     }
 }

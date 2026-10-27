@@ -8,7 +8,7 @@ The native app builds these modules directly with Swift 6 through
 `scripts/build-agent-hud.sh`. This avoids the upstream manifest's unsupported
 `SwiftSetting.swiftLanguageMode` on the current toolchain without editing upstream.
 Local patches: DeepSeekLocator also discovers fnm, nvm and Volta Node installations for Finder launches; the missing-runtime error describes local session decoding.
-ClaudeEngineUsageClient exposes bounded authentication checks and an explicit subscription-login command through the official CLI. The app decodes authentication metadata only; authorization and credential storage remain with Claude Code. The missing-login message no longer claims the desktop app signed out.
+ClaudeEngineUsageClient exposes bounded authentication checks and an explicit subscription-login command through the official CLI. The CLI path decodes authentication metadata only; its authorization and credential storage remain with Claude Code. ClaudeCodeProvider now prefers a bounded desktop helper, which reads existing encrypted Desktop OAuth state without modifying it. The helper returns quota and account metadata only; background reads prohibit Keychain UI. Desktop credential permission and new CLI login are separate explicit user actions. The missing-login message no longer claims the desktop app signed out.
 
 Only Codex and Claude account providers are instantiated. DSH local transcript decoding is also used. The upstream desktop UI,
 hook installation, remote sessions, other providers and demo data are not started.

@@ -20,13 +20,17 @@ Claude 原会话入口使用 provider 给出的 native destination；没有入�
 
 安装是设置中的显式操作，不随 provider 启动而自动修改配置。配置更新先以私有临时文件写入，保留原权限、核对配置未并发改变后原子替换；未知格式不重写。保留其他 hooks、环境与权限模式。Hook 传输完成只表示交还客户端，不声称工具成功执行。隔离检查使用假 owner 和假 Hook payload，不提交真实权限决策。
 
-## Claude 官方引擎查询
+## Claude 登录复用与额度查询
 
-Claude 额度沿用 `ClaudeCodeProvider.standard`：启动本机 `claude`，以 stream-json 向引擎发出 `get_usage` 控制请求。查询关闭 hooks，不发送模型提示词；引擎自行处理登录和联网。会话与 tokens 仍读本地记录。应用不包含桌面钥匙串解密或直接请求订阅 HTTP 端点的备用路径。
+Claude 额度优先复用桌面端已有订阅登录，其次使用本机 Claude Code 的 `get_usage` 控制请求。两条路径均不发送模型提示词。会话与 tokens 仍读本地记录；API key 或中转站登录不等同于订阅额度。
 
-启动应用、修改 Claude 关注/交互监听开关、启动猫条及修改 Claude 接入配置时，以额度查询相同的引擎和环境运行 `claude auth status --json`。没有登录时，在设置和猫条额度页提供“登录 Claude 订阅”；点击后才运行官方 `claude auth login --claudeai`，由用户完成浏览器授权。成功退出后再次确认登录，再重建数据采集以立即读取额度，避免旧的未登录结果与一分钟查询间隔阻碍刷新。检查失败、未登录、非订阅登录、登录失败和超时分别显示；取消、关闭关注或退出应用会结束本应用启动的登录子进程。前台重新激活及手动检测也可识别外部终端完成的登录。
+桌面路径由独立的 `while-ai-works-claude-usage` helper 读取 Claude `config.json` 的加密 OAuth 缓存和 Cookies 中的当前组织。仅选择当前账户、当前组织、生产 API 主机及 Code 所需 scope 的未过期 token；新版缓存的撤销记录覆盖旧版。通过系统钥匙串取得 Safe Storage 密钥，在子进程内解密，查询桌面客户端使用的 `https://api.anthropic.com/api/oauth/profile` 和 `/api/oauth/usage`，确认远端账户身份，并在查询后复核本地身份。禁止重定向，限制响应大小和耗时。helper 仅返回额度与账户标识，不输出或保存 token、刷新 token、Cookie 或密钥，也不修改 Claude 登录文件。过期 token 交由 Claude 自己刷新；本应用不轮换其 refresh token。
 
-切换 API 供应商和完成 Claude 订阅登录是两步；`--console` 是 API 计费。没有自动导入终端环境 token 或桌面端凭据；用户的环境和登录目录保持原样。复制的终端登录命令使用相同的引擎路径与配置目录。若应用继承了中转站环境，命令行登录也未必能提供订阅额度；不要把桌面 App 的 Pro 资料或仅 `loggedIn: true` 当作额度已可读取的证据。
+启动、关注/交互监听开关变化、启动猫条以及前台重新激活时只做静默检测。后台 helper 禁用 macOS 旧式钥匙串交互，并使用禁止 UI 的读取参数；即使读取卡住，也会被父进程限时结束。连接检测和额度采集共用一分钟缓存和进行中的请求。桌面端不可用时尝试 Claude Code，只有两者都没有可用登录时才出现手动登录入口。
+
+若系统阻止读取已有桌面登录，在设置与猫条用量页显示“复用 Claude 桌面登录”；仅点击此按钮才允许系统钥匙串授权。这是读取已有登录的授权，不是重新登录 Claude。若需要后台持续刷新，可在系统提示中选择“始终允许”；只允许一次时，之后的静默访问仍可能被拒绝。没有可复用登录时，“登录 Claude 订阅”按钮才启动官方 `claude auth login --claudeai` 浏览器流程。授权、登录、取消与重新检测均为明确的手动操作；启用监听不会打开授权窗口。网络失败、权限不足、凭据过期分别显示，不误报桌面端退出登录。
+
+桌面缓存与额度端点是当前客户端的实现接口，并非承诺稳定的公开第三方 API。格式变化时停止该读取并回退官方 CLI；不把历史用量或账户计划资料当成实时额度。实现参考见 [Claude 桌面登录复用验证](claude-desktop-reuse.md)。
 
 Codex 的状态、回复和会话 tokens 来自本地 `sessions` / `archived_sessions`。账户额度另经本机官方 `codex app-server --listen stdio://` 的 `account/rateLimits/read` 获取，会由官方客户端联网刷新；应用不自行提取 Codex token 拼装 HTTP 请求。该方法在 [OpenAI 官方 App Server 文档](https://learn.chatgpt.com/docs/app-server) 中公开。当前 provider 自动查询约 300–360 秒一次，collector 限制手动账户刷新最小间隔 60 秒。额度查询不发起模型 turn，但公开接口与低频查询不构成账户风控的零风险保证。
 
@@ -34,7 +38,7 @@ Codex 的状态、回复和会话 tokens 来自本地 `sessions` / `archived_ses
 
 `check-agent-data.sh` 验证剩余量语义、失效读数、重置时间、缓存维度、预览隐私、UUID 入口、canonical turn / idle / malformed 状态，以及原 owner 回执匹配。不会输出真实凭据。
 
-`check-claude-subscription.sh` 验证启动/开关触发、检查和登录去重、登录后刷新、外部登录、失败/超时及子进程清理；使用隔离假 CLI，不替用户登录。`--live-auth-probe` 只报告本机检测状态。`check-ui.sh --claude-subscription` 渲染设置和猫条的登录入口、等待、失败与缺少引擎状态；真实浏览器授权和订阅额度仍需登录后验收。
+`check-claude-subscription.sh` 验证静默启动/开关、仅手动授权、桌面优先与 CLI 回退、请求去重、失败及子进程清理。`check-claude-desktop-usage.sh` 使用加密 fixture、SQLite Cookie fixture 和模拟 HTTP 响应验证账户隔离、过期/撤销、查询及输出不含凭据；`--live-silent` 只执行无弹窗的本机读取。`check-ui.sh --claude-subscription` 渲染设置和猫条的登录复用、等待、失败与缺少登录状态。真实系统钥匙串授权只能由用户在设置或用量页手动触发。
 
 `--ipc-probe <thread-uuid>` 可读取真实 owner snapshot 并准备请求，**不会提交**。原会话能力以当前 owner snapshot 为准。没有向用户正在运行的会话发送测试消息；因此真实消息送达端到端尚未验收。
 

@@ -11,6 +11,7 @@ public struct ClaudeCodeProvider: UsageProvider, LedgerRecording {
     /// Engine queries spawn a process, so they run at most this often regardless of the poll interval.
 
     private let engine: ClaudeEngineUsageClient?
+    private let desktopUsage: ClaudeDesktopUsageClient?
     private let engineCache = EngineUsageCache()
     private let transcripts: ClaudeTranscriptStore
     private let history: QuotaHistoryStore
@@ -29,6 +30,7 @@ public struct ClaudeCodeProvider: UsageProvider, LedgerRecording {
         home: String = "",
         sessionOriginsDirectory: URL? = nil,
         desktopSessions: ClaudeDesktopSessions? = nil,
+        desktopUsage: ClaudeDesktopUsageClient? = nil,
         clock: @escaping @Sendable () -> Date = { Date() }
     ) {
         self.engine = engine
@@ -38,6 +40,7 @@ public struct ClaudeCodeProvider: UsageProvider, LedgerRecording {
         self.home = home
         self.sessionOriginsDirectory = sessionOriginsDirectory
         self.desktopSessions = desktopSessions
+        self.desktopUsage = desktopUsage
         self.clock = clock
     }
 
@@ -55,7 +58,8 @@ public struct ClaudeCodeProvider: UsageProvider, LedgerRecording {
             accountProfileURL: ClaudeSubscription.accountProfileURL,
             home: ClaudeSubscription.home,
             sessionOriginsDirectory: ClaudeSessionOrigins.directory,
-            desktopSessions: ClaudeDesktopSessions()
+            desktopSessions: ClaudeDesktopSessions(),
+            desktopUsage: .shared
         )
     }
 
@@ -72,7 +76,7 @@ public struct ClaudeCodeProvider: UsageProvider, LedgerRecording {
         let now = clock()
         do {
             let profileURL = accountProfileURL
-            let (result, fetchedAt) = try await engineCache.fetch(client: engine, now: now) {
+            let (result, fetchedAt) = try await engineCache.fetch(client: engine, desktop: desktopUsage, now: now) {
                 profileURL.flatMap { try? Data(contentsOf: $0) }
             }
             let account = account(for: result)
@@ -283,10 +287,16 @@ actor EngineUsageCache {
     }
 
     /// The profile is read before and after the query; a login change in between discards the reading.
-    func fetch(client: ClaudeEngineUsageClient?, now: Date,
+    func fetch(client: ClaudeEngineUsageClient?, desktop: ClaudeDesktopUsageClient? = nil, now: Date,
                profile: @Sendable () -> Data? = { nil }) async throws -> (Reading, Date) {
         let result: Result<Reading, any Error>
         do {
+            if let desktop, let reading = await desktop.fetch().reading {
+                try Task.checkCancellation()
+                last = (now, .success(reading))
+                return (reading, now)
+            }
+            try Task.checkCancellation()
             guard let client else { throw ClaudeDataError.engineNotFound }
             let before = profile()
             let usage = try await client.fetch()

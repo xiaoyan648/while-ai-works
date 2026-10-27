@@ -32,13 +32,13 @@ import AgentHUDCore
             state.desktopDockTab = .quota
             for dark in [false, true] {
                 let theme = dark ? "dark" : "light"
-                for (name, status) in [("needs-login", ClaudeSubscriptionConnection.needsLogin), ("signing-in", .signingIn), ("failed", .loginFailed), ("missing", .engineMissing)] {
+                for (name, status) in [("needs-login", ClaudeSubscriptionConnection.needsLogin), ("signing-in", .signingIn), ("failed", .loginFailed), ("missing", .engineMissing), ("desktop-access", .needsDesktopAccess), ("desktop-connecting", .connectingDesktop), ("desktop-expired", .desktopExpired)] {
                     state.claudeSubscriptionConnection = status
                     try render(ClaudeSubscriptionConnectionView(state: state, compact: true).padding(14),
                                name: "claude-subscription-\(name)-\(theme)", dark: dark,
                                size: NSSize(width: 390, height: 130), background: .windowBackgroundColor)
                 }
-                state.claudeSubscriptionConnection = .needsLogin
+                state.claudeSubscriptionConnection = .needsDesktopAccess
                 try render(AgentConfigurationView(state: state, source: .claude, snapshot: .init(loaded: true), refresh: {}, dismiss: {}),
                            name: "claude-subscription-settings-\(theme)", dark: dark,
                            size: NSSize(width: 500, height: 580), background: .windowBackgroundColor)

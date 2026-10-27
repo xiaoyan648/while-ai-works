@@ -6,15 +6,19 @@ import AgentHUDCore
 enum ClaudeSubscriptionConnection: Equatable {
     case inactive, checking, needsLogin, signedIn, otherLogin, engineMissing, checkFailed
     case signingIn, loginFailed, loginTimedOut
+    case needsDesktopAccess, connectingDesktop, desktopExpired
 
     var message: String {
         switch self {
         case .inactive: return "开启 Claude 关注后自动检查订阅登录。"
         case .checking: return "正在检查 Claude 订阅登录…"
-        case .needsLogin: return "猫条尚未连接 Claude 订阅。桌面端登录不代表命令行已登录。"
-        case .signedIn: return "已检测到 Claude 订阅登录，额度由客户端提供。"
+        case .needsLogin: return "尚未找到可复用的 Claude 订阅登录，可在这里手动登录。"
+        case .signedIn: return "正在复用已有的 Claude 登录查询订阅额度。"
+        case .needsDesktopAccess: return "发现 Claude 桌面端保存的登录。授权读取系统钥匙串后可检查并复用，无需重复登录。"
+        case .connectingDesktop: return "请在系统钥匙串提示中允许读取 Claude 登录，以便复用现有订阅。"
+        case .desktopExpired: return "Claude 桌面端的订阅凭据需要刷新，请打开 Claude 后重新检测。"
         case .otherLogin: return "已检测到命令行登录，但未确认订阅；API 或中转站登录可能无法提供订阅额度。"
-        case .engineMissing: return "未找到 claude 命令，请先安装 Claude Code。"
+        case .engineMissing: return "未找到可用的桌面订阅登录或 Claude Code，可先打开 Claude 登录。"
         case .checkFailed: return "暂时无法检查 Claude 登录，可以重新检测。"
         case .signingIn: return "请在浏览器完成 Claude 授权，完成后自动刷新额度。"
         case .loginFailed: return "登录未完成，请重试；也可复制命令到终端登录。"
@@ -31,6 +35,12 @@ enum ClaudeSubscriptionConnection: Equatable {
 
     static func reading(_ status: ClaudeEngineAuthStatus?) -> Self {
         guard let status else { return .checkFailed }
+        switch status.authMethod {
+        case "desktop_locked": return .needsDesktopAccess
+        case "desktop_expired": return .desktopExpired
+        case "engine_missing": return .engineMissing
+        default: break
+        }
         guard status.loggedIn else { return .needsLogin }
         return status.subscriptionType?.isEmpty == false ? .signedIn : .otherLogin
     }
@@ -43,6 +53,7 @@ final class ClaudeSubscriptionController {
     struct Client {
         var check: () async -> ClaudeEngineAuthStatus?
         var login: () async throws -> ClaudeEngineLoginResult
+        var connectDesktop: (() async -> ClaudeEngineAuthStatus?)? = nil
     }
 
     private let state: AppState
@@ -64,6 +75,7 @@ final class ClaudeSubscriptionController {
         self.authenticated = authenticated
         state.checkClaudeSubscription = { [weak self] in self?.check() }
         state.loginClaudeSubscription = { [weak self] in self?.login() }
+        state.connectClaudeDesktop = { [weak self] in self?.connectDesktop() }
         state.cancelClaudeSubscriptionLogin = { [weak self] in self?.cancelLogin() }
         state.$selectedSources.map { $0.contains(.claude) }.removeDuplicates()
             .combineLatest(state.$desktopPetEnabled.removeDuplicates(), state.$agentInteractionsEnabled.removeDuplicates())
@@ -77,9 +89,35 @@ final class ClaudeSubscriptionController {
     }
 
     nonisolated static func standardClient() -> Client? {
-        guard let executable = ClaudeEngineLocator.find() else { return nil }
-        let engine = ClaudeEngineUsageClient(executable: executable, workingDirectory: ClaudeEngineUsageClient.defaultWorkingDirectory)
-        return Client(check: { await engine.authStatus() }, login: { try await engine.signInToSubscription() })
+        let engine = ClaudeEngineLocator.find().map {
+            ClaudeEngineUsageClient(executable: $0, workingDirectory: ClaudeEngineUsageClient.defaultWorkingDirectory)
+        }
+        return Client(check: {
+            await existingLogin(desktop: .shared, engine: engine, refresh: true)
+        }, login: {
+            guard let engine else { return .failed }
+            return try await engine.signInToSubscription()
+        }, connectDesktop: {
+            await withTaskCancellationHandler {
+                _ = await ClaudeDesktopUsageClient.shared.fetch(authorize: true)
+                return await existingLogin(desktop: .shared, engine: engine)
+            } onCancel: {
+                Task { await ClaudeDesktopUsageClient.shared.invalidate() }
+            }
+        })
+    }
+
+    nonisolated static func existingLogin(desktop: ClaudeDesktopUsageClient, engine: ClaudeEngineUsageClient?, refresh: Bool = false) async -> ClaudeEngineAuthStatus? {
+        let reply = await desktop.fetch(refresh: refresh)
+        if reply.status == .available { return .init(loggedIn: true, authMethod: "desktop", subscriptionType: reply.plan ?? "subscription") }
+        let status = await engine?.authStatus()
+        if status?.loggedIn == true, status?.subscriptionType?.isEmpty == false { return status }
+        switch reply.status {
+        case .locked: return .init(loggedIn: false, authMethod: "desktop_locked", subscriptionType: nil)
+        case .expired: return .init(loggedIn: false, authMethod: "desktop_expired", subscriptionType: nil)
+        case .failed, .accountChanged: return nil // A network or schema failure is not evidence of logout.
+        default: return status ?? (engine == nil ? .init(loggedIn: false, authMethod: "engine_missing", subscriptionType: nil) : nil)
+        }
     }
 
     nonisolated static func terminalLoginCommand(executable: URL? = ClaudeEngineLocator.find(),
@@ -151,6 +189,19 @@ final class ClaudeSubscriptionController {
 
     func cancelLogin() { cancelTasks(); check() }
 
+    func connectDesktop() {
+        guard following, loginTask == nil, let connect = locate()?.connectDesktop else { return }
+        cancelTasks()
+        let generation = self.generation
+        state.claudeSubscriptionConnection = .connectingDesktop
+        loginTask = Task { [weak self] in
+            let status = await connect()
+            guard let self, !Task.isCancelled, self.generation == generation else { return }
+            self.apply(status, afterLogin: true)
+            self.loginTask = nil
+        }
+    }
+
     private func cancelTasks() {
         generation += 1
         checkTask?.cancel(); checkTask = nil
@@ -175,7 +226,10 @@ struct ClaudeSubscriptionConnectionView: View {
                 .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("claude-subscription-status")
             HStack(spacing: 12) {
-                if connection.offersLogin {
+                if connection == .needsDesktopAccess {
+                    Button("复用 Claude 桌面登录", action: state.connectClaudeDesktop)
+                        .accessibilityIdentifier("claude-desktop-connect")
+                } else if connection.offersLogin {
                     Button("登录 Claude 订阅", action: state.loginClaudeSubscription)
                         .accessibilityIdentifier("claude-subscription-login")
                     Button(copied ? "已复制" : "复制登录命令") {
@@ -183,20 +237,27 @@ struct ClaudeSubscriptionConnectionView: View {
                         NSPasteboard.general.setString(ClaudeSubscriptionController.terminalLoginCommand(), forType: .string)
                         copied = true
                     }.accessibilityIdentifier("claude-subscription-copy-command")
-                } else if connection == .signingIn {
+                } else if connection == .signingIn || connection == .connectingDesktop {
                     ProgressView().controlSize(.small)
-                    Button("取消登录", action: state.cancelClaudeSubscriptionLogin)
+                    Button("取消", action: state.cancelClaudeSubscriptionLogin)
                         .accessibilityIdentifier("claude-subscription-cancel")
                 } else if connection == .engineMissing {
                     Link("安装 Claude Code", destination: URL(string: "https://code.claude.com/docs/en/setup")!)
                 }
-                if connection != .inactive && connection != .checking && connection != .signingIn {
+                if connection == .desktopExpired || connection == .engineMissing {
+                    Button("打开 Claude") {
+                        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.anthropic.claudefordesktop") {
+                            NSWorkspace.shared.openApplication(at: url, configuration: .init())
+                        }
+                    }
+                }
+                if connection != .inactive && connection != .checking && connection != .signingIn && connection != .connectingDesktop {
                     Button("重新检测", action: state.checkClaudeSubscription)
                         .accessibilityIdentifier("claude-subscription-check")
                 }
             }.controlSize(.small).font(compact ? .system(size: 10) : .caption)
             if !compact {
-                Text("只需登录一次，无需保持 Claude Code 运行。启动猫条、修改 Claude 监听开关时自动检查；浏览器授权由 Claude 官方客户端处理。")
+                Text("优先复用 Claude 桌面端，其次复用 Claude Code。启动和监听开关只做静默检测；钥匙串授权或登录仅在手动点击后进行。")
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
         }.onChange(of: connection) { _, _ in copied = false }

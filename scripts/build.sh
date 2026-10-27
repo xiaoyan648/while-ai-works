@@ -18,6 +18,9 @@ codesign --force --sign - "$app_path/Contents/Resources/while-ai-works-hook"
 xcrun swiftc "${swift_flags[@]}" -O -parse-as-library "${agent_hud_flags[@]}" \
     scripts/AgentInteractionHook.swift Sources/WhileAIWorks/AgentInteractionJSON.swift -o "$app_path/Contents/Resources/while-ai-works-agent-interaction"
 codesign --force --sign - "$app_path/Contents/Resources/while-ai-works-agent-interaction"
+xcrun swiftc "${swift_flags[@]}" -O -parse-as-library "${agent_hud_flags[@]}" \
+    scripts/ClaudeDesktopUsage.swift -o "$app_path/Contents/Resources/while-ai-works-claude-usage"
+codesign --force --sign - "$app_path/Contents/Resources/while-ai-works-claude-usage"
 cp assets/Info.plist "$app_path/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set SUFeedURL https://github.com/xiaoyan648/while-ai-works/releases/latest/download/appcast-$target_arch.xml" "$app_path/Contents/Info.plist"
 cp -R Sources/WhileAIWorks/Resources/FishAssets "$app_path/Contents/Resources/"

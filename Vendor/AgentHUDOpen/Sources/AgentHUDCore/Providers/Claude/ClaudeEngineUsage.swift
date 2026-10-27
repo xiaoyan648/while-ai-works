@@ -34,6 +34,10 @@ public struct ClaudeEngineAuthStatus: Decodable, Equatable, Sendable {
     public let authMethod: String?
     public let subscriptionType: String?
     public let apiProvider: String?
+
+    public init(loggedIn: Bool, authMethod: String?, subscriptionType: String?, apiProvider: String? = nil) {
+        self.loggedIn = loggedIn; self.authMethod = authMethod; self.subscriptionType = subscriptionType; self.apiProvider = apiProvider
+    }
 }
 
 public enum ClaudeEngineLoginResult: Sendable { case completed, failed, timedOut }

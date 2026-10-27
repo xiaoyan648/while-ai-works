@@ -196,6 +196,7 @@ final class AppState: ObservableObject {
     @Published var claudeSubscriptionConnection = ClaudeSubscriptionConnection.inactive
     var checkClaudeSubscription: () -> Void = {}
     var loginClaudeSubscription: () -> Void = {}
+    var connectClaudeDesktop: () -> Void = {}
     var cancelClaudeSubscriptionLogin: () -> Void = {}
     @Published var canCheckForUpdates = false
     @Published var automaticallyChecksForUpdates = false
