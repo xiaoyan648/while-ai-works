@@ -6,7 +6,7 @@ import AgentHUDCore
 enum ClaudeSubscriptionConnection: Equatable {
     case inactive, checking, needsLogin, signedIn, otherLogin, engineMissing, checkFailed
     case signingIn, loginFailed, loginTimedOut
-    case needsDesktopAccess, connectingDesktop, desktopExpired
+    case needsDesktopAccess, connectingDesktop, desktopExpired, quotaStale
 
     var message: String {
         switch self {
@@ -19,7 +19,8 @@ enum ClaudeSubscriptionConnection: Equatable {
         case .desktopExpired: return "Claude 桌面端的订阅凭据需要刷新，请打开 Claude 后重新检测。"
         case .otherLogin: return "已检测到命令行登录，但未确认订阅；API 或中转站登录可能无法提供订阅额度。"
         case .engineMissing: return "未找到可用的桌面订阅登录或 Claude Code，可先打开 Claude 登录。"
-        case .checkFailed: return "暂时无法检查 Claude 登录，可以重新检测。"
+        case .checkFailed: return "Claude 额度暂时无法更新，已延后重试。"
+        case .quotaStale: return "额度暂未更新，当前显示上次读数；已延后重试。"
         case .signingIn: return "请在浏览器完成 Claude 授权，完成后自动刷新额度。"
         case .loginFailed: return "登录未完成，请重试；也可复制命令到终端登录。"
         case .loginTimedOut: return "等待登录已超时，可以重试或在终端登录后重新检测。"
@@ -36,6 +37,7 @@ enum ClaudeSubscriptionConnection: Equatable {
     static func reading(_ status: ClaudeEngineAuthStatus?) -> Self {
         guard let status else { return .checkFailed }
         switch status.authMethod {
+        case "desktop_stale": return .quotaStale
         case "desktop_locked": return .needsDesktopAccess
         case "desktop_expired": return .desktopExpired
         case "engine_missing": return .engineMissing
@@ -54,6 +56,8 @@ final class ClaudeSubscriptionController {
         var check: () async -> ClaudeEngineAuthStatus?
         var login: () async throws -> ClaudeEngineLoginResult
         var connectDesktop: (() async -> ClaudeEngineAuthStatus?)? = nil
+        var recheck: (() async -> ClaudeEngineAuthStatus?)? = nil
+        var nextCheck: (() async -> Date?)? = nil
     }
 
     private let state: AppState
@@ -73,7 +77,7 @@ final class ClaudeSubscriptionController {
         self.state = state
         self.locate = locate
         self.authenticated = authenticated
-        state.checkClaudeSubscription = { [weak self] in self?.check() }
+        state.checkClaudeSubscription = { [weak self] in self?.check(manual: true) }
         state.loginClaudeSubscription = { [weak self] in self?.login() }
         state.connectClaudeDesktop = { [weak self] in self?.connectDesktop() }
         state.cancelClaudeSubscriptionLogin = { [weak self] in self?.cancelLogin() }
@@ -83,7 +87,7 @@ final class ClaudeSubscriptionController {
             .store(in: &subscriptions)
         NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
             .sink { [weak self] _ in
-                guard let self, Date().timeIntervalSince(self.lastCheck) >= 15 else { return }
+                guard let self, Date().timeIntervalSince(self.lastCheck) >= 15 * 60 else { return }
                 self.check()
             }.store(in: &subscriptions)
     }
@@ -93,7 +97,7 @@ final class ClaudeSubscriptionController {
             ClaudeEngineUsageClient(executable: $0, workingDirectory: ClaudeEngineUsageClient.defaultWorkingDirectory)
         }
         return Client(check: {
-            await existingLogin(desktop: .shared, engine: engine, refresh: true)
+            await existingLogin(desktop: .shared, engine: engine)
         }, login: {
             guard let engine else { return .failed }
             return try await engine.signInToSubscription()
@@ -104,12 +108,17 @@ final class ClaudeSubscriptionController {
             } onCancel: {
                 Task { await ClaudeDesktopUsageClient.shared.invalidate() }
             }
-        })
+        }, recheck: { await existingLogin(desktop: .shared, engine: engine, refresh: true) },
+        nextCheck: { await ClaudeDesktopUsageClient.shared.nextCheckAt() })
     }
 
     nonisolated static func existingLogin(desktop: ClaudeDesktopUsageClient, engine: ClaudeEngineUsageClient?, refresh: Bool = false) async -> ClaudeEngineAuthStatus? {
         let reply = await desktop.fetch(refresh: refresh)
-        if reply.status == .available { return .init(loggedIn: true, authMethod: "desktop", subscriptionType: reply.plan ?? "subscription") }
+        if reply.status == .available {
+            if reply.failureStatus == .locked { return .init(loggedIn: true, authMethod: "desktop_locked", subscriptionType: reply.plan) }
+            if reply.failureStatus == .expired { return .init(loggedIn: true, authMethod: "desktop_expired", subscriptionType: reply.plan) }
+            return .init(loggedIn: true, authMethod: reply.failureStatus == nil ? "desktop" : "desktop_stale", subscriptionType: reply.plan ?? "subscription")
+        }
         let status = await engine?.authStatus()
         if status?.loggedIn == true, status?.subscriptionType?.isEmpty == false { return status }
         switch reply.status {
@@ -141,22 +150,26 @@ final class ClaudeSubscriptionController {
         check()
     }
 
-    func check() {
+    func check(manual: Bool = false) {
         guard following, checkTask == nil, loginTask == nil else { return }
         guard let client = locate() else { hasChecked = true; state.claudeSubscriptionConnection = .engineMissing; return }
         let generation = self.generation
         state.claudeSubscriptionConnection = .checking
         lastCheck = Date()
         checkTask = Task { [weak self] in
-            let status = await client.check()
+            let status = await (manual ? client.recheck ?? client.check : client.check)()
+            let nextCheck = await client.nextCheck?()
             guard let self, !Task.isCancelled, self.generation == generation else { return }
             self.checkTask = nil
+            self.state.claudeQuotaNextCheckAt = nextCheck
             self.apply(status)
         }
     }
 
+    func waitForCheck() async { await checkTask?.value }
+
     private func apply(_ status: ClaudeEngineAuthStatus?, afterLogin: Bool = false) {
-        let changed = hasChecked && lastAuth != status
+        let changed = hasChecked && lastAuth?.loggedIn != true && status?.loggedIn == true
         hasChecked = true
         state.claudeSubscriptionConnection = ClaudeSubscriptionConnection.reading(status)
         // Unknown or transient failures are not a logout and must not erase the last known identity metadata.
@@ -256,8 +269,12 @@ struct ClaudeSubscriptionConnectionView: View {
                         .accessibilityIdentifier("claude-subscription-check")
                 }
             }.controlSize(.small).font(compact ? .system(size: 10) : .caption)
+            if let next = state.claudeQuotaNextCheckAt, next > Date() {
+                Text("下次自动查询不早于 " + next.formatted(date: .omitted, time: .shortened))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             if !compact {
-                Text("优先复用 Claude 桌面端，其次复用 Claude Code。启动和监听开关只做静默检测；钥匙串授权或登录仅在手动点击后进行。")
+                Text("优先复用 Claude 桌面端，其次复用 Claude Code。自动查询约每 15～20 分钟一次，失败后延长等待；手动刷新也遵守冷却时间。钥匙串授权或登录仅在手动点击后进行。")
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
         }.onChange(of: connection) { _, _ in copied = false }

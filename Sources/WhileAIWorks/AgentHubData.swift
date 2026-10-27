@@ -101,13 +101,14 @@ final class AgentHubDataController {
         settings = SettingsStore(defaults: UserDefaults(suiteName: "WhileAIWorks.AgentData")!)
         settings.update { $0.clientHooks = false; $0.language = .zhHans }
         state.refreshAgentData = { [weak self] in
-            self?.claudeSubscription?.check()
+            self?.claudeSubscription?.check(manual: true)
             // Repeated taps while a refresh is running join it instead of queueing more.
             guard let self, !self.refreshing else { return }
             self.refreshing = true
             Task { [weak self] in
                 defer { self?.refreshing = false }
                 guard let self, let store = self.store else { return }
+                await self.claudeSubscription?.waitForCheck()
                 await store.refreshAccounts(); await store.refresh(); self.publish()
             }
         }

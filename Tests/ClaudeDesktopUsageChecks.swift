@@ -116,6 +116,8 @@ final class QuotaProtocol: URLProtocol {
         precondition(!String(decoding: encoded, as: UTF8.self).contains("test-only-bearer"), "helper never emits credentials")
         wrongProfile = true; let mismatched = await read(); precondition(mismatched.status == .accountChanged && calls == 3)
         wrongProfile = false; responseCode = 401; let expired = await read(); precondition(expired.status == .expired)
+        responseCode = 403; let forbidden = await read(); precondition(forbidden.status == .failed)
+        responseCode = 429; let limited = await read(); precondition(limited.status == .failed)
         responseCode = 503; let failed = await read(); precondition(failed.status == .failed)
         responseCode = 302; let redirect = await read(); precondition(redirect.status == .failed)
         responseCode = 200; switchAccount = true; let switched = await read(); precondition(switched.status == .accountChanged)

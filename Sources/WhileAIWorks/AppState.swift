@@ -194,6 +194,7 @@ final class AppState: ObservableObject {
     var installCodexInteraction: (Bool) -> Void = { _ in }
     var refreshAgentData: () -> Void = {}
     @Published var claudeSubscriptionConnection = ClaudeSubscriptionConnection.inactive
+    @Published var claudeQuotaNextCheckAt: Date?
     var checkClaudeSubscription: () -> Void = {}
     var loginClaudeSubscription: () -> Void = {}
     var connectClaudeDesktop: () -> Void = {}

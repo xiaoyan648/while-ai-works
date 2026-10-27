@@ -111,6 +111,7 @@ public struct ClaudeCodeProvider: UsageProvider, LedgerRecording {
             if let (result, fetchedAt) = try await engineCache.reading() {
                 reading = result
                 updatedAt = fetchedAt
+                if let warning = result.warning { notice = warning; failure = warning }
                 if result.usage.rateLimitsAvailable {
                     // Keep the engine's observation intact. A deadline passing is not a confirmed reset.
                     usage = result.usage.usage
@@ -277,8 +278,12 @@ actor EngineUsageCache {
         let plan: String?
         /// Asked only when there are no plan limits, to say why there are none.
         var signedIn: Bool?
+        var warning: String? = nil
     }
 
+    private var lastCLI: (at: Date, result: Result<Reading, any Error>, identity: ClaudeSubscription.Identity?)?
+    private var nextCLI = Date.distantPast
+    private var cliFailures = 0
     private var last: (at: Date, result: Result<Reading, any Error>)?
 
     func reading() throws -> (Reading, Date)? {
@@ -289,33 +294,54 @@ actor EngineUsageCache {
     /// The profile is read before and after the query; a login change in between discards the reading.
     func fetch(client: ClaudeEngineUsageClient?, desktop: ClaudeDesktopUsageClient? = nil, now: Date,
                profile: @Sendable () -> Data? = { nil }) async throws -> (Reading, Date) {
+        let desktopReply = await desktop?.fetch()
+        if let reply = desktopReply, let reading = reply.reading {
+            try Task.checkCancellation()
+            let observed = reply.observedAt ?? now
+            last = (observed, .success(reading))
+            return (reading, observed)
+        }
+        try Task.checkCancellation()
+        let before = profile()
+        let currentIdentity = ClaudeSubscription.identity(profileData: before)
+        if let previous = lastCLI, previous.identity != currentIdentity { lastCLI = nil }
         let result: Result<Reading, any Error>
-        do {
-            if let desktop, let reading = await desktop.fetch().reading {
+        let observed: Date
+        if let cached = lastCLI, now < nextCLI {
+            result = cached.result; observed = cached.at
+        } else {
+            do {
+                guard let client else { throw ClaudeDataError.engineNotFound }
+                let usage = try await client.fetch()
+                let after = profile()
+                let identity = ClaudeSubscription.identity(profileData: after)
+                guard ClaudeSubscription.identity(profileData: before) == identity else { throw ClaudeDataError.accountChanged }
+                let signedIn = usage.rateLimitsAvailable ? nil : await client.isSignedIn()
+                result = .success(Reading(usage: usage, identity: usage.rateLimitsAvailable ? identity : nil,
+                                          plan: ClaudeSubscription.plan(type: usage.subscriptionType, profileData: after),
+                                          signedIn: signedIn))
+                observed = now; cliFailures = 0
+            } catch {
                 try Task.checkCancellation()
-                last = (now, .success(reading))
-                return (reading, now)
+                cliFailures = min(4, cliFailures + 1)
+                if let previous = lastCLI, case .success(var reading) = previous.result,
+                   reading.usage.rateLimitsAvailable, previous.identity == ClaudeSubscription.identity(profileData: profile()),
+                   now.timeIntervalSince(previous.at) < 24 * 3600 {
+                    reading.warning = "额度暂未更新，显示上次读数；已延后重试。"
+                    result = .success(reading); observed = previous.at
+                } else { result = .failure(error); observed = now }
             }
-            try Task.checkCancellation()
-            guard let client else { throw ClaudeDataError.engineNotFound }
-            let before = profile()
-            let usage = try await client.fetch()
-            let after = profile()
-            let identity = ClaudeSubscription.identity(profileData: after)
-            // An API-key or third-party login can leave an old profile behind; only plan limits make it the reading's account.
-            guard ClaudeSubscription.identity(profileData: before) == identity else { throw ClaudeDataError.accountChanged }
-            let signedIn = usage.rateLimitsAvailable ? nil : await client.isSignedIn()
-            result = .success(Reading(usage: usage, identity: usage.rateLimitsAvailable ? identity : nil,
-                                      plan: ClaudeSubscription.plan(type: usage.subscriptionType, profileData: after),
-                                      signedIn: signedIn))
+            lastCLI = (observed, result, ClaudeSubscription.identity(profileData: profile()))
+            nextCLI = now.addingTimeInterval(ClaudeQuotaPolling.interval(failures: cliFailures, random: Double.random(in: 0...1)))
         }
-        catch {
-            try Task.checkCancellation()
-            result = .failure(error)
+        // An unrelated CLI/API login with no quota says nothing about a failed Desktop query.
+        if let desktopReply, [.failed, .locked, .expired, .accountChanged].contains(desktopReply.status),
+           (try? result.get().usage.rateLimitsAvailable) != true {
+            let error = UsageProviderError("Claude 额度暂时无法更新，已延后重试。")
+            last = (now, .failure(error)); throw error
         }
-        // A failed attempt is kept too, so the reports until the next query carry its error.
-        last = (now, result)
-        return (try result.get(), now)
+        last = (observed, result)
+        return (try result.get(), observed)
     }
 }
 

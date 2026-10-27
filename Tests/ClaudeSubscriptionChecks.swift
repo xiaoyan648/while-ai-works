@@ -4,6 +4,16 @@ import AgentHUDCore
 import AgentHUDSupport
 import WhileCore
 
+final class QuotaTestClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var date = Date(timeIntervalSince1970: 10_000)
+    private var identity: String? = "account-a"
+    func now() -> Date { lock.lock(); defer { lock.unlock() }; return date }
+    func scope() -> String? { lock.lock(); defer { lock.unlock() }; return identity }
+    func advance(_ seconds: TimeInterval) { lock.lock(); defer { lock.unlock() }; date += seconds }
+    func switchTo(_ value: String?) { lock.lock(); defer { lock.unlock() }; identity = value }
+}
+
 @main enum ClaudeSubscriptionChecks {
     @MainActor static func eventually(_ condition: () -> Bool, _ message: String) async {
         for _ in 0..<300 {
@@ -248,6 +258,62 @@ import WhileCore
         let neither = await ClaudeSubscriptionController.existingLogin(desktop: desktop, engine: nil)
         precondition(ClaudeSubscriptionConnection.reading(neither) == .engineMissing)
 
+        // Shared cooldown is enforced even for explicit refresh; last successful quota and cooldown survive restart.
+        let clock = QuotaTestClock(), cacheURL = root.appendingPathComponent("quota-cache.json")
+        func cachedClient() -> ClaudeDesktopUsageClient {
+            ClaudeDesktopUsageClient(helper: helper, cacheURL: cacheURL, clock: { clock.now() },
+                                     random: { 0 }, identity: { clock.scope() })
+        }
+        func countCalls() -> Int { (try? String(contentsOf: root.appendingPathComponent("desktop-calls")))?.split(separator: "\n").count ?? 0 }
+        try await reply(.available)
+        let paced = cachedClient(), baseline = countCalls()
+        async let firstA = paced.fetch()
+        async let firstB = paced.fetch()
+        let firstPair = await (firstA, firstB)
+        precondition(countCalls() == baseline + 1 && firstPair.0.observedAt == clock.now() && firstPair.1.observedAt == clock.now(), "concurrent callers get the same completed reading")
+        let observed = firstPair.0.observedAt
+        for _ in 0..<5 { _ = await paced.fetch(refresh: true) }
+        precondition(countCalls() == baseline + 1, "rapid manual checks cannot bypass the five-minute floor")
+        clock.advance(899); _ = await paced.fetch()
+        precondition(countCalls() == baseline + 1, "automatic reads wait at least fifteen minutes")
+        clock.advance(1); try await reply(.failed)
+        let staleQuota = await paced.fetch()
+        precondition(staleQuota.status == .available && staleQuota.failureStatus == .failed && staleQuota.observedAt == observed)
+        precondition(staleQuota.retryAt == clock.now().addingTimeInterval(1800), "first failure waits thirty minutes")
+        for _ in 0..<5 { _ = await paced.fetch(refresh: true) }
+        let restarted = cachedClient(), restored = await restarted.fetch(refresh: true)
+        precondition(restored.status == .available && restored.observedAt == observed && countCalls() == baseline + 2,
+                     "restart and manual refresh keep stale data without retrying during backoff")
+        let staleConnection = await ClaudeSubscriptionController.existingLogin(desktop: restarted, engine: engine)
+        precondition(ClaudeSubscriptionConnection.reading(staleConnection) == .quotaStale, "retained quota is a temporary refresh failure, not a login failure")
+        let staleProvider = ClaudeCodeProvider(engine: engine, transcripts: ClaudeTranscriptStore(roots: [], ledger: ledger),
+                                               history: QuotaHistoryStore(ledger: ledger, scope: "stale-test"), desktopUsage: restarted)
+        try setMode("out")
+        await staleProvider.refreshAccountUsage(historyHours: 24)
+        let staleReport = try await staleProvider.fetchUsage(agents: [], historyHours: 24)
+        precondition(staleReport.snapshots.count == 2 && staleReport.snapshots.allSatisfy { $0.updatedAt == observed },
+                     "an unrelated signed-out CLI must not replace retained Desktop quota or its timestamp")
+        precondition(staleReport.quotaNotices?["Claude"] != nil)
+        let staleUI = AgentHubDataController.adapt(staleReport, showReplies: false, now: clock.now())
+        precondition(!staleUI.quotas.isEmpty && staleUI.quotas.allSatisfy(\.stale))
+        clock.advance(1800)
+        let secondFailure = await restarted.fetch()
+        precondition(secondFailure.retryAt == clock.now().addingTimeInterval(3600), "successive failure backs off further")
+        clock.advance(3600); try await reply(.available)
+        let recovered = await restarted.fetch()
+        precondition(recovered.failureStatus == nil && recovered.observedAt == clock.now())
+        precondition(recovered.retryAt == clock.now().addingTimeInterval(900), "success restores normal cadence")
+        clock.switchTo("account-b")
+        let switchedCache = await restarted.fetch()
+        precondition(switchedCache.status == .accountChanged && switchedCache.limits == nil, "account change clears old quota without sending a request")
+        clock.switchTo(nil)
+        let signedOutCache = await restarted.fetch()
+        precondition(signedOutCache.status == .missing && signedOutCache.limits == nil)
+        precondition(!FileManager.default.fileExists(atPath: cacheURL.path), "sign-out removes persisted quota")
+        precondition(ClaudeQuotaPolling.interval(failures: 0, random: 1) == 1200)
+        precondition(ClaudeQuotaPolling.interval(failures: 1, random: 1) == 2700)
+        precondition(ClaudeQuotaPolling.interval(failures: 4, random: 1) == 10800)
+        print("Claude quota cooldown: concurrency, jitter bounds, manual floor, restart, failure retention, account isolation and recovery passed")
         print("ClaudeSubscriptionChecks: startup, switches, deduplication, verified refresh, failures and subprocess cleanup passed")
     }
 }

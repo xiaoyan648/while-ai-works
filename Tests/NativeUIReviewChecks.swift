@@ -30,9 +30,11 @@ import AgentHUDCore
             state.selectedSources = [.claude]
             state.desktopDockSource = .claude
             state.desktopDockTab = .quota
+            state.claudeQuotaNextCheckAt = Date().addingTimeInterval(35 * 60)
             for dark in [false, true] {
+                state.agentDashboard = AgentDockData()
                 let theme = dark ? "dark" : "light"
-                for (name, status) in [("needs-login", ClaudeSubscriptionConnection.needsLogin), ("signing-in", .signingIn), ("failed", .loginFailed), ("missing", .engineMissing), ("desktop-access", .needsDesktopAccess), ("desktop-connecting", .connectingDesktop), ("desktop-expired", .desktopExpired)] {
+                for (name, status) in [("needs-login", ClaudeSubscriptionConnection.needsLogin), ("signing-in", .signingIn), ("failed", .loginFailed), ("missing", .engineMissing), ("desktop-access", .needsDesktopAccess), ("desktop-connecting", .connectingDesktop), ("desktop-expired", .desktopExpired), ("quota-stale", .quotaStale), ("quota-failed", .checkFailed)] {
                     state.claudeSubscriptionConnection = status
                     try render(ClaudeSubscriptionConnectionView(state: state, compact: true).padding(14),
                                name: "claude-subscription-\(name)-\(theme)", dark: dark,
@@ -44,6 +46,14 @@ import AgentHUDCore
                            size: NSSize(width: 500, height: 580), background: .windowBackgroundColor)
                 try render(DockReviewComposition(state: state, perch: MascotController(bundle: nil, placeholder: still(.ink, "perched"))),
                            name: "claude-subscription-dock-\(theme)", dark: dark, background: .windowBackgroundColor)
+                state.claudeSubscriptionConnection = .quotaStale
+                state.agentDashboard = AgentDockData(quotas: [
+                    AgentDockQuota(id: "claude-stale", source: .claude, title: "当前会话", remaining: 53,
+                                   resetAt: Date().addingTimeInterval(3 * 3600), observedAt: Date().addingTimeInterval(-25 * 60),
+                                   stale: true, window: .session, windowDuration: 5 * 3600)
+                ], updatedAt: Date())
+                try render(DockReviewComposition(state: state, perch: MascotController(bundle: nil, placeholder: still(.ink, "perched"))),
+                           name: "claude-quota-retained-\(theme)", dark: dark, background: .windowBackgroundColor)
             }
             print("Claude subscription UI: missing login, pending authorization, failure, missing engine, settings and quota layouts rendered")
             return

@@ -1786,7 +1786,7 @@ private struct AgentDockQuotaView: View {
                     Text("· " + plan).font(.system(size: 9)).foregroundStyle(.secondary).lineLimit(1).help(plan)
                 }
                 Spacer()
-                if let updated = state.agentDashboard.updatedAt {
+                if let updated = quotas.map(\.observedAt).min() {
                     TimelineView(.periodic(from: .now, by: 30)) { context in
                         Text(Self.updatedLabel(updated, now: context.date)).font(.system(size: 9)).foregroundStyle(.secondary)
                             .help("读数更新于 " + updated.formatted(date: .omitted, time: .standard))
