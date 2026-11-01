@@ -11,6 +11,8 @@ final class InteractionShortcut {
     private var localMonitor: Any?
     private var escapeHotKey: EventHotKeyRef?
     private var chargeSubscription: AnyCancellable?
+    private var quickInputHotKey: EventHotKeyRef?
+    private var quickInputSubscription: AnyCancellable?
 
     init(state: AppState) {
         self.state = state
@@ -24,6 +26,7 @@ final class InteractionShortcut {
                   id.signature == 0x57414957 else { return OSStatus(eventNotHandledErr) }
             if id.id == 2 { owner.state.cancelFishingCast() }
             else if id.id == 1 { owner.state.desktopEnabled.toggle() }
+            else if id.id == 3 { owner.state.quickInputSummon.send() }
             else { return OSStatus(eventNotHandledErr) }
             return noErr
         }, 1, &event, Unmanaged.passUnretained(self).toOpaque(), &handler)
@@ -38,6 +41,9 @@ final class InteractionShortcut {
         }
         subscription = state.$shortcutKey.combineLatest(state.$shortcutModifiers).sink { [weak self] key, modifiers in
             self?.register(key: key, modifiers: modifiers)
+        }
+        quickInputSubscription = state.$quickInputEnabled.combineLatest(state.$quickInputShortcut).sink { [weak self] enabled, shortcut in
+            self?.registerQuickInput(enabled: enabled, shortcut: shortcut)
         }
         // The desktop panel never takes keyboard focus. Reserve plain Escape only
         // for the duration of a charge, then immediately return it to other apps.
@@ -65,7 +71,20 @@ final class InteractionShortcut {
             self?.state.shortcutError = result == noErr ? nil : "快捷键被占用，请换一个组合；仍可使用开关。"
         }
     }
+    private func registerQuickInput(enabled: Bool, shortcut: QuickInputShortcut) {
+        if let quickInputHotKey { UnregisterEventHotKey(quickInputHotKey) }
+        quickInputHotKey = nil
+        var result = noErr
+        if enabled {
+            result = RegisterEventHotKey(shortcut.keyCode, shortcut.carbonModifiers, EventHotKeyID(signature: 0x57414957, id: 3),
+                                         GetApplicationEventTarget(), 0, &quickInputHotKey)
+        }
+        DispatchQueue.main.async { [weak self] in
+            self?.state.quickInputShortcutError = result == noErr ? nil : "快捷键被占用，请换一个组合。"
+        }
+    }
     deinit {
+        if let quickInputHotKey { UnregisterEventHotKey(quickInputHotKey) }
         if let localMonitor { NSEvent.removeMonitor(localMonitor) }
         if let hotKey { UnregisterEventHotKey(hotKey) }
         if let handler { RemoveEventHandler(handler) }

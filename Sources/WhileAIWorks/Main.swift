@@ -28,6 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
     private var panel: MenuBarPanelController!
     private var desktopPet: DesktopPetController!
     private var agentHub: AgentHubDataController!
+    private var quickInput: QuickInputController!
     private var updater: AppUpdater!
     private let mascot = MascotController()
     private let quickMenu = NSMenu()
@@ -60,6 +61,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
         desktopPet = DesktopPetController(state: state,
             showPanel: { [weak self] in self?.showPanel() },
             showSettings: { [weak self] in self?.showSettings() })
+        quickInput = QuickInputController(state: state,
+            tileCenter: { [weak self] in self?.desktopPet.dockController.tileCenter(for: $0) },
+            dockFrame: { [weak self] in self?.desktopPet.dockController.visibleDockFrame })
         state.objectWillChange.sink { [weak self] _ in
             guard let self, !self.statusIconScheduled else { return }
             self.statusIconScheduled = true
@@ -145,6 +149,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
         menu.addItem(.separator())
         let desktop = add(menu, state.desktopEnabled ? "回去工作 · " + state.shortcutLabel : "开始玩 · " + state.shortcutLabel, #selector(toggleDesktop))
         desktop.state = state.desktopEnabled ? .on : .off
+        if state.quickInputEnabled { add(menu, "快捷输入 · " + state.quickInputShortcut.title, #selector(summonQuickInput)) }
         menu.addItem(.separator())
         for mode in PlayMode.allCases {
             let item = add(menu, mode.title + " · " + state.shortCount(for: mode), #selector(selectMode(_:)))
@@ -198,6 +203,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
     @objc private func showCollection() { panel.close(); windows.showCollection() }
     @objc private func closeWindow() { NSApp.keyWindow?.performClose(nil) }
     @objc private func toggleDesktop() { state.desktopEnabled.toggle() }
+    @objc private func summonQuickInput() { state.quickInputSummon.send() }
     @objc private func selectMode(_ sender: NSMenuItem) {
         if let raw = sender.representedObject as? String, let mode = PlayMode(rawValue: raw) { state.mode = mode }
     }

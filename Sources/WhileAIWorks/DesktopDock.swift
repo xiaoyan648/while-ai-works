@@ -443,6 +443,8 @@ private struct DesktopDockTile: View {
     @State private var requestDrops = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private var count: Int { state.agentRunningCount(for: source) }
+    private var quickInputLandings: Int { !reduceMotion && state.quickInputPulse.source == source ? state.quickInputPulse.landings : 0 }
+    private var quickInputRejections: Int { !reduceMotion && state.quickInputPulse.source == source ? state.quickInputPulse.rejections : 0 }
     private var selected: Bool { state.desktopPetShowsStatus && state.desktopDockSource == source }
     private var quota: AgentDockQuota? { state.dockQuota(for: source) }
     private var completion: Date? { state.unseenCompletion(for: source) }
@@ -486,9 +488,28 @@ private struct DesktopDockTile: View {
                 ring
                 AgentActivityMark(source: source, working: count > 0, stamp: stamps).frame(width: 24, height: 24)
                     .allowsHitTesting(false).accessibilityHidden(true)
+                    .keyframeAnimator(initialValue: 1.0, trigger: quickInputLandings) { content, scale in
+                        content.scaleEffect(scale)
+                    } keyframes: { _ in
+                        CubicKeyframe(1.22, duration: 0.16)
+                        SpringKeyframe(1, duration: 0.26, spring: .snappy)
+                    }
+                    .keyframeAnimator(initialValue: 0.0, trigger: quickInputRejections) { content, offset in
+                        content.offset(x: offset)
+                    } keyframes: { _ in
+                        CubicKeyframe(-4, duration: 0.09)
+                        CubicKeyframe(4, duration: 0.18)
+                        CubicKeyframe(0, duration: 0.09)
+                    }
                 DockTileBadges(request: requestGlyph, paw: pawShown, fanned: hovered,
                                clockwise: state.desktopDockEdge == .left || state.desktopDockEdge == .top,
                                stamps: stamps, requestDrops: requestDrops)
+                if let queued = state.quickInputQueued[source], queued > 0 {
+                    Text(String(min(9, queued))).font(.system(size: 9, weight: .bold)).foregroundStyle(Theme.accentBadgeInk)
+                        .frame(width: 15, height: 15).background(Circle().fill(Theme.accentBadge))
+                        .overlay(Circle().stroke(Theme.surface, lineWidth: 1.5))
+                        .offset(x: -16, y: -16).allowsHitTesting(false).accessibilityHidden(true)
+                }
             }
             .frame(width: vertical ? DesktopDockGeometry.thickness : DesktopDockGeometry.tile,
                    height: vertical ? DesktopDockGeometry.tile : DesktopDockGeometry.thickness)
@@ -1274,6 +1295,13 @@ final class DesktopDockController: NSObject {
         return panel
     }
     private var sources: [WorkSource] { WorkSource.dockOrder.filter { state.selectedSources.contains($0) } }
+    /// Where this source sits on screen, for anything arriving at the dock from elsewhere.
+    func tileCenter(for source: WorkSource) -> CGPoint? {
+        guard panel.isVisible, let index = sources.firstIndex(of: source) else { return nil }
+        let tile = DesktopDockGeometry.tileFrame(index: index, orientation: state.desktopDockOrientation)
+        return CGPoint(x: panel.frame.minX + tile.midX, y: panel.frame.maxY - tile.midY)
+    }
+    var visibleDockFrame: CGRect? { panel.isVisible ? panel.frame : nil }
     /// Coalesces state changes and height reports into one refresh on the next run-loop turn.
     private func scheduleRefresh() {
         guard !refreshScheduled else { return }

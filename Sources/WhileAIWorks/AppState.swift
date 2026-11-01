@@ -1,3 +1,4 @@
+import Carbon
 import AppKit
 import AgentHUDCore
 import Combine
@@ -427,6 +428,14 @@ final class AppState: ObservableObject {
     @Published var shortcutKey = 49 { didSet { defaults.set(shortcutKey, forKey: "interaction.shortcutKey") } }
     @Published var shortcutModifiers = 0 { didSet { defaults.set(shortcutModifiers, forKey: "interaction.shortcutModifiers") } }
     @Published var shortcutError: String?
+    @Published var quickInputEnabled = true { didSet { defaults.set(quickInputEnabled, forKey: "quickInput.enabled") } }
+    @Published var quickInputShortcut = QuickInputShortcut.optionSpace { didSet { defaults.set(quickInputShortcut.rawValue, forKey: "quickInput.shortcut") } }
+    @Published var quickInputShortcutError: String?
+    @Published var quickInputPulse = QuickInputPulse()
+    @Published var quickInputQueued: [WorkSource: Int] = [:]
+    let quickInputSummon = PassthroughSubject<Void, Never>()
+    /// The same store as every other preference, so a preview build keeps its own.
+    var quickInputDefaults: UserDefaults { defaults }
     var shortcutLabel: String {
         ["⌘⇧", "⌃⌥", "⌃⇧"][shortcutModifiers] + (Self.shortcutKeys.first { $0.code == shortcutKey }?.name ?? "空格")
     }
@@ -450,6 +459,8 @@ final class AppState: ObservableObject {
         shortcutKey = Self.shortcutKeys.contains { $0.code == savedKey } ? savedKey : 49
         let savedModifiers = defaults.integer(forKey: "interaction.shortcutModifiers")
         shortcutModifiers = (0...2).contains(savedModifiers) ? savedModifiers : 0
+        quickInputEnabled = defaults.object(forKey: "quickInput.enabled") as? Bool ?? true
+        quickInputShortcut = QuickInputShortcut(rawValue: defaults.integer(forKey: "quickInput.shortcut")) ?? .optionSpace
         let book = FishingBook.load(defaults: defaults)
         fishingBook = book
         let progression = FishingProgression(defaults: defaults, book: book)
@@ -690,6 +701,27 @@ struct AgentDockData: Equatable {
     var updatedAt: Date?
 }
 enum DesktopDockTab: String, CaseIterable { case sessions, quota }
+enum QuickInputShortcut: Int, CaseIterable, Identifiable {
+    case optionSpace, controlOptionK, optionCommandK
+    var id: Int { rawValue }
+    var title: String {
+        switch self { case .optionSpace: return "⌥ 空格"; case .controlOptionK: return "⌃ ⌥ K"; case .optionCommandK: return "⌥ ⌘ K" }
+    }
+    var keyCode: UInt32 { self == .optionSpace ? 49 : 40 }
+    var carbonModifiers: UInt32 {
+        switch self {
+        case .optionSpace: return UInt32(optionKey)
+        case .controlOptionK: return UInt32(controlKey | optionKey)
+        case .optionCommandK: return UInt32(optionKey | cmdKey)
+        }
+    }
+}
+/// What the dock shows when quick input hands it something: counters only move forward.
+struct QuickInputPulse: Equatable {
+    var source: WorkSource?
+    var landings = 0
+    var rejections = 0
+}
 enum PanelMaterial: String, CaseIterable, Identifiable {
     case solid, glass
     var id: String { rawValue }
@@ -751,14 +783,17 @@ struct AgentDockSession: Equatable, Identifiable, Sendable {
     var localSessionLock: String? = nil
     /// A live pending request may precede creation of the durable session lock.
     var localBridgeRoot: String? = nil
+    /// The full directory the session works in; `project` may only name its last component.
+    var workingDirectory: String? = nil
     var dockIdentity: String { source.rawValue + ":" + id }
     var canSend: Bool { source == .codex && navigationURL?.scheme == "codex" && navigationURL?.lastPathComponent == id }
 }
 enum AgentMessageOutcome: Equatable {
-    case accepted, unavailable, failed(String), uncertain
+    case accepted, steered, unavailable, failed(String), uncertain
     var title: String {
         switch self {
         case .accepted: return "已送达原会话"
+        case .steered: return "已插入当前这一步"
         case .unavailable: return "原会话当前不可接收，请打开客户端继续"
         case .failed(let message): return message
         case .uncertain: return "发送结果待确认；请查看原会话，勿重复发送"

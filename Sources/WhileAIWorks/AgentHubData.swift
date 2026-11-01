@@ -273,7 +273,7 @@ final class AgentHubDataController {
                 event: turn?.state == .waitingForApproval ? .approval : (turn?.state == .completed || completedWithoutTurn) ? .finished : running ? .working : .recent,
                 eventAt: completedAt ?? turn.map { Date(timeIntervalSince1970: Double($0.observedAtMs) / 1000) },
                 turnStartedAt: running ? turn?.startedAtMs.map { Date(timeIntervalSince1970: Double($0) / 1000) } : nil,
-                parentSessionID: parentID))
+                parentSessionID: parentID, workingDirectory: session.workingDirectory))
         }
         data.sessions = Array(Dictionary(data.sessions.map { ($0.dockIdentity, $0) }, uniquingKeysWith: {
             $0.observedAt >= $1.observedAt ? $0 : $1
@@ -351,7 +351,7 @@ enum CodexOriginalConversation {
             let reply = try connection.request(method: prepared.method, version: prepared.version, source: client, target: owner,
                 params: prepared.params, didWrite: { wrote = true })
             guard accepted(reply, owner: owner, prepared: prepared) else { return .uncertain }
-            return .accepted
+            return prepared.expectedTurnID == nil ? .accepted : .steered
         } catch CodexDesktopIPC.Failure.rejected(let reason) {
             if ["request-timeout", "server-closed", "client-disconnected"].contains(reason) && wrote { return .uncertain }
             return .failed("原会话未接受消息，请在客户端继续")

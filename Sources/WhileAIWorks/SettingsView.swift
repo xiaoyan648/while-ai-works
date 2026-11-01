@@ -18,6 +18,7 @@ struct SettingsView: View {
                 Button("刷新用量", action: state.refreshAgentData)
             }
             controls
+            quickInput
             desktop
             AgentSettingsSections(state: state)
             appearance
@@ -87,6 +88,21 @@ struct SettingsView: View {
                      : "数字气泡显示运行中的会话数，点开查看详情。拖动小猫可移动，右键可切换为猫条。")
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private var quickInput: some View {
+        Section("快捷输入") {
+            Toggle("随时唤起输入框，把任务交给 Agent", isOn: $state.quickInputEnabled)
+                .accessibilityIdentifier("quick-input-enabled")
+            Picker("快捷键", selection: $state.quickInputShortcut) {
+                ForEach(QuickInputShortcut.allCases) { Text($0.title).tag($0) }
+            }
+            .disabled(!state.quickInputEnabled)
+            .accessibilityIdentifier("quick-input-shortcut")
+            if let error = state.quickInputShortcutError {
+                Text(error).font(.callout).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
             }
         }
     }
