@@ -225,7 +225,7 @@ enum QuickInputCatalog {
     static func sessionRow(_ session: AgentDockSession) -> QuickInputRow {
         let waiting = isWaiting(session)
         return QuickInputRow(id: "session:" + session.dockIdentity, source: session.source, title: session.title, subtitle: "",
-            trailing: waiting ? "等你处理" : !session.canSend ? "仅打开" : session.running ? "运行中" : "空闲",
+            trailing: waiting ? "等你处理" : session.running ? "运行中" : !session.canSend ? "仅打开" : "空闲",
             tone: waiting ? .attention : session.running ? .working : .plain)
     }
 }
