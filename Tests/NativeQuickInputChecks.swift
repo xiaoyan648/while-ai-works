@@ -61,6 +61,8 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         var value = QuickInputEnvironment(open: { opened?($0); return true }, canOpen: { _ in handler }, copy: { copied?($0) }, directoryExists: { _ in true }, chooseDirectory: { nil },
                                           start: { started?($0); return startable ? "com.mitchellh.ghostty" : nil }, activate: { _ in }, startTimeout: timeout)
         value.usesSystemChooser = false
+        value.terminalRoute = { _ in nil }
+        value.readiness = { _ in nil }
         return value
     }
 
@@ -121,6 +123,13 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
             check(!manager.fileExists(atPath: promptFile.path) && !manager.fileExists(atPath: scriptFile.path), "the private files are removed")
         }
         check(!manager.fileExists(atPath: "/tmp/waw-should-not-exist"), "the prompt is never executed")
+        let app = URL(fileURLWithPath: "/Applications/T.app")
+        let otty = QuickInputLauncher.command(terminal: "io.appmakes.otty", application: app, script: "/t/it's.command", directory: "/repo")
+        check(otty.executable.path.hasSuffix("MacOS/otty-cli") && otty.arguments == ["open", "/repo", "--command", "'/t/it'\\''s.command'", "--quiet"], "\(otty.arguments)")
+        let ghostty = QuickInputLauncher.command(terminal: "com.mitchellh.ghostty", application: app, script: "/t/s.command", directory: "/repo")
+        check(ghostty.executable.path.hasSuffix("MacOS/ghostty") && ghostty.arguments.suffix(2) == ["-e", "/t/s.command"])
+        let other = QuickInputLauncher.command(terminal: "com.apple.Terminal", application: app, script: "/t/s.command", directory: "/repo")
+        check(other.executable.path == "/usr/bin/open" && other.arguments == ["-g", "/t/s.command"], "anything else takes the system's route")
         check(QuickInputStart.script(source: .dsh, executable: "x", directory: "/", promptFile: "p", searchPath: "") == nil)
     }
 
@@ -235,6 +244,25 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         toTerminal.textChanged("看看", cursor: 2)
         toTerminal.submit(openClient: true)
         check(claudeOpened.last?.scheme == "claude-cli")
+
+        // A command line that is not logged in must not pretend to start: Enter goes to the client.
+        check(QuickInputReadiness.claudeLoggedIn(status: Data(#"{"loggedIn":false,"authMethod":"none"}"#.utf8)) == false)
+        check(QuickInputReadiness.claudeLoggedIn(status: Data(#"{"loggedIn":true}"#.utf8)) == true)
+        check(QuickInputReadiness.claudeLoggedIn(status: Data("not json".utf8)) == nil, "an unreadable answer is not a no")
+        var loggedOutStarts: [QuickInputStart.Request] = [], loggedOutLinks: [URL] = []
+        var loggedOutEnvironment = environment(opened: { loggedOutLinks.append($0) }, started: { loggedOutStarts.append($0) })
+        loggedOutEnvironment.readiness = { _ in false }
+        let loggedOut = QuickInputModel(state: state, environment: loggedOutEnvironment)
+        loggedOut.prepareForSummon()
+        eventually({ loggedOut.primaryVerb == "在 Claude 打开" || { loggedOut.togglePicker(.agent); loggedOut.pick(loggedOut.rows.first { $0.source == .claude }!); return false }() }, "Enter says where it goes")
+        check(loggedOut.secondaryVerb == nil && loggedOut.hint?.contains("还没登录") == true)
+        loggedOut.textChanged("看看", cursor: 2)
+        loggedOut.submit()
+        check(loggedOutStarts.isEmpty && loggedOutLinks.last?.scheme == "claude" && loggedOut.receipt?.title == "已带到Claude，等你发送", "no pretending to start")
+        loggedOut.togglePicker(.agent)
+        check(loggedOut.rows.first { $0.source == .claude }?.subtitle.contains("未登录") == true && loggedOut.rows.first { $0.source == .claude }?.enabled == true)
+        loggedOut.pick(loggedOut.rows.first { $0.source == .codex }!)
+        check(loggedOut.primaryVerb == "发送", "other clients are unaffected")
 
         // A typed token picks an agent and leaves the sentence clean; `@` inside plain text stays.
         model.textChanged("看一下 @", cursor: 5)
@@ -497,6 +525,20 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         model.textChanged("留着", cursor: 2)
         model.submit()
         check(opened.count == 4 && copied.last == "留着" && model.receipt?.title == "这个会话没有跳转入口")
+
+        // A session in an Otty pane has a way back even though it records none.
+        let listing = #"{"command":"pane list","data":[{"id":"p_1","agent_session_id":null},{"id":"p_2","agent_session_id":"abc"}]}"#.data(using: .utf8)!
+        check(QuickInputOtty.pane(for: "abc", in: listing) == "p_2" && QuickInputOtty.pane(for: "x", in: listing) == nil)
+        check(QuickInputOtty.pane(for: "abc", in: Data("oops".utf8)) == nil, "unreadable output means no route")
+        check(QuickInputOtty.url(pane: "p_2")?.absoluteString == "otty://pane/p_2" && QuickInputOtty.url(pane: "p/../x") == nil)
+        var routed: [URL] = []
+        var withRoute = environment(opened: { routed.append($0) }, copied: { copied.append($0) })
+        withRoute.terminalRoute = { _ in URL(string: "otty://pane/p_2") }
+        let viaPane = QuickInputModel(state: state, environment: withRoute)
+        viaPane.prepareForSummon()
+        viaPane.pick(session: lost)
+        viaPane.submit(openClient: true)
+        check(routed.map(\.absoluteString) == ["otty://pane/p_2"] && opened.count == 4 && viaPane.receipt == nil, "an empty jump lands in the pane")
 
         // A session that disappears is explained, and nothing is lost.
         model.pick(session: running)

@@ -140,9 +140,29 @@ enum QuickInputStart {
     }
 }
 
-/// Starts the script with whatever opens scripts on this Mac, which is what the user's default
+/// Starts the script in whatever opens scripts on this Mac, which is what the user's default
 /// terminal means there, then gives the front back to whatever the user was doing.
 enum QuickInputLauncher {
+    /// How a terminal runs a command. Handing some of them a script through `open` looks like
+    /// success but leaves it unrun: Otty only opens a pane, and Ghostty ignores `-e`.
+    static func command(terminal: String, application: URL, script: String, directory: String) -> (executable: URL, arguments: [String]) {
+        switch terminal {
+        case "io.appmakes.otty":
+            return (application.appendingPathComponent("Contents/MacOS/otty-cli"), ["open", directory, "--command", QuickInputStart.quote(script), "--quiet"])
+        case "com.mitchellh.ghostty":
+            return (application.appendingPathComponent("Contents/MacOS/ghostty"), ["--window-save-state=never", "--working-directory=" + directory, "-e", script])
+        default:
+            return (URL(fileURLWithPath: "/usr/bin/open"), ["-g", script])
+        }
+    }
+    /// A script that never ran still holds its prompt. Anything this old was not going to.
+    private static func removeStale(in folder: URL, now: Date = Date()) {
+        let manager = FileManager.default
+        for file in (try? manager.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.contentModificationDateKey])) ?? [] {
+            let modified = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+            if let modified, now.timeIntervalSince(modified) > 3600 { try? manager.removeItem(at: file) }
+        }
+    }
     static func launch(_ request: QuickInputStart.Request) -> String? {
         let search = ProcessInfo.processInfo.environment["PATH"] ?? ""
         guard let executable = QuickInputStart.executable(for: request.source, searchPath: search) else { return nil }
@@ -151,6 +171,7 @@ enum QuickInputLauncher {
         let promptFile = folder.appendingPathComponent(id + ".txt"), scriptFile = folder.appendingPathComponent(id + ".command")
         guard let script = QuickInputStart.script(source: request.source, executable: executable, directory: request.directory, promptFile: promptFile.path, searchPath: search) else { return nil }
         let manager = FileManager.default
+        removeStale(in: folder)
         do {
             try manager.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
             guard manager.createFile(atPath: promptFile.path, contents: Data(request.prompt.utf8), attributes: [.posixPermissions: 0o600]),
@@ -160,9 +181,10 @@ enum QuickInputLauncher {
         func discard() { try? manager.removeItem(at: promptFile); try? manager.removeItem(at: scriptFile) }
         guard let handler = workspace.urlForApplication(toOpen: scriptFile), let terminal = Bundle(url: handler)?.bundleIdentifier else { discard(); return nil }
         let previous = workspace.frontmostApplication
+        let launch = command(terminal: terminal, application: handler, script: scriptFile.path, directory: request.directory)
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-        process.arguments = ["-g", scriptFile.path]
+        process.executableURL = launch.executable
+        process.arguments = launch.arguments
         process.standardInput = FileHandle.nullDevice; process.standardOutput = FileHandle.nullDevice; process.standardError = FileHandle.nullDevice
         do { try process.run() } catch { discard(); return nil }
         returnFront(to: previous, from: terminal, deadline: Date().addingTimeInterval(2))
@@ -174,6 +196,51 @@ enum QuickInputLauncher {
             if NSWorkspace.shared.frontmostApplication?.bundleIdentifier == terminal { previous.activate() }
             else if Date() < deadline { returnFront(to: previous, from: terminal, deadline: deadline) }
         }
+    }
+}
+
+/// Whether a client's command line can do any work. Someone who only uses Claude's desktop app
+/// has a `claude` that starts, takes the prompt and answers "Not logged in" in a window behind them.
+enum QuickInputReadiness {
+    static func claudeLoggedIn(status: Data) -> Bool? {
+        (try? JSONSerialization.jsonObject(with: status) as? [String: Any])?["loggedIn"] as? Bool
+    }
+    static func check(_ source: WorkSource) -> Bool? {
+        guard source == .claude, let executable = QuickInputStart.executable(for: .claude, searchPath: ProcessInfo.processInfo.environment["PATH"] ?? "") else { return nil }
+        let process = Process(), output = Pipe()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = ["auth", "status"]
+        process.standardOutput = output; process.standardError = FileHandle.nullDevice; process.standardInput = FileHandle.nullDevice
+        guard (try? process.run()) != nil else { return nil }
+        let status = output.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return claudeLoggedIn(status: status)
+    }
+}
+
+/// Otty knows which agent session each pane holds, which is the only way back to a session
+/// started in a terminal: the session itself records no route.
+enum QuickInputOtty {
+    static func pane(for sessionID: String, in listing: Data) -> String? {
+        guard let root = try? JSONSerialization.jsonObject(with: listing) as? [String: Any],
+              let panes = root["data"] as? [[String: Any]] else { return nil }
+        return panes.first { $0["agent_session_id"] as? String == sessionID }?["id"] as? String
+    }
+    static func url(pane: String) -> URL? {
+        pane.range(of: #"^[A-Za-z0-9_-]{1,128}$"#, options: .regularExpression) == nil ? nil : URL(string: "otty://pane/" + pane)
+    }
+    static func route(for session: AgentDockSession) -> URL? {
+        let bundle = "io.appmakes.otty"
+        guard !NSRunningApplication.runningApplications(withBundleIdentifier: bundle).isEmpty,
+              let application = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundle) else { return nil }
+        let process = Process(), output = Pipe()
+        process.executableURL = application.appendingPathComponent("Contents/MacOS/otty-cli")
+        process.arguments = ["pane", "list", "--json"]
+        process.standardOutput = output; process.standardError = FileHandle.nullDevice; process.standardInput = FileHandle.nullDevice
+        guard (try? process.run()) != nil else { return nil }
+        let listing = output.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return pane(for: session.id, in: listing).flatMap(url(pane:))
     }
 }
 
@@ -269,6 +336,10 @@ struct QuickInputEnvironment {
     var chooseDirectory: () -> String? = { nil }
     /// Returns the terminal's bundle ID, or nil when nothing could be started.
     var start: (QuickInputStart.Request) -> String? = QuickInputLauncher.launch
+    /// False when the client's command line is known not to work; nil when it cannot be told.
+    var readiness: (WorkSource) -> Bool? = QuickInputReadiness.check
+    /// A way back to a session that records none of its own.
+    var terminalRoute: (AgentDockSession) -> URL? = QuickInputOtty.route(for:)
     var activate: (String) -> Void = { bundle in NSRunningApplication.runningApplications(withBundleIdentifier: bundle).first?.activate() }
     var startTimeout: TimeInterval = 25
     /// Checks supply their own chooser; the real one needs the panel to hand focus back to.
@@ -296,6 +367,7 @@ final class QuickInputModel: ObservableObject {
     @Published private(set) var warning: String?
     @Published private(set) var receipt: QuickInputReceipt?
     @Published private(set) var memory: QuickInputMemory
+    @Published private var notReady = Set<WorkSource>()
     private var pickerToken: NSRange?
     private var agentPicked = false
     private var pendingStart: PendingStart?
@@ -350,7 +422,11 @@ final class QuickInputModel: ObservableObject {
         QuickInputCatalog.projects(sessions: dockSessions, recents: memory.recents, exists: environment.directoryExists)
     }
     var rows: [QuickInputRow] {
-        pickerKind == .agent ? QuickInputCatalog.agentRows(sources: selectedSources, quota: state.dockQuota(for:), query: pickerQuery) : []
+        guard pickerKind == .agent else { return [] }
+        return QuickInputCatalog.agentRows(sources: selectedSources, quota: state.dockQuota(for:), query: pickerQuery).map { row in
+            guard opensInstead(row.source) else { return row }
+            return QuickInputRow(id: row.id, source: row.source, title: row.title, subtitle: "命令行未登录，带到 \(destination(row.source))", trailing: row.trailing, tone: row.tone)
+        }
     }
     var workspaces: [QuickInputProject] {
         QuickInputCatalog.workspaces(projects: projects, sessions: dockSessions, query: pickerQuery)
@@ -382,7 +458,8 @@ final class QuickInputModel: ObservableObject {
             guard QuickInputCatalog.takesMessages(session) else { return "打开会话" }
             return session.running ? "插入当前步" : "发送"
         }
-        return targetAgent != nil && project != nil ? "发送" : "下一步"
+        guard let source = targetAgent, project != nil else { return "下一步" }
+        return opensInstead(source) ? openVerb(source) ?? "发送" : "发送"
     }
     /// The session under the cursor in the right column, if any.
     private var selectedPlaceSession: AgentDockSession? {
@@ -411,11 +488,13 @@ final class QuickInputModel: ObservableObject {
             return openVerb(agent(for: focus))
         }
         if let session = targetSession { return QuickInputCatalog.takesMessages(session) ? "打开会话" : nil }
-        return project == nil ? nil : openVerb(targetAgent)
+        guard project != nil, let source = targetAgent, !opensInstead(source) else { return nil }
+        return openVerb(source)
     }
     var hint: String? {
         if notice != nil { return notice }
         if target == nil && project == nil { return "只选这一次，之后每个工作区记住上次的选择。" }
+        if targetSession == nil, let source = targetAgent, opensInstead(source) { return "\(source.clientName) 的命令行还没登录，不能直接开工，所以带到 \(destination(source))。" }
         if let session = targetSession, !QuickInputCatalog.takesMessages(session) {
             return QuickInputCatalog.isWaiting(session) ? "它在等你回应，内容会替你复制好。" : "这个会话只能在客户端里继续，内容会替你复制好。"
         }
@@ -424,8 +503,22 @@ final class QuickInputModel: ObservableObject {
 
     // MARK: Editing
 
+    /// New sessions can only start where the command line works. Until a check answers, assume it does.
+    private func canStart(_ source: WorkSource) -> Bool { QuickInputCapabilities.of(source).start && !notReady.contains(source) }
+    /// Starting does nothing useful here, so Enter opens the client instead.
+    private func opensInstead(_ source: WorkSource) -> Bool { !canStart(source) && QuickInputCapabilities.of(source).prefill }
+    private func refreshReadiness() {
+        let readiness = environment.readiness
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let working = readiness(.claude)
+            DispatchQueue.main.async {
+                if working == false { self?.notReady.insert(.claude) } else { self?.notReady.remove(.claude) }
+            }
+        }
+    }
     func prepareForSummon() {
         notice = nil; closePicker()
+        refreshReadiness()
         if case .session = target, targetSession == nil { target = nil }
         if target == nil {
             if project == nil, let last = memory.lastProject, environment.directoryExists(last) { project = QuickInputProject(path: last) }
@@ -558,7 +651,7 @@ final class QuickInputModel: ObservableObject {
         guard openClient || !text.isEmpty else { return }
         guard case .agent(let source) = target else { openPicker(.agent, note: "先选谁来做，内容不会丢。"); return }
         guard let project else { openPicker(.place, note: "还差工作区，内容不会丢。"); return }
-        if openClient {
+        if openClient || opensInstead(source) {
             if QuickInputCapabilities.of(source).prefill { handOff(text, to: source, in: project) }
         } else { start(text, source: source, in: project) }
     }
@@ -613,8 +706,10 @@ final class QuickInputModel: ObservableObject {
     private func open(_ session: AgentDockSession, text: String) {
         if let path = QuickInputCatalog.path(of: session), QuickInputCapabilities.of(session.source).start { remember(agent: session.source, project: path) }
         // Opening a session with no route copies its resume command, which would replace the text.
-        let reachable = session.navigationURL != nil || session.localSessionLock != nil || session.localBridgeRoot != nil
-        if reachable { state.openAgentSession(session) }
+        let recorded = session.navigationURL != nil || session.localSessionLock != nil || session.localBridgeRoot != nil
+        let terminal = recorded ? nil : environment.terminalRoute(session)
+        let reachable = recorded || terminal.map(environment.open) == true
+        if recorded { state.openAgentSession(session) }
         if !text.isEmpty { environment.copy(text) }
         finishComposing()
         onDismiss()
