@@ -432,7 +432,6 @@ final class AppState: ObservableObject {
     @Published var quickInputShortcut = QuickInputShortcut.optionSpace { didSet { defaults.set(quickInputShortcut.rawValue, forKey: "quickInput.shortcut") } }
     @Published var quickInputShortcutError: String?
     @Published var quickInputPulse = QuickInputPulse()
-    @Published var quickInputQueued: [WorkSource: Int] = [:]
     let quickInputSummon = PassthroughSubject<Void, Never>()
     /// The same store as every other preference, so a preview build keeps its own.
     var quickInputDefaults: UserDefaults { defaults }

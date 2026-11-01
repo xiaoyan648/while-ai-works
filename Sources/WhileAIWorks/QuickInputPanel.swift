@@ -20,16 +20,21 @@ final class QuickInputTextView: NSTextView {
     override func keyDown(with event: NSEvent) {
         guard let model, !hasMarkedText() else { super.keyDown(with: event); return }
         let modifiers = event.modifierFlags.intersection([.command, .shift, .control, .option])
+        let inPlace = model.pickerVisible && model.pickerKind == .place
         switch Int(event.keyCode) {
         case 36, 76:
             if modifiers == .shift { insertText("\n", replacementRange: selectedRange()) }
-            else { model.submit(alternate: modifiers == .command) }
+            else { model.submit(openClient: modifiers == .command) }
         case 53:
             if model.pickerVisible { model.closePicker() } else { onEscape() }
         case 48 where modifiers.isEmpty:
-            if model.pickerVisible { model.pickSelected() } else { model.togglePicker(.target) }
+            if inPlace { if model.placePane == .workspaces { model.enterSessions() } else { model.leaveSessions() } }
+            else if model.pickerVisible { model.pickSelected() }
+            else { model.togglePicker(.agent) }
         case 125 where model.pickerVisible: model.moveSelection(1)
         case 126 where model.pickerVisible: model.moveSelection(-1)
+        case 124 where inPlace && selectedRange().location == (string as NSString).length: model.enterSessions()
+        case 123 where inPlace && model.placePane == .sessions: model.leaveSessions()
         default: super.keyDown(with: event)
         }
     }
@@ -130,32 +135,39 @@ private struct QuickInputHoverFill: ViewModifier {
     }
 }
 
+private struct QuickInputHeights: PreferenceKey {
+    static var defaultValue: [String: CGFloat] = [:]
+    static func reduce(value: inout [String: CGFloat], nextValue: () -> [String: CGFloat]) { value.merge(nextValue()) { $1 } }
+}
+private extension View {
+    func reportHeight(_ name: String) -> some View {
+        background(GeometryReader { Color.clear.preference(key: QuickInputHeights.self, value: [name: $0.size.height]) })
+    }
+}
+
 struct QuickInputView: View {
     @ObservedObject var model: QuickInputModel
     @ObservedObject var state: AppState
     let focusRequest: Int
     let onEscape: () -> Void
+    let onHeight: (CGFloat) -> Void
     @State private var editorHeight = QuickInputEditor.lineHeight
+    @State private var pointer: CGPoint?
+    @Namespace private var highlights
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private var slide: Animation? { reduceMotion ? nil : .spring(duration: 0.16, bounce: 0) }
 
+    /// The window follows the reported height and the footer stays on its bottom edge, so
+    /// the list opens between them instead of the footer jumping when the size settles.
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            if let warning = model.warning {
-                Text(warning).font(.system(size: 13)).foregroundStyle(Theme.attention)
-                    .padding(.horizontal, 18).padding(.top, 11)
-            }
-            ZStack(alignment: .topLeading) {
-                if model.draft.isEmpty {
-                    Text("要做什么？  @ 选谁   # 选项目").font(.system(size: 19)).foregroundStyle(.secondary).allowsHitTesting(false)
-                }
-                QuickInputEditor(model: model, height: $editorHeight, focusRequest: focusRequest, onEscape: onEscape)
-                    .frame(height: editorHeight)
-            }
-            .padding(.horizontal, 18).padding(.top, 15).padding(.bottom, 13)
-            if model.pickerVisible { list }
-            footer
+        VStack(spacing: 0) {
+            top.fixedSize(horizontal: false, vertical: true).reportHeight("top")
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top).clipped()
+            footer.fixedSize(horizontal: false, vertical: true).reportHeight("footer")
         }
         .frame(width: 640)
+        .onPreferenceChange(QuickInputHeights.self) { heights in onHeight(ceil(heights.values.reduce(0, +))) }
         .overlay {
             RoundedRectangle(cornerRadius: QuickInputController.cornerRadius, style: .continuous)
                 .strokeBorder(LinearGradient(colors: scheme == .dark ? [.white.opacity(0.22), .white.opacity(0.1)] : [.white.opacity(0.75), .black.opacity(0.1)],
@@ -164,57 +176,177 @@ struct QuickInputView: View {
         }
     }
 
-    private var list: some View {
-        let rows = model.rows
-        let headers = rows.filter { $0.section != nil }.count
-        let wanted = CGFloat(rows.count) * 40 + CGFloat(headers) * 25 + 12 + (model.pickerNote == nil ? 0 : 30)
-        return VStack(spacing: 0) {
-            Rectangle().fill(.separator).frame(height: 0.5)
-            ScrollViewReader { reader in
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 0) {
-                        if let note = model.pickerNote {
-                            Text(note).font(.system(size: 13)).foregroundStyle(Theme.attention).padding(.horizontal, 10).padding(.vertical, 7)
-                        }
-                        ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
-                            if let section = row.section {
-                                Text(section).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
-                                    .padding(.horizontal, 10).padding(.top, 8).padding(.bottom, 3).frame(height: 25, alignment: .bottomLeading)
-                            }
-                            rowView(row, selected: index == model.selection).id(row.id)
-                        }
-                    }
-                    .padding(6)
-                }
-                .scrollIndicators(.never)
-                .onChange(of: model.selection) { _, selection in
-                    if rows.indices.contains(selection) { reader.scrollTo(rows[selection].id) }
-                }
+    private var top: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if let warning = model.warning {
+                Text(warning).font(.system(size: 13)).foregroundStyle(Theme.attention)
+                    .padding(.horizontal, 18).padding(.top, 11)
             }
-            .frame(height: min(300, wanted))
+            ZStack(alignment: .topLeading) {
+                if model.draft.isEmpty {
+                    Text("要做什么？  @ 选谁   # 选工作区或会话").font(.system(size: 19)).foregroundStyle(.secondary).allowsHitTesting(false)
+                }
+                QuickInputEditor(model: model, height: $editorHeight, focusRequest: focusRequest, onEscape: onEscape)
+                    .frame(height: editorHeight)
+            }
+            .padding(.horizontal, 18).padding(.top, 15).padding(.bottom, 13)
+            if model.pickerVisible {
+                Rectangle().fill(.separator).frame(height: 0.5)
+                if let note = model.pickerNote {
+                    Text(note).font(.system(size: 13)).foregroundStyle(Theme.attention)
+                        .padding(.horizontal, 16).padding(.top, 9).padding(.bottom, 2)
+                }
+                if model.pickerKind == .place { placeList } else { agentList }
+            }
         }
     }
 
-    private func rowView(_ row: QuickInputRow, selected: Bool) -> some View {
-        Button { model.pick(row) } label: {
-            HStack(spacing: 10) {
-                Group {
-                    if let source = row.source { AgentMark(source: source, size: 22).opacity(row.enabled ? 1 : 0.45) }
-                    else { Image(systemName: row.kind == .browse ? "folder" : "number").font(.system(size: 13, weight: .medium)).foregroundStyle(.secondary).frame(width: 22, height: 22) }
+    private func highlight(_ on: Bool, id: String, radius: CGFloat = 8, quiet: Bool = false) -> some View {
+        ZStack {
+            if on {
+                RoundedRectangle(cornerRadius: radius, style: .continuous).fill(quiet ? Theme.well : Theme.wellStrong)
+                    .matchedGeometryEffect(id: id, in: highlights)
+            }
+        }
+    }
+
+    private var agentList: some View {
+        let rows = model.rows
+        return VStack(spacing: 0) {
+            ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
+                Button { model.pick(row) } label: {
+                    HStack(spacing: 10) {
+                        AgentMark(source: row.source, size: 22).opacity(row.enabled ? 1 : 0.45)
+                        Text(row.title).font(.system(size: 14, weight: .medium)).lineLimit(1).fixedSize()
+                            .foregroundStyle(row.enabled ? Color.primary : Color.secondary)
+                        Text(row.subtitle).font(.system(size: 13)).foregroundStyle(.secondary).lineLimit(1)
+                        Spacer(minLength: 8)
+                        Text(row.trailing).font(.system(size: 12)).lineLimit(1).fixedSize()
+                            .foregroundStyle(row.tone == .attention ? Theme.attention : Color.secondary)
+                    }
+                    .padding(.horizontal, 10).frame(height: 40).contentShape(Rectangle())
+                    .background(highlight(index == model.selection, id: "agent", radius: 9))
                 }
-                Text(row.title).font(.system(size: 14, weight: .medium)).lineLimit(1).frame(maxWidth: 300, alignment: .leading).fixedSize(horizontal: true, vertical: false)
-                    .foregroundStyle(row.enabled ? Color.primary : Color.secondary)
-                Text(row.subtitle).font(.system(size: 13)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                .buttonStyle(.plain).focusable(false).modifier(QuickInputHoverFill(radius: 9))
+                .accessibilityIdentifier("quick-input-" + row.id)
+            }
+        }
+        .padding(6)
+        .animation(slide, value: model.selection)
+    }
+
+    private var placeList: some View {
+        let workspaces = model.workspaces, sessions = model.focusedSessions, pane = model.placePane
+        let focus = model.focusedWorkspace
+        return HStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 0) {
+                columnTitle("工作区")
+                ScrollViewReader { reader in
+                    ScrollView {
+                        VStack(spacing: 0) {
+                            ForEach(Array(workspaces.enumerated()), id: \.element.id) { index, project in
+                                Button { model.pick(workspace: project) } label: {
+                                    HStack(spacing: 8) {
+                                        Text(project.name).font(.system(size: 14, weight: .medium)).lineLimit(1).truncationMode(.middle)
+                                        Spacer(minLength: 4)
+                                        let count = model.sessionCount(in: project)
+                                        if count > 0 { Text(String(count)).font(.system(size: 12)).foregroundStyle(.secondary) }
+                                    }
+                                    .padding(.horizontal, 10).frame(height: 36).contentShape(Rectangle())
+                                    .background(highlight(project == focus, id: "workspace", quiet: pane == .sessions))
+                                }
+                                .buttonStyle(.plain).focusable(false).id(project.id)
+                                .help(project.path)
+                                .accessibilityIdentifier("quick-input-workspace-" + project.name)
+                                // A pointer resting where the list opens must not steal focus from the keyboard.
+                                .onContinuousHover { phase in
+                                    guard case .active = phase else { return }
+                                    let location = NSEvent.mouseLocation
+                                    if let pointer, pointer != location { model.focusWorkspace(at: index) }
+                                    pointer = location
+                                }
+                            }
+                            if model.pickerQuery.isEmpty {
+                                Button(action: model.browseForWorkspace) {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "folder").font(.system(size: 12))
+                                        Text("选择其他目录…").font(.system(size: 13))
+                                        Spacer(minLength: 0)
+                                    }
+                                    .foregroundStyle(.secondary).padding(.horizontal, 10).frame(height: 36).contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain).focusable(false).modifier(QuickInputHoverFill())
+                            }
+                        }
+                    }
+                    .scrollIndicators(.never)
+                    .onChange(of: model.workspaceIndex) { _, _ in if let focus { reader.scrollTo(focus.id) } }
+                }
+            }
+            .padding(6).frame(width: 216)
+            Rectangle().fill(.separator).frame(width: 0.5)
+            VStack(alignment: .leading, spacing: 0) {
+                columnTitle(focus.map { $0.name + " 的会话" } ?? "会话").lineLimit(1)
+                ScrollViewReader { reader in
+                    ScrollView {
+                        VStack(spacing: 0) {
+                            newSessionRow(focus)
+                            ForEach(Array(sessions.enumerated()), id: \.element.dockIdentity) { index, session in
+                                sessionRow(session, selected: pane == .sessions && model.sessionIndex == index + 1)
+                            }
+                        }
+                    }
+                    .scrollIndicators(.never)
+                    .id(focus?.id)
+                    .transition(.opacity)
+                    .onChange(of: model.sessionIndex) { _, index in
+                        if index > 0, sessions.indices.contains(index - 1) { reader.scrollTo(sessions[index - 1].dockIdentity) }
+                    }
+                }
+            }
+            .padding(6).frame(maxWidth: .infinity)
+        }
+        .frame(height: 286)
+        .animation(slide, value: model.workspaceIndex)
+        .animation(slide, value: model.sessionIndex)
+        .animation(slide, value: pane == .sessions)
+    }
+    private func columnTitle(_ text: String) -> some View {
+        Text(text).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary).padding(.horizontal, 10).padding(.top, 5).padding(.bottom, 4)
+    }
+    private func newSessionRow(_ focus: QuickInputProject?) -> some View {
+        Button { if let focus { model.pick(workspace: focus) } } label: {
+            HStack(spacing: 9) {
+                Image(systemName: "plus").font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
+                    .frame(width: 18, height: 18).background(Circle().fill(Theme.well))
+                Text("开新会话").font(.system(size: 14, weight: .medium))
+                Spacer(minLength: 8)
+                if let source = focus.flatMap({ model.memory.projectAgents[$0.path] }).flatMap(WorkSource.init(rawValue:)) ?? model.targetAgent {
+                    Text(source.clientName).font(.system(size: 12)).foregroundStyle(.secondary)
+                }
+            }
+            .padding(.horizontal, 10).frame(height: 36).contentShape(Rectangle())
+            .background(highlight(model.placePane == .sessions && model.sessionIndex == 0, id: "session"))
+        }
+        .buttonStyle(.plain).focusable(false).modifier(QuickInputHoverFill())
+    }
+    private func sessionRow(_ session: AgentDockSession, selected: Bool) -> some View {
+        let row = QuickInputCatalog.sessionRow(session)
+        return Button { model.pick(session: session) } label: {
+            HStack(spacing: 9) {
+                AgentMark(source: session.source, size: 18)
+                Text(session.title).font(.system(size: 14, weight: .medium)).lineLimit(1)
                 Spacer(minLength: 8)
                 Text(row.trailing).font(.system(size: 12)).lineLimit(1).fixedSize()
                     .foregroundStyle(row.tone == .working ? Theme.accent : row.tone == .attention ? Theme.attention : Color.secondary)
             }
-            .padding(.horizontal, 10).frame(height: 40).contentShape(Rectangle())
-            .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(selected ? Theme.wellStrong : .clear))
+            .padding(.horizontal, 10).frame(height: 36).contentShape(Rectangle())
+            .background(highlight(selected, id: "session"))
         }
-        .buttonStyle(.plain).focusable(false)
-        .modifier(QuickInputHoverFill(radius: 9))
-        .accessibilityIdentifier("quick-input-row-" + row.id)
+        .buttonStyle(.plain).focusable(false).modifier(QuickInputHoverFill())
+        .help(session.title)
+        .id(session.dockIdentity)
+        .accessibilityIdentifier("quick-input-" + row.id)
     }
 
     private var footer: some View {
@@ -228,7 +360,7 @@ struct QuickInputView: View {
             }
             Spacer(minLength: 4)
             if let secondary = model.secondaryVerb {
-                action(secondary, keys: ["⌘", "↵"], primary: false) { model.submit(alternate: true) }
+                action(secondary, keys: ["⌘", "↵"], primary: false) { model.submit(openClient: true) }
                     .accessibilityIdentifier("quick-input-secondary")
             }
             action(model.primaryVerb, keys: ["↵"], primary: true) { model.submit() }
@@ -254,27 +386,34 @@ struct QuickInputView: View {
 
     @ViewBuilder private var sentence: some View {
         if model.pickerVisible {
-            HStack(spacing: 12) { word("↑↓ 移动"); word("esc 返回") }.padding(.horizontal, 3)
+            HStack(spacing: 12) {
+                word("↑↓ 移动")
+                if model.pickerKind == .place { word(model.placePane == .sessions ? "← 工作区" : "→ 选会话") }
+                word("esc 返回")
+            }
+            .padding(.horizontal, 3)
         } else if let session = model.targetSession {
             HStack(spacing: 3) {
                 word("继续")
-                segment(session.title, source: session.source, filled: true) { model.togglePicker(.target) }
+                segment(session.title, source: session.source, filled: true) { model.togglePicker(.place) }
                 if let path = QuickInputCatalog.path(of: session) { word(QuickInputProject(path: path).name + " ·") }
-                Text(session.running ? "运行中" : "空闲").font(.system(size: 13)).foregroundStyle(session.running ? Theme.accent : Color.secondary)
+                let row = QuickInputCatalog.sessionRow(session)
+                Text(row.trailing).font(.system(size: 13))
+                    .foregroundStyle(row.tone == .working ? Theme.accent : row.tone == .attention ? Theme.attention : Color.secondary)
                 Button(action: model.clearSessionTarget) {
                     Image(systemName: "xmark").font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary)
                         .frame(width: 24, height: 24).contentShape(Rectangle())
                 }
                 .buttonStyle(.plain).focusable(false).modifier(QuickInputHoverFill(radius: 6))
-                .help("改回新任务").accessibilityLabel("改回新任务")
+                .help("改回新会话").accessibilityLabel("改回新会话")
             }
         } else {
             HStack(spacing: 3) {
                 word("交给")
-                segment(model.targetAgent?.clientName ?? "选择 Agent", source: model.targetAgent, filled: model.targetAgent != nil) { model.togglePicker(.target) }
+                segment(model.targetAgent?.clientName ?? "选择 Agent", source: model.targetAgent, filled: model.targetAgent != nil) { model.togglePicker(.agent) }
                 word("在")
-                segment(model.project?.name ?? "选择项目", source: nil, filled: model.project != nil) { model.togglePicker(.project) }
-                word("开新任务")
+                segment(model.project?.name ?? "选择工作区", source: nil, filled: model.project != nil) { model.togglePicker(.place) }
+                word("开新会话")
             }
         }
     }
@@ -311,13 +450,14 @@ struct QuickInputReceiptView: View {
         switch action {
         case .open: return "回到会话"
         case .restore: return "打开草稿"
-        case .cancelQueue: return "取消排队"
+        case .activate: return "打开终端"
+        case .dismiss: return "知道了"
         }
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(receipt.title).font(.system(size: 14, weight: .semibold)).foregroundStyle(titleColor)
-            Text(receipt.body).font(.system(size: 13)).foregroundStyle(.secondary).lineSpacing(2).fixedSize(horizontal: false, vertical: true)
+            Text(receipt.body).font(.system(size: 13)).foregroundStyle(.secondary).lineSpacing(2).lineLimit(3).fixedSize(horizontal: false, vertical: true)
             if !receipt.actions.isEmpty {
                 HStack(spacing: 4) {
                     ForEach(receipt.actions.indices, id: \.self) { index in
@@ -331,8 +471,11 @@ struct QuickInputReceiptView: View {
                 .padding(.top, 6).padding(.leading, -8)
             }
         }
+        .id(receipt.id)
+        .transition(.opacity)
         .padding(.horizontal, 15).padding(.vertical, 13)
         .frame(width: 310, alignment: .leading)
+        .animation(.easeOut(duration: 0.12), value: receipt.id)
         .overlay {
             RoundedRectangle(cornerRadius: QuickInputController.cornerRadius, style: .continuous)
                 .strokeBorder(scheme == .dark ? Color.white.opacity(0.16) : Color.black.opacity(0.1), lineWidth: 0.5)
@@ -349,48 +492,46 @@ final class QuickInputController: NSObject {
     static let glass = NSVisualEffectView.Material.hudWindow
     let model: QuickInputModel
     let panel: QuickInputPanel
+    let receiptPanel: DesktopPetPanel
     private let state: AppState
     private let tileCenter: (WorkSource) -> CGPoint?
     private let dockFrame: () -> CGRect?
     private let host: NSHostingView<AnyView>
     private let focus = QuickInputFocusBox()
-    let receiptPanel: DesktopPetPanel
+    private var receiptHost: NSHostingView<AnyView>?
     private var receiptHide: DispatchWorkItem?
     private var flightWindow: NSPanel?
     private var subscriptions: Set<AnyCancellable> = []
     private var mouseMonitor: Any?
     private var resignObserver: NSObjectProtocol?
-    private var frameObserver: NSObjectProtocol?
     private var choosingDirectory = false
+    private var height: CGFloat = 76
     private(set) var isShown = false
     private var reduceMotion: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
 
     init(state: AppState, environment: QuickInputEnvironment = QuickInputEnvironment(),
          tileCenter: @escaping (WorkSource) -> CGPoint?, dockFrame: @escaping () -> CGRect?) {
         self.state = state; self.tileCenter = tileCenter; self.dockFrame = dockFrame
-        var environment = environment
-        let chooser = QuickInputDirectoryChooser()
-        environment.chooseDirectory = { chooser.choose?() }
         model = QuickInputModel(state: state, environment: environment)
         panel = QuickInputPanel(contentRect: NSRect(x: 0, y: 0, width: 640, height: 76),
                                 styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
         receiptPanel = DesktopPetPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         let model = model, focus = focus
-        var escape: () -> Void = {}
+        let relay = QuickInputRelay()
         host = NSHostingView(rootView: AnyView(QuickInputFocusReader(focus: focus) { request in
-            QuickInputView(model: model, state: state, focusRequest: request, onEscape: { escape() })
-        }.fixedSize()))
+            QuickInputView(model: model, state: state, focusRequest: request,
+                           onEscape: { relay.escape() }, onHeight: { relay.height($0) })
+        }))
         super.init()
-        escape = { [weak self] in self?.dismiss() }
-        chooser.choose = { [weak self] in self?.chooseDirectory() }
+        relay.escape = { [weak self] in self?.dismiss() }
+        relay.height = { [weak self] in self?.fit(height: $0) }
+        if environment.usesSystemChooser { model.setDirectoryChooser { [weak self] in self?.chooseDirectory() } }
         configure(panel, level: 2)
         panel.setAccessibilityLabel("快捷输入")
         panel.onCancel = { [weak self] in self?.dismiss() }
-        panel.contentView = Self.material(containing: host)
-        host.postsFrameChangedNotifications = true
-        frameObserver = NotificationCenter.default.addObserver(forName: NSView.frameDidChangeNotification, object: host, queue: .main) { [weak self] _ in
-            DispatchQueue.main.async { self?.fitToContent(animated: true) }
-        }
+        // The hosted view fills the window and never drives its size; `fit` animates the window instead.
+        host.sizingOptions = []
+        panel.contentView = Self.material(containing: host, fill: true)
         configure(receiptPanel, level: 3)
         receiptPanel.allowsKeyboard = false
         receiptPanel.setAccessibilityLabel("快捷输入回执")
@@ -402,10 +543,7 @@ final class QuickInputController: NSObject {
         state.quickInputSummon.receive(on: RunLoop.main).sink { [weak self] in self?.toggle() }.store(in: &subscriptions)
         model.$receipt.dropFirst().receive(on: RunLoop.main).sink { [weak self] in self?.showReceipt($0) }.store(in: &subscriptions)
     }
-    deinit {
-        if let frameObserver { NotificationCenter.default.removeObserver(frameObserver) }
-        removeMonitors()
-    }
+    deinit { removeMonitors() }
 
     private func configure(_ panel: NSPanel, level: Int) {
         panel.isOpaque = false; panel.backgroundColor = .clear; panel.hasShadow = true
@@ -414,13 +552,15 @@ final class QuickInputController: NSObject {
         panel.level = NSWindow.Level(rawValue: NSWindow.Level.floating.rawValue + level)
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient, .ignoresCycle]
     }
-    private static func material(containing host: NSView) -> NSVisualEffectView {
+    private static func material(containing host: NSView, fill: Bool) -> NSVisualEffectView {
         let material = NSVisualEffectView()
         material.material = glass; material.state = .active; material.blendingMode = .behindWindow
         material.maskImage = MenuBarPanelController.roundedMask(radius: cornerRadius)
         host.translatesAutoresizingMaskIntoConstraints = false
         material.addSubview(host)
-        NSLayoutConstraint.activate([host.leadingAnchor.constraint(equalTo: material.leadingAnchor), host.topAnchor.constraint(equalTo: material.topAnchor)])
+        var constraints = [host.leadingAnchor.constraint(equalTo: material.leadingAnchor), host.topAnchor.constraint(equalTo: material.topAnchor)]
+        if fill { constraints += [host.trailingAnchor.constraint(equalTo: material.trailingAnchor), host.bottomAnchor.constraint(equalTo: material.bottomAnchor)] }
+        NSLayoutConstraint.activate(constraints)
         return material
     }
 
@@ -431,14 +571,12 @@ final class QuickInputController: NSObject {
         isShown = true
         model.prepareForSummon()
         panel.appearance = state.desktopCompanionAppearance.native
-        host.layoutSubtreeIfNeeded()
-        let size = host.fittingSize.width > 0 ? host.fittingSize : panel.frame.size
+        let size = CGSize(width: 640, height: height)
         let screen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main ?? NSScreen.screens[0]
         let visible = screen.visibleFrame
         let origin = CGPoint(x: visible.midX - size.width / 2, y: visible.maxY - visible.height * 0.2 - size.height)
         let settled = CGRect(origin: origin, size: size)
         panel.setFrame(reduceMotion ? settled : settled.offsetBy(dx: 0, dy: 6), display: true)
-        panel.contentView?.frame = NSRect(origin: .zero, size: size)
         panel.alphaValue = 0
         panel.makeKeyAndOrderFront(nil)
         panel.invalidateShadow()
@@ -465,21 +603,21 @@ final class QuickInputController: NSObject {
         })
     }
 
-    private func fitToContent(animated: Bool) {
-        let size = host.fittingSize
-        guard isShown, size.width > 0, size.height > 0, size != panel.frame.size else { return }
+    /// Opening is a touch slower than closing, and the top edge never moves.
+    private func fit(height wanted: CGFloat) {
+        guard wanted > 0, abs(wanted - height) >= 0.5 else { return }
+        let growing = wanted > height
+        height = wanted
+        guard isShown else { return }
         var frame = panel.frame
-        frame.origin.y = frame.maxY - size.height
-        frame.size = size
-        if animated && !reduceMotion {
-            NSAnimationContext.runAnimationGroup({ context in
-                context.duration = 0.2
-                context.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.3, 1)
-                panel.animator().setFrame(frame, display: true)
-            }, completionHandler: { [weak self] in self?.panel.invalidateShadow() })
-        } else {
-            panel.setFrame(frame, display: true); panel.invalidateShadow()
-        }
+        frame.origin.y = frame.maxY - wanted
+        frame.size.height = wanted
+        if reduceMotion { panel.setFrame(frame, display: true); panel.invalidateShadow(); return }
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = growing ? 0.2 : 0.14
+            context.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.3, 1)
+            panel.animator().setFrame(frame, display: true)
+        }, completionHandler: { [weak self] in self?.panel.invalidateShadow() })
     }
 
     private func installMonitors() {
@@ -503,7 +641,7 @@ final class QuickInputController: NSObject {
         defer { choosingDirectory = false }
         let open = NSOpenPanel()
         open.canChooseDirectories = true; open.canChooseFiles = false; open.allowsMultipleSelection = false
-        open.prompt = "选择项目"
+        open.prompt = "选择工作区"
         NSApp.activate(ignoringOtherApps: true)
         let answer = open.runModal() == .OK ? open.url?.path : nil
         panel.makeKeyAndOrderFront(nil)
@@ -514,9 +652,13 @@ final class QuickInputController: NSObject {
     /// The note leaves the panel's middle and lands on the agent's tile, which is where
     /// the user should look next. Without a visible tile on this screen it simply arrives.
     private func fly(_ text: String, source: WorkSource, finish: @escaping () -> Void) {
+        let land = {
+            DockStampCenter.shared.contact(sound: false)
+            finish()
+        }
         let start = CGPoint(x: panel.frame.midX, y: panel.frame.midY)
         guard !reduceMotion, let end = tileCenter(source),
-              let screen = NSScreen.screens.first(where: { $0.frame.contains(start) }), screen.frame.contains(end) else { finish(); return }
+              let screen = NSScreen.screens.first(where: { $0.frame.contains(start) }), screen.frame.contains(end) else { land(); return }
         let scale = screen.backingScaleFactor
         let dark = panel.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
         let rendered: CGImage? = MainActor.assumeIsolated {
@@ -524,7 +666,7 @@ final class QuickInputController: NSObject {
             note.scale = scale
             return note.cgImage
         }
-        guard let image = rendered else { finish(); return }
+        guard let image = rendered else { land(); return }
         let overlay = NSPanel(contentRect: screen.frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         configure(overlay, level: 4)
         overlay.hasShadow = false; overlay.ignoresMouseEvents = true
@@ -552,7 +694,7 @@ final class QuickInputController: NSObject {
         CATransaction.begin()
         CATransaction.setCompletionBlock { [weak self] in
             self?.flightWindow?.orderOut(nil); self?.flightWindow = nil
-            finish()
+            land()
         }
         layer.add(group, forKey: "flight")
         CATransaction.commit()
@@ -562,25 +704,32 @@ final class QuickInputController: NSObject {
         receiptHide?.cancel(); receiptHide = nil
         guard let receipt else { hideReceipt(); return }
         receiptPanel.appearance = state.desktopCompanionAppearance.native
-        let view = NSHostingView(rootView: QuickInputReceiptView(receipt: receipt, perform: { [weak self] in self?.model.perform($0) }).fixedSize())
-        receiptPanel.contentView = Self.material(containing: view)
-        view.layoutSubtreeIfNeeded()
-        let size = view.fittingSize
+        let content = AnyView(QuickInputReceiptView(receipt: receipt, perform: { [weak self] in self?.model.perform($0) }).fixedSize())
         let wasVisible = receiptPanel.isVisible && receiptPanel.alphaValue > 0
+        if let receiptHost { receiptHost.rootView = content }
+        else {
+            let created = NSHostingView(rootView: content)
+            created.sizingOptions = [.intrinsicContentSize]
+            receiptHost = created
+            receiptPanel.contentView = Self.material(containing: created, fill: false)
+        }
+        guard let receiptHost else { return }
+        receiptHost.layoutSubtreeIfNeeded()
+        let size = receiptHost.fittingSize
         let settled = receiptFrame(size: size)
         let edgeOffset: CGFloat = dockFrame() == nil || reduceMotion ? 0 : state.desktopDockEdge == .right ? 14 : state.desktopDockEdge == .left ? -14 : 0
-        receiptPanel.setFrame(wasVisible ? settled : settled.offsetBy(dx: edgeOffset, dy: 0), display: true)
-        receiptPanel.contentView?.frame = NSRect(origin: .zero, size: size)
-        if !wasVisible { receiptPanel.alphaValue = 0 }
+        if !wasVisible {
+            receiptPanel.setFrame(settled.offsetBy(dx: edgeOffset, dy: 0), display: true)
+            receiptPanel.alphaValue = 0
+        }
         receiptPanel.orderFrontRegardless()
-        receiptPanel.invalidateShadow()
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = reduceMotion ? 0.08 : 0.26
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = reduceMotion ? 0.08 : wasVisible ? 0.16 : 0.26
             context.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 1.1, 0.4, 1)
             receiptPanel.animator().alphaValue = 1
             receiptPanel.animator().setFrame(settled, display: true)
-        }
-        guard !receipt.lingers, !receipt.pending else { return }
+        }, completionHandler: { [weak self] in self?.receiptPanel.invalidateShadow() })
+        guard !receipt.lingers else { return }
         let hide = DispatchWorkItem { [weak self] in self?.model.dismissReceipt() }
         receiptHide = hide
         DispatchQueue.main.asyncAfter(deadline: .now() + 4, execute: hide)
@@ -614,8 +763,9 @@ final class QuickInputController: NSObject {
     }
 }
 
-private final class QuickInputDirectoryChooser {
-    var choose: (() -> String?)?
+private final class QuickInputRelay {
+    var escape: () -> Void = {}
+    var height: (CGFloat) -> Void = { _ in }
 }
 
 final class QuickInputFocusBox: ObservableObject {

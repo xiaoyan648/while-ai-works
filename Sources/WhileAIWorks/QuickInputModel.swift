@@ -1,4 +1,5 @@
 import AppKit
+import AgentHUDCore
 import Combine
 
 struct QuickInputProject: Equatable, Identifiable, Codable {
@@ -12,26 +13,18 @@ enum QuickInputTarget: Equatable {
     case session(String)
 }
 
-enum QuickInputPickerKind: Equatable { case target, project }
+enum QuickInputPickerKind: Equatable { case agent, place }
+enum QuickInputPlacePane: Equatable { case workspaces, sessions }
 
 struct QuickInputRow: Identifiable, Equatable {
-    enum Kind: Equatable { case agent(WorkSource), session(AgentDockSession), project(QuickInputProject), browse }
     enum Tone: Equatable { case plain, working, attention }
     let id: String
-    let kind: Kind
+    let source: WorkSource
     let title: String
     let subtitle: String
     var trailing = ""
     var tone = Tone.plain
     var enabled = true
-    var section: String? = nil
-    var source: WorkSource? {
-        switch kind {
-        case .agent(let source): return source
-        case .session(let session): return session.source
-        case .project, .browse: return nil
-        }
-    }
 }
 
 /// `@` and `#` only count at a word start, so mail addresses and `issue#12` stay plain text.
@@ -60,10 +53,25 @@ enum QuickInputToken {
     }
 }
 
+/// What each client can do. The panel offers only what is declared here, and a new client
+/// needs an entry rather than a new interaction.
+struct QuickInputCapabilities: Equatable {
+    /// Start a session that begins working on the text at once.
+    var start = false
+    /// Open the client with the text filled in, leaving the send to the user.
+    var prefill = false
+    static func of(_ source: WorkSource) -> QuickInputCapabilities {
+        switch source {
+        case .codex, .claude: return .init(start: true, prefill: true)
+        case .hermes: return .init(start: true)
+        case .dsh, .qoder, .workbuddy: return .init()
+        }
+    }
+}
+
 /// Official deep links only fill the client's composer. The user still presses send there.
 enum QuickInputHandoff {
     static let promptLimit = 5000
-    static func supports(_ source: WorkSource) -> Bool { source == .codex || source == .claude }
     static func destination(_ source: WorkSource) -> String { source == .claude ? "终端" : source.clientName }
     static func url(source: WorkSource, path: String, prompt: String?) -> URL? {
         var fields: [(String, String)]
@@ -78,7 +86,104 @@ enum QuickInputHandoff {
         return URL(string: base + "?" + query.joined(separator: "&"))
     }
     static func missingHandler(_ source: WorkSource) -> String {
-        source == .claude ? "还不能打开 Claude Code。在终端运行一次 claude 并发送一条消息后再试。" : "没有找到 Codex 桌面端。"
+        source == .claude ? "还不能打开 Claude Code。在终端运行一次 claude 并发送一条消息后再试。" : "没有找到 \(source.clientName) 桌面端。"
+    }
+}
+
+/// A new session runs in a real terminal the user can take over: its interactive mode is what
+/// keeps approvals and hooks working, and the process does not belong to WAW, so quitting or
+/// updating WAW leaves the task running. The prompt travels through a private file, so neither
+/// the shell nor the terminal ever parses it.
+enum QuickInputStart {
+    struct Request: Equatable {
+        let source: WorkSource
+        let directory: String
+        let prompt: String
+    }
+    static func arguments(source: WorkSource, executable: String, directory: String) -> [String]? {
+        switch source {
+        case .claude: return [quote(executable), "--", "\"$prompt\""]
+        case .codex: return [quote(executable), "-C", quote(directory), "--", "\"$prompt\""]
+        case .hermes: return [quote(executable), "chat", "--in", quote(directory), "--query=\"$prompt\""]
+        default: return nil
+        }
+    }
+    static func quote(_ text: String) -> String { "'" + text.replacingOccurrences(of: "'", with: "'\\''") + "'" }
+    static func script(source: WorkSource, executable: String, directory: String, promptFile: String, searchPath: String) -> String? {
+        guard let command = arguments(source: source, executable: executable, directory: directory) else { return nil }
+        return """
+        #!/bin/zsh -f
+        export PATH=\(quote(searchPath))
+        cd -- \(quote(directory)) || exit 1
+        prompt="$(cat -- \(quote(promptFile)))"
+        rm -f -- \(quote(promptFile)) "$0"
+        \(command.joined(separator: " "))
+        code=$?
+        if [ $code -ne 0 ]; then print; print "启动失败（退出码 $code）。可以关闭这个窗口。"; read -k1 -s; fi
+
+        """
+    }
+    static func executable(for source: WorkSource, searchPath: String) -> String? {
+        if source == .codex { return CodexLocator.find(path: searchPath)?.path }
+        let name = source == .claude ? "claude" : source == .hermes ? "hermes" : nil
+        guard let name else { return nil }
+        return searchPath.split(separator: ":").map { String($0) + "/" + name }.first { FileManager.default.isExecutableFile(atPath: $0) }
+    }
+}
+
+enum QuickInputTerminal: String, CaseIterable, Equatable {
+    case ghostty = "com.mitchellh.ghostty", iTerm = "com.googlecode.iterm2", terminal = "com.apple.Terminal"
+    /// The terminal already in use wins; otherwise the first one installed.
+    static func preferred(running: [String], installed: (String) -> Bool) -> QuickInputTerminal {
+        allCases.first { running.contains($0.rawValue) } ?? allCases.first { installed($0.rawValue) } ?? .terminal
+    }
+}
+
+/// Starts the script in the chosen terminal, then gives the front back to whatever the user was doing.
+enum QuickInputLauncher {
+    static func launch(_ request: QuickInputStart.Request) -> String? {
+        let search = ProcessInfo.processInfo.environment["PATH"] ?? ""
+        guard let executable = QuickInputStart.executable(for: request.source, searchPath: search) else { return nil }
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("WhileAIWorks-QuickInput", isDirectory: true)
+        let id = UUID().uuidString
+        let promptFile = folder.appendingPathComponent(id + ".txt"), scriptFile = folder.appendingPathComponent(id + ".command")
+        guard let script = QuickInputStart.script(source: request.source, executable: executable, directory: request.directory, promptFile: promptFile.path, searchPath: search) else { return nil }
+        let manager = FileManager.default
+        do {
+            try manager.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            guard manager.createFile(atPath: promptFile.path, contents: Data(request.prompt.utf8), attributes: [.posixPermissions: 0o600]),
+                  manager.createFile(atPath: scriptFile.path, contents: Data(script.utf8), attributes: [.posixPermissions: 0o700]) else { return nil }
+        } catch { return nil }
+        let workspace = NSWorkspace.shared
+        let terminal = QuickInputTerminal.preferred(running: workspace.runningApplications.compactMap(\.bundleIdentifier),
+                                                    installed: { workspace.urlForApplication(withBundleIdentifier: $0) != nil })
+        guard let application = workspace.urlForApplication(withBundleIdentifier: terminal.rawValue) else { return nil }
+        let previous = workspace.frontmostApplication
+        let process = Process()
+        // A session started from inside another Claude Code must not inherit its markers.
+        process.environment = ProcessInfo.processInfo.environment.filter { !$0.key.hasPrefix("CLAUDE_CODE_") && $0.key != "CLAUDECODE" }
+        process.standardInput = FileHandle.nullDevice; process.standardOutput = FileHandle.nullDevice; process.standardError = FileHandle.nullDevice
+        if terminal == .ghostty {
+            // Ghostty honours `-e` only when its binary is run directly, not through `open`.
+            process.executableURL = application.appendingPathComponent("Contents/MacOS/ghostty")
+            process.arguments = ["--window-save-state=never", "--working-directory=" + request.directory, "-e", scriptFile.path]
+        } else {
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+            process.arguments = ["-g", "-a", application.path, scriptFile.path]
+        }
+        do { try process.run() } catch {
+            try? manager.removeItem(at: promptFile); try? manager.removeItem(at: scriptFile)
+            return nil
+        }
+        returnFront(to: previous, from: terminal, deadline: Date().addingTimeInterval(2))
+        return terminal.rawValue
+    }
+    private static func returnFront(to previous: NSRunningApplication?, from terminal: QuickInputTerminal, deadline: Date) {
+        guard let previous, previous.bundleIdentifier != terminal.rawValue else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            if NSWorkspace.shared.frontmostApplication?.bundleIdentifier == terminal.rawValue { previous.activate() }
+            else if Date() < deadline { returnFront(to: previous, from: terminal, deadline: deadline) }
+        }
     }
 }
 
@@ -87,51 +192,44 @@ enum QuickInputCatalog {
         session.workingDirectory ?? session.project.flatMap { $0.hasPrefix("/") ? $0 : nil }
     }
     static func isWaiting(_ session: AgentDockSession) -> Bool { session.event == .approval || session.event == .input }
+    /// Whether a message can go straight in. Anything else opens in its client instead.
+    static func takesMessages(_ session: AgentDockSession) -> Bool { session.canSend && !isWaiting(session) }
 
     static func projects(sessions: [AgentDockSession], recents: [String], exists: (String) -> Bool) -> [QuickInputProject] {
         var seen = Set<String>()
         return (recents + sessions.compactMap(path)).filter { seen.insert($0).inserted && exists($0) }.map { QuickInputProject(path: $0) }
     }
 
-    static func targetRows(data: AgentDockData, sources: [WorkSource], quota: (WorkSource) -> AgentDockQuota?, query: String) -> [QuickInputRow] {
-        func matches(_ fields: String...) -> Bool {
-            query.isEmpty || fields.contains { $0.localizedCaseInsensitiveContains(query) }
-        }
-        let agents = sources.filter { matches($0.clientName, $0.rawValue) }.map { source -> QuickInputRow in
-            let supported = QuickInputHandoff.supports(source)
+    static func agentRows(sources: [WorkSource], quota: (WorkSource) -> AgentDockQuota?, query: String) -> [QuickInputRow] {
+        sources.filter { query.isEmpty || $0.clientName.localizedCaseInsensitiveContains(query) || $0.rawValue.localizedCaseInsensitiveContains(query) }.map { source in
+            let capable = QuickInputCapabilities.of(source).start
             let reading = quota(source).flatMap { $0.stale ? nil : $0.remaining }
-            return QuickInputRow(id: "agent:" + source.rawValue, kind: .agent(source), title: source.clientName,
-                subtitle: supported ? "打开\(QuickInputHandoff.destination(source))并填好内容" : "暂时不能接收任务",
-                trailing: reading.map { "额度 \(Int($0.rounded()))%" } ?? "", tone: (reading ?? 100) <= 15 ? .attention : .plain, enabled: supported)
+            return QuickInputRow(id: "agent:" + source.rawValue, source: source, title: source.clientName,
+                subtitle: capable ? "在后台终端开工，进度看猫条" : "暂时不能接收任务",
+                trailing: reading.map { "额度 \(Int($0.rounded()))%" } ?? "", tone: (reading ?? 100) <= 15 ? .attention : .plain, enabled: capable)
         }
-        let candidates = data.sessions.filter { $0.parentSessionID == nil && sources.contains($0.source) && matches($0.title, $0.source.clientName, $0.project ?? "") }
-        // Sessions that can take a message come first; the rest stay visible with the reason.
-        let ordered = candidates.filter { $0.canSend && !isWaiting($0) } + candidates.filter { !$0.canSend || isWaiting($0) }
-        let sessions = ordered.prefix(query.isEmpty ? 6 : 12).map { session -> QuickInputRow in
-            let waiting = isWaiting(session)
-            let where_ = [session.source.clientName, path(of: session).map { QuickInputProject(path: $0).name } ?? session.project].compactMap { $0 }.joined(separator: " · ")
-            return QuickInputRow(id: "session:" + session.dockIdentity, kind: .session(session), title: session.title,
-                subtitle: where_ + (session.canSend ? "" : " · 只能回原客户端"),
-                trailing: waiting ? "等你处理" : session.running ? "运行中" : session.canSend ? "空闲" : "",
-                tone: waiting ? .attention : session.running ? .working : .plain, enabled: session.canSend && !waiting)
-        }
-        var rows = agents
-        if !rows.isEmpty { rows[0].section = "开新任务" }
-        var tail = Array(sessions)
-        if !tail.isEmpty { tail[0].section = "继续会话" }
-        return rows + tail
     }
 
-    static func projectRows(projects: [QuickInputProject], memory: QuickInputMemory, query: String) -> [QuickInputRow] {
-        let names = Dictionary(grouping: projects, by: \.name)
-        var rows = projects.filter { query.isEmpty || $0.path.localizedCaseInsensitiveContains(query) }.prefix(8).map { project -> QuickInputRow in
-            let agent = memory.projectAgents[project.path].flatMap(WorkSource.init(rawValue:))
-            return QuickInputRow(id: "project:" + project.path, kind: .project(project), title: project.name,
-                subtitle: (names[project.name]?.count ?? 0) > 1 || query.isEmpty ? (project.path as NSString).abbreviatingWithTildeInPath : "",
-                trailing: agent.map { "上次用 " + $0.clientName } ?? "")
+    /// Workspaces that match by name or hold a session that does.
+    static func workspaces(projects: [QuickInputProject], sessions: [AgentDockSession], query: String) -> [QuickInputProject] {
+        guard !query.isEmpty else { return Array(projects.prefix(12)) }
+        return projects.filter { project in
+            project.path.localizedCaseInsensitiveContains(query)
+                || sessions.contains { path(of: $0) == project.path && $0.title.localizedCaseInsensitiveContains(query) }
         }
-        if query.isEmpty { rows.append(QuickInputRow(id: "browse", kind: .browse, title: "选择其他目录…", subtitle: "")) }
-        return rows
+    }
+    /// A name match shows everything in the workspace; otherwise only the sessions the search found.
+    static func sessions(in project: QuickInputProject?, of sessions: [AgentDockSession], query: String) -> [AgentDockSession] {
+        guard let project else { return [] }
+        let all = sessions.filter { $0.parentSessionID == nil && path(of: $0) == project.path }
+        let found = query.isEmpty || project.path.localizedCaseInsensitiveContains(query) ? all : all.filter { $0.title.localizedCaseInsensitiveContains(query) }
+        return Array((found.filter(takesMessages) + found.filter { !takesMessages($0) }).prefix(20))
+    }
+    static func sessionRow(_ session: AgentDockSession) -> QuickInputRow {
+        let waiting = isWaiting(session)
+        return QuickInputRow(id: "session:" + session.dockIdentity, source: session.source, title: session.title, subtitle: "",
+            trailing: waiting ? "等你处理" : !session.canSend ? "仅打开" : session.running ? "运行中" : "空闲",
+            tone: waiting ? .attention : session.running ? .working : .plain)
     }
 }
 
@@ -149,25 +247,16 @@ struct QuickInputMemory: Codable, Equatable {
     }
 }
 
-struct QuickInputQueuedMessage: Codable, Identifiable, Equatable {
-    var id = UUID()
-    let sessionID: String
-    let source: String
-    let title: String
-    let text: String
-    var idleReadings = 0
-}
-
 struct QuickInputReceipt: Identifiable, Equatable {
     enum Tone: Equatable { case progress, success, handedOff, warning, failure }
-    enum Action: Equatable { case open(AgentDockSession), restore(String), cancelQueue(UUID) }
+    enum Action: Equatable { case open(AgentDockSession), restore(String), activate(String), dismiss }
     let id = UUID()
     let title: String
     let body: String
     let tone: Tone
     var actions: [Action] = []
-    var lingers: Bool { tone == .warning || tone == .failure || !actions.filter { if case .cancelQueue = $0 { return true }; return false }.isEmpty }
-    var pending: Bool { tone == .progress }
+    /// Results the user has to deal with stay until they do; everything else fades on its own.
+    var lingers: Bool { tone == .warning || tone == .failure || tone == .progress }
     static func == (lhs: QuickInputReceipt, rhs: QuickInputReceipt) -> Bool { lhs.id == rhs.id }
 }
 
@@ -181,6 +270,12 @@ struct QuickInputEnvironment {
         return FileManager.default.fileExists(atPath: path, isDirectory: &directory) && directory.boolValue
     }
     var chooseDirectory: () -> String? = { nil }
+    /// Returns the terminal's bundle ID, or nil when nothing could be started.
+    var start: (QuickInputStart.Request) -> String? = QuickInputLauncher.launch
+    var activate: (String) -> Void = { bundle in NSRunningApplication.runningApplications(withBundleIdentifier: bundle).first?.activate() }
+    var startTimeout: TimeInterval = 25
+    /// Checks supply their own chooser; the real one needs the panel to hand focus back to.
+    var usesSystemChooser = true
 }
 
 /// The draft, who receives it and what pressing Enter does. WAW delivers and watches;
@@ -188,7 +283,7 @@ struct QuickInputEnvironment {
 final class QuickInputModel: ObservableObject {
     static let messageLimit = 16_384
     let state: AppState
-    private let environment: QuickInputEnvironment
+    private var environment: QuickInputEnvironment
     @Published private(set) var draft = ""
     @Published private(set) var draftRevision = 0
     @Published private(set) var target: QuickInputTarget?
@@ -197,31 +292,45 @@ final class QuickInputModel: ObservableObject {
     @Published private(set) var pickerQuery = ""
     @Published private(set) var pickerNote: String?
     @Published private(set) var selection = 0
+    @Published private(set) var workspaceIndex = 0
+    @Published private(set) var sessionIndex = 1
+    @Published private var chosenPane: QuickInputPlacePane?
     @Published private(set) var notice: String?
     @Published private(set) var warning: String?
     @Published private(set) var receipt: QuickInputReceipt?
     @Published private(set) var memory: QuickInputMemory
-    @Published private(set) var queue: [QuickInputQueuedMessage] = []
     private var pickerToken: NSRange?
     private var agentPicked = false
+    private var pendingStart: PendingStart?
     private var subscriptions: Set<AnyCancellable> = []
     var onDismiss: () -> Void = {}
     /// Called once with the outgoing text; the panel flies it to the dock, then calls `finish`.
     var onDispatch: (WorkSource, String, @escaping () -> Void) -> Void = { _, _, finish in finish() }
 
-    init(state: AppState, environment: QuickInputEnvironment = QuickInputEnvironment()) {
-        self.state = state; self.environment = environment
-        let defaults = state.quickInputDefaults
-        memory = defaults.data(forKey: "quickInput.memory").flatMap { try? JSONDecoder().decode(QuickInputMemory.self, from: $0) } ?? QuickInputMemory()
-        // A message left waiting when the app quit may be stale by now. It returns as a draft, never sends by itself.
-        if let saved = defaults.data(forKey: "quickInput.queue"), let queued = try? JSONDecoder().decode([QuickInputQueuedMessage].self, from: saved), !queued.isEmpty {
-            draft = queued.map(\.text).joined(separator: "\n\n")
-            defaults.removeObject(forKey: "quickInput.queue")
-        }
-        state.$agentDashboard.sink { [weak self] data in self?.advanceQueue(data) }.store(in: &subscriptions)
+    private struct PendingStart {
+        let id = UUID()
+        let source: WorkSource
+        let path: String
+        let known: Set<String>
+        let terminal: String
     }
 
-    var pickerVisible: Bool { pickerKind != nil && (!rows.isEmpty || pickerToken == nil) }
+    init(state: AppState, environment: QuickInputEnvironment = QuickInputEnvironment()) {
+        self.state = state; self.environment = environment
+        memory = state.quickInputDefaults.data(forKey: "quickInput.memory").flatMap { try? JSONDecoder().decode(QuickInputMemory.self, from: $0) } ?? QuickInputMemory()
+        state.$agentDashboard.sink { [weak self] data in self?.watchStart(data) }.store(in: &subscriptions)
+    }
+    func setDirectoryChooser(_ choose: @escaping () -> String?) { environment.chooseDirectory = choose }
+
+    // MARK: What is on show
+
+    var pickerVisible: Bool {
+        switch pickerKind {
+        case .agent: return !rows.isEmpty || pickerToken == nil
+        case .place: return !workspaces.isEmpty || pickerToken == nil
+        case nil: return false
+        }
+    }
     var selectedSources: [WorkSource] { WorkSource.dockOrder.filter { state.selectedSources.contains($0) } }
     var targetSession: AgentDockSession? {
         guard case .session(let identity) = target else { return nil }
@@ -235,26 +344,55 @@ final class QuickInputModel: ObservableObject {
         QuickInputCatalog.projects(sessions: state.agentDashboard.sessions, recents: memory.recents, exists: environment.directoryExists)
     }
     var rows: [QuickInputRow] {
-        switch pickerKind {
-        case .target: return QuickInputCatalog.targetRows(data: state.agentDashboard, sources: selectedSources, quota: state.dockQuota(for:), query: pickerQuery)
-        case .project: return QuickInputCatalog.projectRows(projects: projects, memory: memory, query: pickerQuery)
-        case nil: return []
-        }
+        pickerKind == .agent ? QuickInputCatalog.agentRows(sources: selectedSources, quota: state.dockQuota(for:), query: pickerQuery) : []
+    }
+    var workspaces: [QuickInputProject] {
+        QuickInputCatalog.workspaces(projects: projects, sessions: state.agentDashboard.sessions, query: pickerQuery)
+    }
+    var focusedWorkspace: QuickInputProject? {
+        let list = workspaces
+        return list.isEmpty ? nil : list[min(workspaceIndex, list.count - 1)]
+    }
+    var focusedSessions: [AgentDockSession] {
+        QuickInputCatalog.sessions(in: focusedWorkspace, of: state.agentDashboard.sessions, query: pickerQuery)
+    }
+    func sessionCount(in project: QuickInputProject) -> Int {
+        state.agentDashboard.sessions.filter { $0.parentSessionID == nil && QuickInputCatalog.path(of: $0) == project.path }.count
+    }
+    /// A search that only found a session title lands on that session, so Enter cannot start a new one by accident.
+    var placePane: QuickInputPlacePane {
+        if let chosenPane { return chosenPane }
+        if !pickerQuery.isEmpty, let focus = focusedWorkspace, !focus.path.localizedCaseInsensitiveContains(pickerQuery), !focusedSessions.isEmpty { return .sessions }
+        return .workspaces
     }
     /// What Enter does right now, written on the button.
     var primaryVerb: String {
-        if pickerVisible { return "选择" }
-        if let session = targetSession { return session.running ? "插入当前步" : "继续" }
-        guard case .agent(let source) = target, project != nil else { return "下一步" }
-        return "带到 " + QuickInputHandoff.destination(source)
+        if pickerVisible {
+            guard pickerKind == .place else { return "选择" }
+            return placePane == .sessions && sessionIndex > 0 && !focusedSessions.isEmpty ? "继续这个会话" : "在这里开新会话"
+        }
+        if let session = targetSession {
+            guard QuickInputCatalog.takesMessages(session) else { return "打开会话" }
+            return session.running ? "插入当前步" : "发送"
+        }
+        return targetAgent != nil && project != nil ? "发送" : "下一步"
     }
-    var secondaryVerb: String? { !pickerVisible && targetSession?.running == true ? "排队" : nil }
+    var secondaryVerb: String? {
+        guard !pickerVisible else { return nil }
+        if let session = targetSession { return QuickInputCatalog.takesMessages(session) ? "打开会话" : nil }
+        guard let source = targetAgent, project != nil, QuickInputCapabilities.of(source).prefill else { return nil }
+        return "在 " + QuickInputHandoff.destination(source) + " 打开"
+    }
     var hint: String? {
         if notice != nil { return notice }
-        if target == nil && project == nil { return "只选这一次，之后每个项目记住上次的选择。" }
-        if targetSession?.running == true { return "要打断它，回到原会话操作。" }
+        if target == nil && project == nil { return "只选这一次，之后每个工作区记住上次的选择。" }
+        if let session = targetSession, !QuickInputCatalog.takesMessages(session) {
+            return QuickInputCatalog.isWaiting(session) ? "它在等你回应，内容会替你复制好。" : "这个会话只能在客户端里继续，内容会替你复制好。"
+        }
         return nil
     }
+
+    // MARK: Editing
 
     func prepareForSummon() {
         notice = nil; closePicker()
@@ -266,10 +404,9 @@ final class QuickInputModel: ObservableObject {
     }
     private func applyRememberedAgent() {
         let remembered = project.flatMap { memory.projectAgents[$0.path] } ?? memory.lastAgent
-        guard let source = remembered.flatMap(WorkSource.init(rawValue:)), state.selectedSources.contains(source), QuickInputHandoff.supports(source) else { return }
+        guard let source = remembered.flatMap(WorkSource.init(rawValue:)), state.selectedSources.contains(source), QuickInputCapabilities.of(source).start else { return }
         target = .agent(source)
     }
-
     func textChanged(_ text: String, cursor: Int) {
         draft = text; notice = nil
         syncToken(cursor: cursor)
@@ -277,54 +414,81 @@ final class QuickInputModel: ObservableObject {
     func cursorMoved(_ cursor: Int) { syncToken(cursor: cursor) }
     private func syncToken(cursor: Int) {
         if let match = QuickInputToken.match(in: draft, cursor: cursor) {
-            let kind: QuickInputPickerKind = match.trigger == "@" ? .target : .project
-            if pickerKind != kind || pickerQuery != match.query || pickerToken != match.range { selection = 0 }
+            let kind: QuickInputPickerKind = match.trigger == "@" ? .agent : .place
+            if pickerKind != kind || pickerQuery != match.query { selection = 0; workspaceIndex = 0; sessionIndex = 1; chosenPane = nil }
             pickerKind = kind; pickerQuery = match.query; pickerToken = match.range; pickerNote = nil
         } else if pickerToken != nil { closePicker() }
     }
+
+    // MARK: Pickers
 
     func togglePicker(_ kind: QuickInputPickerKind) {
         if pickerKind == kind { closePicker() } else { openPicker(kind, note: nil) }
     }
     private func openPicker(_ kind: QuickInputPickerKind, note: String?) {
-        pickerKind = kind; pickerQuery = ""; pickerToken = nil; pickerNote = note; selection = 0
+        pickerKind = kind; pickerQuery = ""; pickerToken = nil; pickerNote = note; selection = 0; sessionIndex = 1; chosenPane = nil
+        workspaceIndex = project.flatMap { current in workspaces.firstIndex(of: current) } ?? 0
     }
-    func closePicker() { pickerKind = nil; pickerQuery = ""; pickerToken = nil; pickerNote = nil; selection = 0 }
+    func closePicker() { pickerKind = nil; pickerQuery = ""; pickerToken = nil; pickerNote = nil; selection = 0; chosenPane = nil }
     func moveSelection(_ delta: Int) {
-        let count = rows.count
-        guard count > 0 else { return }
-        selection = min(count - 1, max(0, selection + delta))
-    }
-    func pickSelected() {
-        let current = rows
-        guard current.indices.contains(selection) else { closePicker(); return }
-        pick(current[selection])
-    }
-    func pick(_ row: QuickInputRow) {
-        switch row.kind {
-        case .agent(let source):
-            guard row.enabled else { pickerNote = source.clientName + " 暂时不能接收任务，换一个吧。"; return }
-            removeToken(); target = .agent(source); agentPicked = true
-            closePicker()
-            if project == nil { openPicker(.project, note: "还差项目，内容不会丢。") }
-        case .session(let session):
-            guard row.enabled else {
-                pickerNote = QuickInputCatalog.isWaiting(session) ? "它在等你回应，先在猫条处理。" : "这个会话只能回原客户端继续。"
-                return
+        switch pickerKind {
+        case .agent: selection = min(max(0, rows.count - 1), max(0, selection + delta))
+        case .place:
+            if placePane == .sessions {
+                chosenPane = .sessions
+                sessionIndex = min(focusedSessions.count, max(0, sessionIndex + delta))
+            } else {
+                chosenPane = .workspaces
+                workspaceIndex = min(max(0, workspaces.count - 1), max(0, workspaceIndex + delta))
+                sessionIndex = 1
             }
-            removeToken(); target = .session(session.dockIdentity); warning = nil
-            closePicker()
-        case .project(let chosen):
-            removeToken(); setProject(chosen); closePicker()
-        case .browse:
-            guard let path = environment.chooseDirectory() else { return }
-            setProject(QuickInputProject(path: path)); closePicker()
+        case nil: break
         }
     }
-    private func setProject(_ chosen: QuickInputProject) {
-        project = chosen
-        if !agentPicked, case .session = target { return }
+    func focusWorkspace(at index: Int) {
+        guard pickerKind == .place, workspaces.indices.contains(index), workspaceIndex != index || placePane != .workspaces else { return }
+        workspaceIndex = index; chosenPane = .workspaces; sessionIndex = 1
+    }
+    func enterSessions() {
+        guard pickerKind == .place, focusedWorkspace != nil else { return }
+        chosenPane = .sessions; sessionIndex = focusedSessions.isEmpty ? 0 : 1
+    }
+    func leaveSessions() { if pickerKind == .place { chosenPane = .workspaces } }
+    func pickSelected() {
+        switch pickerKind {
+        case .agent:
+            let current = rows
+            if current.indices.contains(selection) { pick(current[selection]) } else { closePicker() }
+        case .place:
+            let sessions = focusedSessions
+            if placePane == .sessions, sessionIndex > 0, sessions.indices.contains(sessionIndex - 1) { pick(session: sessions[sessionIndex - 1]) }
+            else if let focus = focusedWorkspace { pick(workspace: focus) }
+            else { closePicker() }
+        case nil: break
+        }
+    }
+    func pick(_ row: QuickInputRow) {
+        guard row.enabled else { pickerNote = row.title + " 暂时不能接收任务，换一个吧。"; return }
+        removeToken(); target = .agent(row.source); agentPicked = true; warning = nil
+        closePicker()
+        if project == nil { openPicker(.place, note: "还差工作区，内容不会丢。") }
+    }
+    func pick(workspace: QuickInputProject) {
+        removeToken()
+        project = workspace
+        if case .session = target { target = nil }
         if !agentPicked { applyRememberedAgent() }
+        closePicker()
+        if target == nil { openPicker(.agent, note: "还差谁来做，内容不会丢。") }
+    }
+    func pick(session: AgentDockSession) {
+        removeToken(); target = .session(session.dockIdentity); warning = nil
+        if let path = QuickInputCatalog.path(of: session) { project = QuickInputProject(path: path) }
+        closePicker()
+    }
+    func browseForWorkspace() {
+        guard let path = environment.chooseDirectory() else { return }
+        pick(workspace: QuickInputProject(path: path))
     }
     private func removeToken() {
         guard let token = pickerToken, token.location + token.length <= (draft as NSString).length else { return }
@@ -332,43 +496,91 @@ final class QuickInputModel: ObservableObject {
         pickerToken = nil
     }
     private func setDraft(_ text: String) { draft = text; draftRevision += 1 }
-    func clearSessionTarget() { target = nil; applyRememberedAgent() }
+    func clearSessionTarget() {
+        if let source = targetSession?.source, QuickInputCapabilities.of(source).start { target = .agent(source) }
+        else { target = nil; applyRememberedAgent() }
+    }
 
-    func submit(alternate: Bool = false) {
+    // MARK: Enter
+
+    /// Enter sends and ⌘Enter opens the client. Queueing and interrupting happen there, where the session can be seen.
+    func submit(openClient: Bool = false) {
         if pickerVisible { pickSelected(); return }
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
-        guard let target else { openPicker(.target, note: "先选谁来做，内容不会丢。"); return }
-        switch target {
-        case .agent(let source):
-            guard !alternate else { return }
-            guard let project else { openPicker(.project, note: "还差项目，内容不会丢。"); return }
-            handOff(text, to: source, in: project)
-        case .session:
-            guard let session = targetSession else {
-                self.target = nil; notice = "这个会话已不在列表里，换一个吧。"; return
-            }
-            guard session.canSend, !QuickInputCatalog.isWaiting(session) else { notice = "它在等你回应，先在猫条处理。"; return }
+        if case .session = target {
+            guard let session = targetSession else { target = nil; notice = "这个会话已不在列表里，换一个吧。"; return }
+            if openClient || !QuickInputCatalog.takesMessages(session) { open(session, text: text); return }
+            guard !text.isEmpty else { return }
             guard text.utf8.count <= Self.messageLimit else { notice = "内容太长，请缩短一些。"; return }
-            if alternate {
-                guard session.running else { return }
-                enqueue(text, for: session)
-            } else { send(text, to: session) }
+            send(text, to: session)
+            return
         }
+        guard !text.isEmpty else { return }
+        guard case .agent(let source) = target else { openPicker(.agent, note: "先选谁来做，内容不会丢。"); return }
+        guard let project else { openPicker(.place, note: "还差工作区，内容不会丢。"); return }
+        if openClient {
+            if QuickInputCapabilities.of(source).prefill { handOff(text, to: source, in: project) }
+        } else { start(text, source: source, in: project) }
+    }
+
+    private func start(_ text: String, source: WorkSource, in project: QuickInputProject) {
+        let known = Set(state.agentDashboard.sessions.map(\.dockIdentity))
+        guard let terminal = environment.start(.init(source: source, directory: project.path, prompt: text)) else {
+            notice = QuickInputCapabilities.of(source).prefill ? "没能启动 \(source.clientName)。确认它已安装，或按 ⌘↵ 用客户端打开。" : "没能启动 \(source.clientName)。确认它已安装。"
+            return
+        }
+        remember(agent: source, project: project.path)
+        let pending = PendingStart(source: source, path: project.path, known: known, terminal: terminal)
+        pendingStart = pending
+        finishComposing()
+        onDismiss()
+        onDispatch(source, text) { [weak self] in
+            guard let self else { return }
+            self.pulse(source)
+            guard self.pendingStart?.id == pending.id else { return }
+            self.receipt = QuickInputReceipt(title: "正在启动 \(source.clientName)…", body: project.name + " · 在后台终端开工。", tone: .progress)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + environment.startTimeout) { [weak self] in
+            guard let self, self.pendingStart?.id == pending.id else { return }
+            self.pendingStart = nil
+            self.receipt = QuickInputReceipt(title: "还没看到 \(source.clientName) 开始工作", body: "它可能在终端里等你确认，比如是否信任这个目录。", tone: .warning,
+                                             actions: [.activate(terminal), .dismiss])
+        }
+    }
+    /// A session appearing for that client in that directory is the proof it started.
+    private func watchStart(_ data: AgentDockData) {
+        guard let pending = pendingStart else { return }
+        guard let session = data.sessions.first(where: { $0.source == pending.source && !pending.known.contains($0.dockIdentity) && QuickInputCatalog.path(of: $0) == pending.path }) else { return }
+        pendingStart = nil
+        receipt = QuickInputReceipt(title: "交给 \(pending.source.clientName) 了", body: session.title, tone: .success)
     }
 
     private func handOff(_ text: String, to source: WorkSource, in project: QuickInputProject) {
         let fits = text.count <= QuickInputHandoff.promptLimit
-        guard let url = QuickInputHandoff.url(source: source, path: project.path, prompt: fits ? text : nil) else { notice = "这个地址打不开，换个项目试试。"; return }
+        guard let url = QuickInputHandoff.url(source: source, path: project.path, prompt: fits ? text : nil) else { notice = "这个地址打不开，换个工作区试试。"; return }
         guard environment.canOpen(url) else { notice = QuickInputHandoff.missingHandler(source); return }
         if !fits { environment.copy(text) }
         guard environment.open(url) else { notice = "没能打开\(QuickInputHandoff.destination(source))，内容还在。"; return }
         remember(agent: source, project: project.path)
         finishComposing()
         onDismiss()
-        let place = QuickInputHandoff.destination(source)
-        receipt = QuickInputReceipt(title: "已带到\(place)，等你发送",
+        receipt = QuickInputReceipt(title: "已带到\(QuickInputHandoff.destination(source))，等你发送",
             body: fits ? "发送之前不会开始。" : "内容较长，已复制到剪贴板。粘贴后发送。", tone: .handedOff)
+    }
+
+    private func open(_ session: AgentDockSession, text: String) {
+        if let path = QuickInputCatalog.path(of: session), QuickInputCapabilities.of(session.source).start { remember(agent: session.source, project: path) }
+        // Opening a session with no route copies its resume command, which would replace the text.
+        let reachable = session.navigationURL != nil || session.localSessionLock != nil || session.localBridgeRoot != nil
+        if reachable { state.openAgentSession(session) }
+        if !text.isEmpty { environment.copy(text) }
+        finishComposing()
+        onDismiss()
+        if !reachable {
+            receipt = QuickInputReceipt(title: "这个会话没有跳转入口", body: text.isEmpty ? "请回到它所在的窗口。" : "内容已复制，请到它所在的窗口粘贴。", tone: .handedOff)
+        } else if !text.isEmpty {
+            receipt = QuickInputReceipt(title: "已打开会话，内容已复制", body: "粘贴后发送。要不要排队、打断，都在客户端里决定。", tone: .handedOff)
+        }
     }
 
     private func send(_ text: String, to session: AgentDockSession) {
@@ -378,8 +590,7 @@ final class QuickInputModel: ObservableObject {
         onDispatch(session.source, text) { [weak self] in
             guard let self else { return }
             self.receipt = QuickInputReceipt(title: "正在发送…", body: "等待对方确认收到。", tone: .progress)
-            self.state.quickInputPulse.source = session.source
-            self.state.quickInputPulse.landings += 1
+            self.pulse(session.source)
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 let outcome = await self.state.sendAgentMessage(session, text)
@@ -387,7 +598,10 @@ final class QuickInputModel: ObservableObject {
             }
         }
     }
-
+    private func pulse(_ source: WorkSource) {
+        state.quickInputPulse.source = source
+        state.quickInputPulse.landings += 1
+    }
     private func report(_ outcome: AgentMessageOutcome, text: String, session: AgentDockSession) {
         switch outcome {
         case .accepted:
@@ -397,83 +611,24 @@ final class QuickInputModel: ObservableObject {
         case .uncertain:
             warning = "上一条结果待确认，再发可能执行两遍。"
             receipt = QuickInputReceipt(title: "发送结果待确认", body: "可能已经送达。先看原会话，别重复发送。内容替你留着。", tone: .warning,
-                                        actions: [.open(session), .restore(text)])
+                                        actions: [.open(session), .restore(text), .dismiss])
             target = .session(session.dockIdentity)
         case .unavailable, .failed:
             state.quickInputPulse.source = session.source
             state.quickInputPulse.rejections += 1
             let detail: String
             if case .failed(let message) = outcome { detail = message } else { detail = "原会话当前不接收消息。" }
-            receipt = QuickInputReceipt(title: "没送到", body: detail + "内容还在。", tone: .failure, actions: [.open(session), .restore(text)])
+            receipt = QuickInputReceipt(title: "没送到", body: detail + "内容还在。", tone: .failure, actions: [.open(session), .restore(text), .dismiss])
             target = .session(session.dockIdentity)
         }
-    }
-
-    private func enqueue(_ text: String, for session: AgentDockSession) {
-        if let path = QuickInputCatalog.path(of: session) { remember(agent: session.source, project: path) }
-        let message = QuickInputQueuedMessage(sessionID: session.dockIdentity, source: session.source.rawValue, title: session.title, text: text)
-        finishComposing()
-        onDismiss()
-        onDispatch(session.source, text) { [weak self] in
-            guard let self else { return }
-            self.queue.append(message); self.queueChanged()
-            self.state.quickInputPulse.source = session.source
-            self.state.quickInputPulse.landings += 1
-            self.receipt = QuickInputReceipt(title: "已排队，这一轮结束后发送", body: session.title, tone: .success, actions: [.cancelQueue(message.id)])
-        }
-    }
-
-    /// Two idle readings in a row, so a quiet moment between steps does not count as the end of a turn.
-    private func advanceQueue(_ data: AgentDockData) {
-        guard !queue.isEmpty else { return }
-        var delivering = Set<String>()
-        for index in queue.indices.reversed() {
-            let identity = queue[index].sessionID
-            guard let session = data.sessions.first(where: { $0.dockIdentity == identity }) else {
-                let message = queue.remove(at: index)
-                restore(message.text)
-                receipt = QuickInputReceipt(title: "没送到", body: message.title + " 已不在列表里。内容回到了草稿。", tone: .failure, actions: [])
-                continue
-            }
-            queue[index].idleReadings = session.running || QuickInputCatalog.isWaiting(session) ? 0 : queue[index].idleReadings + 1
-        }
-        for message in queue where message.idleReadings >= 2 && !delivering.contains(message.sessionID) {
-            guard let session = data.sessions.first(where: { $0.dockIdentity == message.sessionID }) else { continue }
-            delivering.insert(message.sessionID)
-            queue.removeAll { $0.id == message.id }
-            queue.indices.filter { queue[$0].sessionID == message.sessionID }.forEach { queue[$0].idleReadings = 0 }
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                let outcome = await self.state.sendAgentMessage(session, message.text)
-                if outcome == .accepted || outcome == .steered {
-                    self.state.quickInputPulse.source = session.source
-                    self.state.quickInputPulse.landings += 1
-                    self.receipt = QuickInputReceipt(title: "排队的内容已发出", body: session.title + " 开始新一轮。", tone: .success, actions: [.open(session)])
-                } else {
-                    self.report(outcome, text: message.text, session: session)
-                }
-            }
-        }
-        queueChanged()
-    }
-    private func queueChanged() {
-        state.quickInputQueued = Dictionary(grouping: queue, by: \.source).reduce(into: [:]) { counts, group in
-            if let source = WorkSource(rawValue: group.key) { counts[source] = group.value.count }
-        }
-        let defaults = state.quickInputDefaults
-        if queue.isEmpty { defaults.removeObject(forKey: "quickInput.queue") }
-        else if let data = try? JSONEncoder().encode(queue) { defaults.set(data, forKey: "quickInput.queue") }
     }
 
     func perform(_ action: QuickInputReceipt.Action) {
         switch action {
         case .open(let session): state.openAgentSession(session); receipt = nil
         case .restore(let text): restore(text); receipt = nil; state.quickInputSummon.send()
-        case .cancelQueue(let id):
-            guard let message = queue.first(where: { $0.id == id }) else { receipt = nil; return }
-            queue.removeAll { $0.id == id }; queueChanged()
-            restore(message.text); target = .session(message.sessionID)
-            receipt = nil; state.quickInputSummon.send()
+        case .activate(let bundle): environment.activate(bundle); receipt = nil
+        case .dismiss: receipt = nil
         }
     }
     func dismissReceipt() { receipt = nil }

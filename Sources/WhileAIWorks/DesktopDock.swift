@@ -504,12 +504,6 @@ private struct DesktopDockTile: View {
                 DockTileBadges(request: requestGlyph, paw: pawShown, fanned: hovered,
                                clockwise: state.desktopDockEdge == .left || state.desktopDockEdge == .top,
                                stamps: stamps, requestDrops: requestDrops)
-                if let queued = state.quickInputQueued[source], queued > 0 {
-                    Text(String(min(9, queued))).font(.system(size: 9, weight: .bold)).foregroundStyle(Theme.accentBadgeInk)
-                        .frame(width: 15, height: 15).background(Circle().fill(Theme.accentBadge))
-                        .overlay(Circle().stroke(Theme.surface, lineWidth: 1.5))
-                        .offset(x: -16, y: -16).allowsHitTesting(false).accessibilityHidden(true)
-                }
             }
             .frame(width: vertical ? DesktopDockGeometry.thickness : DesktopDockGeometry.tile,
                    height: vertical ? DesktopDockGeometry.tile : DesktopDockGeometry.thickness)

@@ -12,12 +12,13 @@ private func check(_ condition: @autoclosure () -> Bool, _ message: @autoclosure
 }
 
 private func session(_ id: String, source: WorkSource = .codex, title: String = "修复充值边界", cwd: String? = "/repo/cineflow", running: Bool = false,
-                     event: AgentSessionEvent = .recent, sendable: Bool = true) -> AgentDockSession {
+                     event: AgentSessionEvent = .recent, sendable: Bool = true, reachable: Bool = true) -> AgentDockSession {
     let uuid = UUID(uuidString: id) ?? UUID()
     let identifier = uuid.uuidString.lowercased()
+    let url = sendable ? "codex://threads/" + identifier : reachable ? "claude://claude.ai/epitaxy/" + identifier : nil
     return AgentDockSession(id: identifier, source: source, title: title, project: cwd.map { URL(fileURLWithPath: $0).lastPathComponent }, status: running ? "工作中" : "最近会话",
                             running: running, tokensIn: 0, tokensOut: 0, cacheRead: 0, reply: nil, observedAt: Date(),
-                            navigationURL: sendable ? URL(string: "codex://threads/" + identifier) : nil, resumeCommand: nil,
+                            navigationURL: url.flatMap(URL.init(string:)), resumeCommand: nil,
                             event: event, workingDirectory: cwd)
 }
 
@@ -33,10 +34,13 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         NSApp.setActivationPolicy(.accessory)
         let arguments = ProcessInfo.processInfo.arguments
         tokens()
-        handoffLinks()
+        links()
+        startScripts()
         catalog()
-        modelFlows()
-        queueFlows()
+        newSessions()
+        placePicker()
+        sending()
+        openingSessions()
         try keyboard()
         dockHandover()
         if arguments.contains("--real") { MainActor.assumeIsolated { realData(arguments) } }
@@ -47,11 +51,15 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
     private static func makeState() -> AppState {
         let suite = "WhileAIWorks.QuickInputChecks." + UUID().uuidString
         let state = AppState(defaults: UserDefaults(suiteName: suite)!)
-        state.soundEnabled = false; state.selectedSources = [.codex, .claude, .dsh]
+        state.soundEnabled = false; state.selectedSources = [.codex, .claude, .hermes, .dsh]
         return state
     }
-    private static func environment(opened: ((URL) -> Void)? = nil, handler: Bool = true, copied: ((String) -> Void)? = nil) -> QuickInputEnvironment {
-        QuickInputEnvironment(open: { opened?($0); return true }, canOpen: { _ in handler }, copy: { copied?($0) }, directoryExists: { _ in true }, chooseDirectory: { nil })
+    private static func environment(opened: ((URL) -> Void)? = nil, handler: Bool = true, copied: ((String) -> Void)? = nil,
+                                    started: ((QuickInputStart.Request) -> Void)? = nil, startable: Bool = true, timeout: TimeInterval = 25) -> QuickInputEnvironment {
+        var value = QuickInputEnvironment(open: { opened?($0); return true }, canOpen: { _ in handler }, copy: { copied?($0) }, directoryExists: { _ in true }, chooseDirectory: { nil },
+                                          start: { started?($0); return startable ? "com.mitchellh.ghostty" : nil }, activate: { _ in }, startTimeout: timeout)
+        value.usesSystemChooser = false
+        return value
     }
 
     static func tokens() {
@@ -65,51 +73,87 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         check(QuickInputToken.match(in: "@codex 检查", cursor: 3)?.query == "co", "the token is read up to the cursor")
     }
 
-    static func handoffLinks() {
+    static func links() {
         let codex = QuickInputHandoff.url(source: .codex, path: "/repo/云 流", prompt: "a+b & c=d\n第二行")!.absoluteString
         check(codex.hasPrefix("codex://new?path=%2Frepo%2F"))
         check(codex.contains("prompt=a%2Bb%20%26%20c%3Dd%0A"), "plus and ampersand must survive: \(codex)")
-        check(codex.contains("path=") && !codex.contains(" "))
         let claude = QuickInputHandoff.url(source: .claude, path: "/repo/x", prompt: "看一下")!.absoluteString
         check(claude.hasPrefix("claude-cli://open?cwd=%2Frepo%2Fx&q=%E7%9C%8B"))
         check(QuickInputHandoff.url(source: .claude, path: "/repo/x", prompt: nil)!.absoluteString == "claude-cli://open?cwd=%2Frepo%2Fx")
         check(QuickInputHandoff.url(source: .dsh, path: "/repo", prompt: "x") == nil)
+        check(QuickInputCapabilities.of(.codex).start && QuickInputCapabilities.of(.claude).prefill)
+        check(QuickInputCapabilities.of(.hermes).start && !QuickInputCapabilities.of(.hermes).prefill && !QuickInputCapabilities.of(.dsh).start)
+    }
+
+    /// Runs the generated script for real against a stand-in client: hostile text must arrive byte for byte.
+    static func startScripts() {
+        let manager = FileManager.default
+        let folder = manager.temporaryDirectory.appendingPathComponent("WAWQuickInputChecks-" + UUID().uuidString)
+        try! manager.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? manager.removeItem(at: folder) }
+        let workspace = folder.appendingPathComponent("it's a repo", isDirectory: true)
+        try! manager.createDirectory(at: workspace, withIntermediateDirectories: true)
+        let output = folder.appendingPathComponent("out.txt")
+        let client = folder.appendingPathComponent("fake client")
+        try! "#!/bin/sh\npwd > '\(output.path)'\nfor a in \"$@\"; do printf '[%s]\\n' \"$a\" >> '\(output.path)'; done\n".write(to: client, atomically: true, encoding: .utf8)
+        try! manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: client.path)
+        let prompt = "看一下 \"引号\" 'x' $(touch /tmp/waw-should-not-exist) `date` \\ -flag\n第二行 $HOME"
+        for (source, expected) in [(WorkSource.claude, ["[--]"]), (.codex, ["[-C]", "[" + workspace.path + "]", "[--]"]), (.hermes, ["[chat]", "[--in]", "[" + workspace.path + "]"])] {
+            try? manager.removeItem(at: output)
+            let promptFile = folder.appendingPathComponent("p.txt"), scriptFile = folder.appendingPathComponent("s.command")
+            try! prompt.write(to: promptFile, atomically: true, encoding: .utf8)
+            let script = QuickInputStart.script(source: source, executable: client.path, directory: workspace.path, promptFile: promptFile.path, searchPath: "/usr/bin:/bin")!
+            try! script.write(to: scriptFile, atomically: true, encoding: .utf8)
+            try! manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: scriptFile.path)
+            let process = Process(); process.executableURL = scriptFile
+            try! process.run(); process.waitUntilExit()
+            check(process.terminationStatus == 0, "\(source) script failed")
+            let lines = try! String(contentsOf: output, encoding: .utf8)
+            check(lines.hasPrefix(manager.fileExists(atPath: "/private" + workspace.path) ? "/private" + workspace.path : workspace.path) || lines.contains(workspace.lastPathComponent), "runs in the workspace: \(lines)")
+            for part in expected { check(lines.contains(part), "\(source) misses \(part): \(lines)") }
+            let delivered = source == .hermes ? "[--query=" + prompt + "]" : "[" + prompt + "]"
+            check(lines.contains(delivered), "\(source) mangled the prompt: \(lines)")
+            check(!manager.fileExists(atPath: promptFile.path) && !manager.fileExists(atPath: scriptFile.path), "the private files are removed")
+        }
+        check(!manager.fileExists(atPath: "/tmp/waw-should-not-exist"), "the prompt is never executed")
+        check(QuickInputStart.script(source: .dsh, executable: "x", directory: "/", promptFile: "p", searchPath: "") == nil)
+        check(QuickInputTerminal.preferred(running: ["com.apple.Terminal", "x"], installed: { _ in true }) == .terminal, "the terminal in use wins")
+        check(QuickInputTerminal.preferred(running: [], installed: { $0 == QuickInputTerminal.iTerm.rawValue }) == .iTerm)
+        check(QuickInputTerminal.preferred(running: [], installed: { _ in false }) == .terminal)
     }
 
     static func catalog() {
-        var data = AgentDockData()
-        data.sessions = [session("00000000-0000-4000-8000-000000000001", running: true),
-                         session("00000000-0000-4000-8000-000000000002", title: "等待", cwd: "/repo/waw", event: .approval),
-                         session("00000000-0000-4000-8000-000000000003", source: .claude, title: "终端会话", cwd: "/repo/waw", sendable: false)]
-        let rows = QuickInputCatalog.targetRows(data: data, sources: [.codex, .claude, .dsh], quota: { _ in nil }, query: "")
-        check(rows.first?.section == "开新任务" && rows.first { $0.section == "继续会话" } != nil)
-        check(rows.first { $0.kind == .agent(.dsh) }?.enabled == false, "unsupported agents stay visible but disabled")
-        let running = rows.first { $0.title == "修复充值边界" }, waiting = rows.first { $0.title == "等待" }, claude = rows.first { $0.title == "终端会话" }
-        check(running?.enabled == true && running?.tone == .working && running?.trailing == "运行中")
-        check(waiting?.enabled == false && waiting?.tone == .attention, "a session waiting for the user takes no message")
-        check(claude?.enabled == false && claude?.subtitle.contains("只能回原客户端") == true, "only sendable sessions are offered")
-        var crowded = AgentDockData()
-        crowded.sessions = (0..<8).map { session(String(format: "00000000-0000-4000-8000-0000000001%02d", $0), source: .claude, title: "终端 \($0)", sendable: false) }
-            + [session("00000000-0000-4000-8000-000000000200", title: "能继续")]
-        let crowdedRows = QuickInputCatalog.targetRows(data: crowded, sources: [.codex, .claude], quota: { _ in nil }, query: "")
-        check(crowdedRows.first { $0.section == "继续会话" }?.title == "能继续", "a session that can take a message is not crowded out")
+        let rows = QuickInputCatalog.agentRows(sources: [.codex, .dsh], quota: { _ in nil }, query: "")
+        check(rows.first { $0.source == .dsh }?.enabled == false, "unsupported agents stay visible but disabled")
         let low = AgentDockQuota(id: "c", source: .codex, title: "每周", remaining: 0, resetAt: nil, observedAt: Date(), stale: false, window: .weekly)
-        check(QuickInputCatalog.targetRows(data: data, sources: [.codex], quota: { _ in low }, query: "").first?.tone == .attention, "almost no quota is flagged")
-        let filtered = QuickInputCatalog.targetRows(data: data, sources: [.codex, .claude], quota: { _ in nil }, query: "claude")
-        check(filtered.first?.kind == .agent(.claude))
-        let projects = QuickInputCatalog.projects(sessions: data.sessions, recents: ["/repo/old", "/repo/waw"], exists: { $0 != "/repo/old" })
+        check(QuickInputCatalog.agentRows(sources: [.codex], quota: { _ in low }, query: "").first?.tone == .attention, "almost no quota is flagged")
+        check(QuickInputCatalog.agentRows(sources: [.codex, .claude], quota: { _ in nil }, query: "claude").first?.source == .claude)
+
+        let sessions = [session("00000000-0000-4000-8000-000000000001", cwd: "/repo/cineflow", running: true),
+                        session("00000000-0000-4000-8000-000000000002", title: "等待", cwd: "/repo/waw", event: .approval),
+                        session("00000000-0000-4000-8000-000000000003", source: .claude, title: "终端会话", cwd: "/repo/waw", sendable: false),
+                        session("00000000-0000-4000-8000-000000000004", title: "订阅校验", cwd: "/repo/waw")]
+        let projects = QuickInputCatalog.projects(sessions: sessions, recents: ["/repo/old", "/repo/waw"], exists: { $0 != "/repo/old" })
         check(projects.map(\.path) == ["/repo/waw", "/repo/cineflow"], "recents first, unique, and only existing directories")
         check(QuickInputCatalog.projects(sessions: [session("x", cwd: "/a/app"), session("y", cwd: "/b/app")], recents: [], exists: { _ in true }).count == 2, "worktrees with one name stay apart")
+        let waw = QuickInputProject(path: "/repo/waw")
+        let inWaw = QuickInputCatalog.sessions(in: waw, of: sessions, query: "")
+        check(inWaw.map(\.title) == ["订阅校验", "等待", "终端会话"], "sessions that take messages first: \(inWaw.map(\.title))")
+        check(QuickInputCatalog.sessionRow(inWaw[1]).tone == .attention && QuickInputCatalog.sessionRow(inWaw[2]).trailing == "仅打开")
+        check(QuickInputCatalog.workspaces(projects: projects, sessions: sessions, query: "订阅").map(\.path) == ["/repo/waw"], "a session title finds its workspace")
+        check(QuickInputCatalog.sessions(in: waw, of: sessions, query: "订阅").map(\.title) == ["订阅校验"])
+        check(QuickInputCatalog.sessions(in: waw, of: sessions, query: "waw").count == 3, "a workspace name shows everything in it")
     }
 
-    static func modelFlows() {
+    static func newSessions() {
         let state = makeState()
-        var opened: [URL] = []
-        let model = QuickInputModel(state: state, environment: environment(opened: { opened.append($0) }))
-        var dismissals = 0
-        model.onDismiss = { dismissals += 1 }
+        var opened: [URL] = [], started: [QuickInputStart.Request] = [], dismissed = 0, flown: [WorkSource] = []
+        let model = QuickInputModel(state: state, environment: environment(opened: { opened.append($0) }, started: { started.append($0) }))
+        model.onDismiss = { dismissed += 1 }
+        model.onDispatch = { source, _, finish in flown.append(source); finish() }
         var data = AgentDockData()
-        data.sessions = [session("00000000-0000-4000-8000-000000000001", running: true)]
+        let existing = session("00000000-0000-4000-8000-000000000001", running: true)
+        data.sessions = [existing]
         state.agentDashboard = data
         model.prepareForSummon()
         check(model.target == nil && model.project == nil && model.primaryVerb == "下一步", "nothing is chosen for a first-time user")
@@ -117,17 +161,28 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         // Enter walks through what is missing and never loses the text or sends to a guess.
         model.textChanged("检查一下", cursor: 4)
         model.submit()
-        check(model.pickerKind == .target && model.pickerNote != nil && model.draft == "检查一下" && opened.isEmpty)
-        model.pick(model.rows.first { $0.kind == .agent(.dsh) }!)
+        check(model.pickerKind == .agent && model.pickerNote != nil && model.draft == "检查一下" && started.isEmpty)
+        model.pick(model.rows.first { $0.source == .dsh }!)
         check(model.target == nil && model.pickerNote?.contains("暂时不能") == true, "a disabled agent is explained, not chosen")
-        model.pick(model.rows.first { $0.kind == .agent(.codex) }!)
-        check(model.target == .agent(.codex) && model.pickerKind == .project)
-        model.pick(model.rows.first { $0.title == "cineflow" }!)
-        check(model.project?.path == "/repo/cineflow" && model.pickerKind == nil && model.primaryVerb == "带到 Codex" && opened.isEmpty)
+        model.pick(model.rows.first { $0.source == .codex }!)
+        check(model.target == .agent(.codex) && model.pickerKind == .place)
+        model.pick(workspace: QuickInputProject(path: "/repo/cineflow"))
+        check(model.project?.path == "/repo/cineflow" && model.pickerKind == nil && started.isEmpty)
+        check(model.primaryVerb == "发送" && model.secondaryVerb == "在 Codex 打开")
+
+        // Enter starts the session and leaves at once; the receipt only claims what it has seen.
         model.submit()
-        check(opened.count == 1 && opened[0].absoluteString.hasPrefix("codex://new?path=%2Frepo%2Fcineflow&prompt="))
-        check(dismissals == 1 && model.draft.isEmpty && model.receipt?.tone == .handedOff && model.receipt?.title.contains("等你发送") == true,
-              "a handoff is never reported as delivered")
+        check(started == [.init(source: .codex, directory: "/repo/cineflow", prompt: "检查一下")] && opened.isEmpty)
+        check(dismissed == 1 && flown == [.codex] && model.draft.isEmpty)
+        check(model.receipt?.title.contains("正在启动") == true && model.receipt?.lingers == true)
+        check(state.quickInputPulse.landings == 1 && state.quickInputPulse.source == .codex)
+        var after = data
+        after.sessions.append(session("00000000-0000-4000-8000-000000000009", title: "别的目录", cwd: "/repo/other"))
+        state.agentDashboard = after
+        check(model.receipt?.title.contains("正在启动") == true, "a new session elsewhere proves nothing")
+        after.sessions.append(session("00000000-0000-4000-8000-000000000010", title: "检查一下", cwd: "/repo/cineflow"))
+        state.agentDashboard = after
+        check(model.receipt?.title == "交给 Codex 了" && model.receipt?.body == "检查一下" && model.receipt?.lingers == false)
 
         // The next task starts from what was remembered, still in plain view.
         model.prepareForSummon()
@@ -136,11 +191,26 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         reborn.prepareForSummon()
         check(reborn.target == .agent(.codex) && reborn.project?.path == "/repo/cineflow", "the choice survives a restart")
 
-        // A typed token picks a target and leaves the sentence clean; `@` inside plain text stays.
+        // ⌘Enter fills the client instead, and says that nothing has started.
+        model.textChanged("带过去", cursor: 3)
+        model.submit(openClient: true)
+        check(opened.count == 1 && opened[0].absoluteString.hasPrefix("codex://new?path=%2Frepo%2Fcineflow&prompt=") && started.count == 1)
+        check(model.receipt?.tone == .handedOff && model.receipt?.title.contains("等你发送") == true, "a handoff is never reported as delivered")
+
+        // A client without a prefill route offers only Enter.
+        model.textChanged("x", cursor: 1)
+        model.togglePicker(.agent)
+        model.pick(model.rows.first { $0.source == .hermes }!)
+        check(model.primaryVerb == "发送" && model.secondaryVerb == nil)
+        model.submit(openClient: true)
+        check(opened.count == 1 && started.count == 1 && model.draft == "x", "⌘Enter does nothing where it is not offered")
+        model.textChanged("", cursor: 0)
+
+        // A typed token picks an agent and leaves the sentence clean; `@` inside plain text stays.
         model.textChanged("看一下 @", cursor: 5)
-        check(model.pickerVisible && model.pickerKind == .target)
+        check(model.pickerVisible && model.pickerKind == .agent)
         model.textChanged("看一下 @cla", cursor: 8)
-        check(model.rows.first?.kind == .agent(.claude))
+        check(model.rows.first?.source == .claude)
         model.pickSelected()
         check(model.draft == "看一下 " && model.target == .agent(.claude) && model.draftRevision > 0)
         model.textChanged("升级 @types/node", cursor: 14)
@@ -153,22 +223,96 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         long.prepareForSummon()
         let text = String(repeating: "长", count: QuickInputHandoff.promptLimit + 1)
         long.textChanged(text, cursor: (text as NSString).length)
-        long.submit()
-        check(copied == text && opened.last?.absoluteString.contains("prompt=") == false && long.receipt?.body.contains("已复制") == true)
+        long.submit(openClient: true)
+        check(copied == text && opened.last?.absoluteString.contains("q=") == false && long.receipt?.body.contains("已复制") == true)
 
-        // A missing handler keeps everything in place.
+        // Failing to start or to open keeps everything in place.
+        var stuck = false
+        let cannotStart = QuickInputModel(state: state, environment: environment(startable: false))
+        cannotStart.onDismiss = { stuck = true }
+        cannotStart.prepareForSummon()
+        cannotStart.textChanged("x", cursor: 1)
+        cannotStart.submit()
+        check(cannotStart.notice != nil && cannotStart.draft == "x" && !stuck)
         let missing = QuickInputModel(state: state, environment: environment(handler: false))
-        var missingDismissed = false
-        missing.onDismiss = { missingDismissed = true }
+        missing.onDismiss = { stuck = true }
         missing.prepareForSummon()
         missing.textChanged("x", cursor: 1)
-        missing.submit()
-        check(missing.notice != nil && missing.draft == "x" && !missingDismissed)
+        missing.submit(openClient: true)
+        check(missing.notice != nil && missing.draft == "x" && !stuck)
 
-        sending()
+        // A start that never shows up says so and points at the terminal, instead of waiting forever.
+        let silent = QuickInputModel(state: state, environment: environment(timeout: 0.05))
+        silent.prepareForSummon()
+        silent.textChanged("x", cursor: 1)
+        silent.submit()
+        eventually({ silent.receipt?.tone == .warning }, "a silent start is reported")
+        check(silent.receipt?.actions.contains(.activate("com.mitchellh.ghostty")) == true)
     }
 
-    private static func sending() {
+    static func placePicker() {
+        let state = makeState()
+        var data = AgentDockData()
+        let running = session("00000000-0000-4000-8000-000000000001", title: "修复充值边界", cwd: "/repo/cineflow", running: true)
+        let idle = session("00000000-0000-4000-8000-000000000002", title: "有效期排查", cwd: "/repo/cineflow")
+        let other = session("00000000-0000-4000-8000-000000000003", title: "订阅校验", cwd: "/repo/waw")
+        data.sessions = [running, idle, other]
+        state.agentDashboard = data
+        let model = QuickInputModel(state: state, environment: environment())
+        model.prepareForSummon()
+        model.togglePicker(.agent)
+        model.pick(model.rows.first { $0.source == .codex }!)
+        check(model.pickerKind == .place && model.workspaces.map(\.name) == ["cineflow", "waw"] && model.placePane == .workspaces)
+        check(model.focusedSessions.map(\.title) == ["修复充值边界", "有效期排查"], "the sessions on the right belong to the focused workspace")
+        check(model.primaryVerb == "在这里开新会话")
+
+        model.moveSelection(1)
+        check(model.focusedWorkspace?.name == "waw" && model.focusedSessions.map(\.title) == ["订阅校验"], "moving through workspaces changes the right side")
+        model.moveSelection(5)
+        check(model.focusedWorkspace?.name == "waw", "it stops at the end")
+        model.moveSelection(-1)
+        model.enterSessions()
+        check(model.placePane == .sessions && model.sessionIndex == 1 && model.primaryVerb == "继续这个会话")
+        model.moveSelection(1)
+        check(model.sessionIndex == 2)
+        model.moveSelection(-2)
+        check(model.sessionIndex == 0 && model.primaryVerb == "在这里开新会话", "the first row on the right is a new session")
+        model.leaveSessions()
+        check(model.placePane == .workspaces)
+        model.pickSelected()
+        check(model.project?.name == "cineflow" && model.target == .agent(.codex) && model.pickerKind == nil, "a workspace means a new session there")
+        check(model.primaryVerb == "发送")
+
+        // Picking a session settles the agent and the workspace together.
+        model.togglePicker(.place)
+        model.moveSelection(1)
+        model.enterSessions()
+        model.pickSelected()
+        check(model.target == .session(other.dockIdentity) && model.project?.name == "waw" && model.pickerKind == nil)
+        model.clearSessionTarget()
+        check(model.target == .agent(.codex) && model.project?.name == "waw", "stepping back keeps the agent and workspace")
+
+        // Search: a name match stays on the workspace, a title match lands on the session.
+        model.textChanged("继续 #cine", cursor: 8)
+        check(model.pickerKind == .place && model.placePane == .workspaces && model.focusedWorkspace?.name == "cineflow" && model.focusedSessions.count == 2)
+        model.textChanged("继续 #有效", cursor: 6)
+        check(model.placePane == .sessions && model.focusedSessions.map(\.title) == ["有效期排查"] && model.primaryVerb == "继续这个会话", "Enter must not start a new session here")
+        model.submit()
+        check(model.target == .session(idle.dockIdentity) && model.draft == "继续 ", "the token leaves the text")
+        model.textChanged("x #不存在", cursor: 6)
+        check(!model.pickerVisible, "no match closes the list so Enter can send the literal text")
+        model.textChanged("", cursor: 0)
+
+        // A pointer focuses a workspace, and the keyboard carries on from there.
+        model.togglePicker(.place)
+        model.focusWorkspace(at: 1)
+        check(model.focusedWorkspace?.name == "waw")
+        model.focusWorkspace(at: 9)
+        check(model.focusedWorkspace?.name == "waw", "an index out of range changes nothing")
+        check(model.sessionCount(in: QuickInputProject(path: "/repo/cineflow")) == 2)
+    }
+
+    static func sending() {
         let state = makeState()
         var data = AgentDockData()
         let running = session("00000000-0000-4000-8000-000000000001", running: true)
@@ -181,23 +325,23 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         let model = QuickInputModel(state: state, environment: environment())
         model.prepareForSummon()
 
-        model.pick(QuickInputRow(id: "s", kind: .session(running), title: "", subtitle: ""))
-        check(model.primaryVerb == "插入当前步" && model.secondaryVerb == "排队", "both behaviours are on show while it runs")
+        model.pick(session: running)
+        check(model.primaryVerb == "插入当前步" && model.secondaryVerb == "打开会话", "the button says what happens")
         model.textChanged("补充", cursor: 2)
         model.submit()
         eventually({ sent.count == 1 && model.receipt?.title == "已插入当前这一步" }, "steering reports what happened")
         check(state.quickInputPulse.source == .codex && state.quickInputPulse.landings == 1)
-        check(model.draft.isEmpty && model.target == .agent(.codex), "the next message starts as a new task for the same agent")
+        check(model.draft.isEmpty && model.target == .agent(.codex), "the next message starts as a new session for the same agent")
 
         // An uncertain result keeps the text, warns, and never resends.
-        model.pick(QuickInputRow(id: "s", kind: .session(idle), title: "", subtitle: ""))
-        check(model.primaryVerb == "继续" && model.secondaryVerb == nil)
+        model.pick(session: idle)
+        check(model.primaryVerb == "发送" && model.secondaryVerb == "打开会话")
         outcome = .uncertain
         model.textChanged("继续", cursor: 2)
         model.submit()
         eventually({ model.receipt?.tone == .warning }, "uncertain reaches a receipt")
         check(sent.count == 2 && model.warning != nil && model.receipt?.lingers == true)
-        check(model.receipt?.actions.contains(.restore("继续")) == true)
+        check(model.receipt?.actions.contains(.restore("继续")) == true && model.receipt?.actions.contains(.dismiss) == true)
         model.perform(.restore("继续"))
         check(model.draft == "继续" && model.receipt == nil && model.target == .session(idle.dockIdentity))
 
@@ -206,76 +350,63 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         model.submit()
         eventually({ model.receipt?.tone == .failure }, "failure reaches a receipt")
         check(state.quickInputPulse.rejections == 1 && model.receipt?.lingers == true)
-
-        // A session that starts waiting for the user stops taking messages.
-        var waiting = data
-        waiting.sessions = [session("00000000-0000-4000-8000-000000000002", title: "订阅校验", event: .approval)]
-        state.agentDashboard = waiting
-        model.perform(.restore("继续"))
-        let before = sent.count
-        model.submit()
-        check(sent.count == before && model.notice?.contains("等你回应") == true)
+        model.perform(.dismiss)
+        check(model.receipt == nil, "every lingering receipt can be closed")
     }
 
-    static func queueFlows() {
+    static func openingSessions() {
         let state = makeState()
-        let id = "00000000-0000-4000-8000-000000000001"
-        func publish(running: Bool, event: AgentSessionEvent = .working) {
-            var data = AgentDockData(); data.sessions = [session(id, running: running, event: event)]; state.agentDashboard = data
-        }
-        publish(running: true)
-        var sent: [String] = []
-        state.sendAgentMessage = { _, text in sent.append(text); return .accepted }
-        let model = QuickInputModel(state: state, environment: environment())
+        var opened: [AgentDockSession] = [], copied: [String] = [], sent = 0
+        state.openAgentSession = { opened.append($0) }
+        state.sendAgentMessage = { _, _ in sent += 1; return .accepted }
+        var data = AgentDockData()
+        let running = session("00000000-0000-4000-8000-000000000001", running: true)
+        let claude = session("00000000-0000-4000-8000-000000000002", source: .claude, title: "终端会话", sendable: false)
+        let lost = session("00000000-0000-4000-8000-000000000003", source: .claude, title: "找不到窗口", sendable: false, reachable: false)
+        let waiting = session("00000000-0000-4000-8000-000000000004", title: "等审批", event: .approval)
+        data.sessions = [running, claude, lost, waiting]
+        state.agentDashboard = data
+        let model = QuickInputModel(state: state, environment: environment(copied: { copied.append($0) }))
         model.prepareForSummon()
-        let running = state.agentDashboard.sessions[0]
-        model.pick(QuickInputRow(id: "s", kind: .session(running), title: "", subtitle: ""))
-        model.textChanged("下一件事", cursor: 4)
-        model.submit(alternate: true)
-        check(sent.isEmpty && model.queue.count == 1 && state.quickInputQueued[.codex] == 1 && model.receipt?.title.contains("已排队") == true)
-        check(model.receipt?.lingers == true, "a queued message stays cancellable")
-        check(state.quickInputDefaults.data(forKey: "quickInput.queue") != nil)
 
-        publish(running: true); spin()
-        check(sent.isEmpty, "nothing leaves while it still runs")
-        publish(running: false, event: .recent); spin()
-        check(sent.isEmpty, "one quiet reading is not the end of a turn")
-        publish(running: true); publish(running: false, event: .recent); spin()
-        check(sent.isEmpty, "a run between idle readings starts the count again")
-        publish(running: false, event: .approval); publish(running: false, event: .approval); spin()
-        check(sent.isEmpty, "a session waiting for the user is not idle")
-        publish(running: false, event: .recent); publish(running: false, event: .recent)
-        eventually({ sent == ["下一件事"] }, "two idle readings deliver it once")
-        eventually({ model.receipt?.title == "排队的内容已发出" }, "delivery is reported")
-        check(model.queue.isEmpty && state.quickInputQueued.isEmpty && state.quickInputDefaults.data(forKey: "quickInput.queue") == nil)
-        publish(running: false, event: .recent); publish(running: false, event: .recent); spin()
-        check(sent.count == 1, "delivered once")
+        // ⌘Enter opens even a session that could take the message; queueing is the client's business.
+        model.pick(session: running)
+        model.textChanged("补一句", cursor: 3)
+        model.submit(openClient: true)
+        check(opened.map(\.id) == [running.id] && copied == ["补一句"] && sent == 0)
+        check(model.receipt?.title == "已打开会话，内容已复制" && model.draft.isEmpty)
 
-        // Cancelling puts the text back for editing.
-        publish(running: true)
-        model.pick(QuickInputRow(id: "s", kind: .session(state.agentDashboard.sessions[0]), title: "", subtitle: ""))
-        model.textChanged("算了", cursor: 2)
-        model.submit(alternate: true)
-        let queued = model.queue[0].id
-        model.perform(.cancelQueue(queued))
-        check(model.queue.isEmpty && model.draft == "算了" && state.quickInputQueued.isEmpty)
-        model.textChanged("", cursor: 0)
+        // With nothing typed it is simply a jump, and the clipboard is left alone.
+        model.pick(session: running)
+        model.submit(openClient: true)
+        check(opened.count == 2 && copied.count == 1)
 
-        // The session disappearing returns the message rather than dropping it.
-        model.pick(QuickInputRow(id: "s", kind: .session(state.agentDashboard.sessions[0]), title: "", subtitle: ""))
+        // A session that cannot take messages opens on Enter, and the button says so.
+        model.pick(session: claude)
+        check(model.primaryVerb == "打开会话" && model.secondaryVerb == nil && model.hint?.contains("只能在客户端") == true)
+        model.textChanged("转过去", cursor: 3)
+        model.submit()
+        check(opened.count == 3 && copied.last == "转过去" && sent == 0)
+
+        // Waiting on the user: never inject, take them there.
+        model.pick(session: waiting)
+        check(model.primaryVerb == "打开会话" && model.hint?.contains("等你回应") == true)
+        model.textChanged("先别", cursor: 2)
+        model.submit()
+        check(opened.count == 4 && sent == 0)
+
+        // With no route, the resume command must not overwrite what was copied.
+        model.pick(session: lost)
         model.textChanged("留着", cursor: 2)
-        model.submit(alternate: true)
-        state.agentDashboard = AgentDockData(); spin()
-        check(model.queue.isEmpty && model.draft == "留着" && model.receipt?.tone == .failure)
+        model.submit()
+        check(opened.count == 4 && copied.last == "留着" && model.receipt?.title == "这个会话没有跳转入口")
 
-        // Quitting while something waits: it returns as a draft and is not sent by itself.
-        let persisted = makeState()
-        persisted.quickInputDefaults.set(try! JSONEncoder().encode([QuickInputQueuedMessage(sessionID: "codex:x", source: "codex", title: "t", text: "重启前排队的")]), forKey: "quickInput.queue")
-        var resent = 0
-        persisted.sendAgentMessage = { _, _ in resent += 1; return .accepted }
-        let restored = QuickInputModel(state: persisted, environment: environment())
-        check(restored.draft == "重启前排队的" && restored.queue.isEmpty && resent == 0)
-        check(persisted.quickInputDefaults.data(forKey: "quickInput.queue") == nil)
+        // A session that disappears is explained, and nothing is lost.
+        model.pick(session: running)
+        model.textChanged("还在", cursor: 2)
+        state.agentDashboard = AgentDockData()
+        model.submit()
+        check(model.notice?.contains("不在列表") == true && model.draft == "还在" && model.target == nil)
     }
 
     private static func key(_ code: Int, _ characters: String, _ flags: NSEvent.ModifierFlags = [], to window: NSWindow) {
@@ -295,8 +426,11 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
     /// makes Chinese input safe: Return must commit the candidate, not send.
     static func keyboard() throws {
         let state = makeState()
-        var opened: [URL] = []
-        let controller = QuickInputController(state: state, environment: environment(opened: { opened.append($0) }), tileCenter: { _ in nil }, dockFrame: { nil })
+        var data = AgentDockData()
+        data.sessions = [session("00000000-0000-4000-8000-000000000001", cwd: "/repo/cineflow"), session("00000000-0000-4000-8000-000000000002", title: "另一个", cwd: "/repo/cineflow")]
+        state.agentDashboard = data
+        var started: [QuickInputStart.Request] = [], opened: [URL] = []
+        let controller = QuickInputController(state: state, environment: environment(opened: { opened.append($0) }, started: { started.append($0) }), tileCenter: { _ in nil }, dockFrame: { nil })
         state.quickInputSummon.send()
         eventually({ controller.isShown }, "the summon signal shows the panel")
         spin(0.3)
@@ -307,48 +441,75 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         panel.makeKey(); panel.makeFirstResponder(text); spin(0.1)
         check(panel.firstResponder === text, "typing goes straight to the editor")
         check(panel.frame.width == 640 && panel.frame.height >= 60, "panel size: \(panel.frame.size)")
+        let compact = panel.frame
 
         text.setMarkedText("jian", selectedRange: NSRange(location: 4, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
         check(text.hasMarkedText())
         controller.model.textChanged(text.string, cursor: text.selectedRange().location)
         key(36, "\r", to: panel)
-        check(opened.isEmpty && controller.isShown, "Return while composing never sends")
+        check(started.isEmpty && controller.isShown, "Return while composing never sends")
         text.unmarkText(); text.string = ""; controller.model.textChanged("", cursor: 0)
 
         text.insertText("第一行", replacementRange: text.selectedRange())
         check(controller.model.draft == "第一行")
         key(36, "\r", [.shift], to: panel)
-        check(text.string == "第一行\n" && controller.model.draft == "第一行\n" && opened.isEmpty, "Shift-Return is a newline, got \(text.string.debugDescription)")
+        check(text.string == "第一行\n" && controller.model.draft == "第一行\n" && started.isEmpty, "Shift-Return is a newline, got \(text.string.debugDescription)")
         text.insertText("第二行", replacementRange: text.selectedRange())
-        let heightBefore = panel.frame.height
         spin(0.4)
-        check(panel.frame.height > heightBefore - 1, "the panel grows with its text")
+        check(panel.frame.height > compact.height + 10, "the panel grows with its text: \(panel.frame.height) from \(compact.height)")
+        check(abs(panel.frame.maxY - compact.maxY) < 1, "the top edge stays put")
 
         key(36, "\r", to: panel)
-        check(controller.model.pickerKind == .target && controller.isShown && opened.isEmpty, "Return opens what is missing")
+        check(controller.model.pickerKind == .agent && controller.isShown && started.isEmpty, "Return opens what is missing")
         spin(0.35)
         check(panel.frame.height > 150, "the list opens inside the same panel: \(panel.frame.height)")
+        check(abs(panel.frame.maxY - compact.maxY) < 1, "opening the list keeps the top edge")
         key(53, "\u{1b}", to: panel)
         check(controller.model.pickerKind == nil && controller.isShown, "Escape closes the list first")
         key(48, "\t", to: panel)
-        check(controller.model.pickerKind == .target, "Tab opens who")
+        check(controller.model.pickerKind == .agent, "Tab opens who")
         key(125, "", to: panel)
         check(controller.model.selection == 1)
         key(126, "", to: panel)
         check(controller.model.selection == 0)
         key(36, "\r", to: panel)
-        check(controller.model.target == .agent(.codex) && controller.model.pickerKind == .project)
-        key(53, "\u{1b}", to: panel)
+        check(controller.model.target == .agent(.codex) && controller.model.pickerKind == .place, "then where")
+        spin(0.35)
+        check(panel.frame.height > 280, "both columns fit: \(panel.frame.height)")
+        key(124, "", to: panel)
+        check(controller.model.placePane == .sessions && controller.model.sessionIndex == 1, "right arrow enters the sessions")
+        key(123, "", to: panel)
+        check(controller.model.placePane == .workspaces, "left arrow returns")
+        key(48, "\t", to: panel)
+        check(controller.model.placePane == .sessions, "Tab moves across too")
+        key(48, "\t", to: panel)
+        key(36, "\r", to: panel)
+        check(controller.model.project?.name == "cineflow" && controller.model.pickerKind == nil)
+        spin(0.35)
+        check(panel.frame.height < 200, "the panel closes back up: \(panel.frame.height)")
+
         key(53, "\u{1b}", to: panel)
         spin(0.3)
         check(!controller.isShown && controller.model.draft == "第一行\n第二行", "Escape hides the panel and keeps the draft")
         state.quickInputSummon.send()
         eventually({ controller.isShown }, "it comes back")
         spin(0.2)
-        state.quickInputSummon.send()
-        eventually({ !controller.isShown }, "the same shortcut toggles it away")
-        spin(0.2)
         check(textView(in: panel.contentView)?.string == "第一行\n第二行", "the draft is still in the editor")
+
+        // ⌘Return and Return take their own paths with the real keys.
+        panel.makeKey(); panel.makeFirstResponder(text); spin(0.05)
+        key(36, "\r", [.command], to: panel)
+        check(opened.count == 1 && started.isEmpty, "⌘Return opens the client")
+        spin(0.3)
+        state.quickInputSummon.send()
+        eventually({ controller.isShown }, "it comes back")
+        spin(0.2)
+        panel.makeKey(); panel.makeFirstResponder(text); spin(0.05)
+        text.insertText("开工", replacementRange: text.selectedRange())
+        key(36, "\r", to: panel)
+        check(started.count == 1 && started[0].prompt == "开工" && started[0].directory == "/repo/cineflow", "Return starts it")
+        spin(0.3)
+        check(!controller.isShown && !panel.isVisible, "the panel leaves at once")
 
         // Registering the shortcut used by play controls reports it instead of failing silently.
         let hotKeys = InteractionShortcut(state: state)
@@ -396,7 +557,7 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         check(dockController.tileCenter(for: .workbuddy) == nil, "an unwatched source has no tile")
         let controller = QuickInputController(state: state, environment: environment(), tileCenter: { dockController.tileCenter(for: $0) }, dockFrame: { dockController.visibleDockFrame })
         controller.show(); spin(0.3)
-        controller.model.pick(QuickInputRow(id: "s", kind: .session(running), title: "", subtitle: ""))
+        controller.model.pick(session: running)
         textView(in: controller.panel.contentView)?.insertText("补充", replacementRange: NSRange(location: 0, length: 0))
         let landings = state.quickInputPulse.landings
         controller.model.submit()
@@ -408,6 +569,7 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         spin(0.4)
         let receipt = controller.receiptPanel.frame
         check(controller.receiptPanel.isVisible && controller.receiptPanel.alphaValue > 0.9, "the receipt shows")
+        check(receipt.height > 40, "the receipt has its size: \(receipt)")
         check(receipt.maxX <= frame.minX && receipt.maxX >= frame.minX - 40, "the receipt sits beside a right-edge dock: \(receipt) \(frame)")
         check(!controller.isShown && !controller.panel.isVisible, "the panel has left")
         if let index = ProcessInfo.processInfo.arguments.firstIndex(of: "--snapshot"), index + 1 < ProcessInfo.processInfo.arguments.count {
@@ -422,28 +584,25 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
     /// Quit the installed app first, as the two would share its local sockets.
     @MainActor static func realData(_ arguments: [String]) {
         let state = makeState()
-        state.selectedSources = [.codex, .claude, .hermes, .dsh]
         let hub = AgentHubDataController(state: state)
         let begin = Date()
         while state.agentDashboard.updatedAt == nil && Date().timeIntervalSince(begin) < 90 { spin(0.2) }
         spin(5)
         let data = state.agentDashboard
         print("real sessions \(data.sessions.count), quotas \(data.quotas.count)")
-        let controller = QuickInputController(state: state, tileCenter: { _ in nil }, dockFrame: { nil })
+        let controller = QuickInputController(state: state, environment: environment(), tileCenter: { _ in nil }, dockFrame: { nil })
         let model = controller.model
-        print("real projects:", model.projects.map(\.name))
         controller.show(); spin(0.3)
-        model.togglePicker(.target); spin(0.5)
-        for row in model.rows {
-            print("row", row.section ?? "-", "|", String(row.title.prefix(24)), "|", String(row.subtitle.prefix(40)), "|", row.trailing, "| enabled", row.enabled)
+        model.togglePicker(.place); spin(0.5)
+        for project in model.workspaces.prefix(6) {
+            print("workspace", project.name, model.sessionCount(in: project))
         }
-        for session in data.sessions.filter({ $0.parentSessionID == nil }).prefix(12) {
-            print("session", session.source.rawValue, "cwd", session.workingDirectory != nil, "canSend", session.canSend, "running", session.running, "event", session.event)
+        for session in model.focusedSessions.prefix(6) {
+            let row = QuickInputCatalog.sessionRow(session)
+            print("session", String(session.title.prefix(24)), "|", row.trailing, "| takes", QuickInputCatalog.takesMessages(session))
         }
         if let index = arguments.firstIndex(of: "--snapshot"), index + 1 < arguments.count {
-            compose([controller.panel], to: URL(fileURLWithPath: arguments[index + 1]).appendingPathComponent("quick-input-real-target.png"))
-            model.togglePicker(.project); spin(0.5)
-            compose([controller.panel], to: URL(fileURLWithPath: arguments[index + 1]).appendingPathComponent("quick-input-real-project.png"))
+            compose([controller.panel], to: URL(fileURLWithPath: arguments[index + 1]).appendingPathComponent("quick-input-real-place.png"))
         }
         controller.dismiss(); spin(0.3)
         hub.stop()
@@ -451,19 +610,20 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         withExtendedLifetime(controller) {}
     }
 
-    /// Windows are captured over a bright backdrop window so the glass has something to show.
+    /// Windows are captured over a bright backdrop window so the layout has something to sit on.
     static func snapshots(_ directory: URL) {
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         for dark in [true, false] {
-            let appearance = NSAppearance(named: dark ? .darkAqua : .aqua)!
-            NSApp.appearance = appearance
+            NSApp.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)!
             let state = makeState()
             state.desktopCompanionAppearance = dark ? .dark : .light
             var data = AgentDockData()
             data.quotas = [AgentDockQuota(id: "c", source: .codex, title: "每周", remaining: 64, resetAt: nil, observedAt: Date(), stale: false, window: .weekly),
-                           AgentDockQuota(id: "l", source: .claude, title: "会话", remaining: 31, resetAt: nil, observedAt: Date(), stale: false, window: .session)]
+                           AgentDockQuota(id: "l", source: .claude, title: "会话", remaining: 8, resetAt: nil, observedAt: Date(), stale: false, window: .session)]
             let running = session("00000000-0000-4000-8000-000000000001", running: true)
-            data.sessions = [running, session("00000000-0000-4000-8000-000000000002", title: "订阅校验重试", cwd: "/repo/while-ai-works"),
+            data.sessions = [running, session("00000000-0000-4000-8000-000000000005", title: "充值有效期排查"),
+                             session("00000000-0000-4000-8000-000000000006", source: .claude, title: "分镜批量重做", sendable: false),
+                             session("00000000-0000-4000-8000-000000000002", title: "订阅校验重试", cwd: "/repo/while-ai-works"),
                              session("00000000-0000-4000-8000-000000000003", source: .claude, title: "修复会话跳转入口", cwd: "/repo/while-ai-works", event: .approval, sendable: false)]
             state.agentDashboard = data
             let controller = QuickInputController(state: state, environment: environment(), tileCenter: { _ in nil }, dockFrame: { nil })
@@ -476,25 +636,23 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
             func capture(_ label: String, _ window: NSWindow) {
                 backdrop.setFrame(NSRect(x: window.frame.midX - 450, y: window.frame.maxY - 520, width: 900, height: 620), display: true)
                 spin(0.5)
-                let ids = [CGWindowID(window.windowNumber), CGWindowID(backdrop.windowNumber)]
-                let list = ids.map { UnsafeRawPointer(bitPattern: UInt($0)) }.withUnsafeBufferPointer { CFArrayCreate(nil, unsafeBitCast($0.baseAddress, to: UnsafeMutablePointer<UnsafeRawPointer?>?.self), ids.count, nil) }!
-                guard let image = CGImage(windowListFromArrayScreenBounds: .null, windowArray: list, imageOption: [.boundsIgnoreFraming, .bestResolution]) else { print("snapshot failed: \(label)"); return }
-                let target = directory.appendingPathComponent("quick-input-\(name)-\(label).png")
-                try? NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])?.write(to: target)
-                print("snapshot: \(target.path)")
+                compose([window, backdrop], to: directory.appendingPathComponent("quick-input-\(name)-\(label).png"))
             }
             controller.show(); spin(0.4)
             let model = controller.model
             let editor = textView(in: controller.panel.contentView)
             editor?.insertText("检查一下充值有效期的处理，重点看边界情况", replacementRange: editor?.selectedRange() ?? NSRange())
             capture("first", controller.panel)
-            model.pick(model.rowsForSnapshot(.target).first { $0.kind == .agent(.codex) } ?? QuickInputRow(id: "c", kind: .agent(.codex), title: "", subtitle: ""))
-            model.pick(QuickInputRow(id: "p", kind: .project(QuickInputProject(path: "/repo/cineflow")), title: "", subtitle: ""))
+            model.togglePicker(.agent)
+            capture("agent", controller.panel)
+            model.pick(model.rows.first { $0.source == .codex }!)
+            capture("place", controller.panel)
+            model.enterSessions()
+            capture("place-sessions", controller.panel)
+            model.leaveSessions()
+            model.pick(workspace: model.workspaces[0])
             capture("new", controller.panel)
-            model.togglePicker(.target)
-            capture("picker", controller.panel)
-            model.closePicker()
-            model.pick(QuickInputRow(id: "s", kind: .session(running), title: "", subtitle: ""))
+            model.pick(session: running)
             editor?.string = ""
             editor?.insertText("顺便把退款路径也看一下", replacementRange: NSRange(location: 0, length: 0))
             capture("running", controller.panel)
@@ -522,13 +680,5 @@ private struct SnapshotBackdrop: View {
             .padding(26).frame(width: 520).background(dark ? Color(white: 0.16) : Color.white)
         }
         .frame(width: 900, height: 620)
-    }
-}
-
-extension QuickInputModel {
-    fileprivate func rowsForSnapshot(_ kind: QuickInputPickerKind) -> [QuickInputRow] {
-        togglePicker(kind)
-        defer { closePicker() }
-        return rows
     }
 }
