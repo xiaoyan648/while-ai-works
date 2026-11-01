@@ -202,7 +202,7 @@ struct QuickInputView: View {
                     if let source = row.source { AgentMark(source: source, size: 22).opacity(row.enabled ? 1 : 0.45) }
                     else { Image(systemName: row.kind == .browse ? "folder" : "number").font(.system(size: 13, weight: .medium)).foregroundStyle(.secondary).frame(width: 22, height: 22) }
                 }
-                Text(row.title).font(.system(size: 14, weight: .medium)).lineLimit(1).layoutPriority(1)
+                Text(row.title).font(.system(size: 14, weight: .medium)).lineLimit(1).frame(maxWidth: 300, alignment: .leading).fixedSize(horizontal: true, vertical: false)
                     .foregroundStyle(row.enabled ? Color.primary : Color.secondary)
                 Text(row.subtitle).font(.system(size: 13)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                 Spacer(minLength: 8)
@@ -354,7 +354,7 @@ final class QuickInputController: NSObject {
     private let dockFrame: () -> CGRect?
     private let host: NSHostingView<AnyView>
     private let focus = QuickInputFocusBox()
-    private let receiptPanel: DesktopPetPanel
+    let receiptPanel: DesktopPetPanel
     private var receiptHide: DispatchWorkItem?
     private var flightWindow: NSPanel?
     private var subscriptions: Set<AnyCancellable> = []

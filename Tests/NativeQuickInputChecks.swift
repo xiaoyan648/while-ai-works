@@ -31,13 +31,15 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
     static func main() throws {
         _ = NSApplication.shared
         NSApp.setActivationPolicy(.accessory)
+        let arguments = ProcessInfo.processInfo.arguments
         tokens()
         handoffLinks()
         catalog()
         modelFlows()
         queueFlows()
         try keyboard()
-        let arguments = ProcessInfo.processInfo.arguments
+        dockHandover()
+        if arguments.contains("--real") { MainActor.assumeIsolated { realData(arguments) } }
         if let index = arguments.firstIndex(of: "--snapshot"), index + 1 < arguments.count { snapshots(URL(fileURLWithPath: arguments[index + 1], isDirectory: true)) }
         print("Quick input checks passed")
     }
@@ -86,6 +88,13 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         check(running?.enabled == true && running?.tone == .working && running?.trailing == "运行中")
         check(waiting?.enabled == false && waiting?.tone == .attention, "a session waiting for the user takes no message")
         check(claude?.enabled == false && claude?.subtitle.contains("只能回原客户端") == true, "only sendable sessions are offered")
+        var crowded = AgentDockData()
+        crowded.sessions = (0..<8).map { session(String(format: "00000000-0000-4000-8000-0000000001%02d", $0), source: .claude, title: "终端 \($0)", sendable: false) }
+            + [session("00000000-0000-4000-8000-000000000200", title: "能继续")]
+        let crowdedRows = QuickInputCatalog.targetRows(data: crowded, sources: [.codex, .claude], quota: { _ in nil }, query: "")
+        check(crowdedRows.first { $0.section == "继续会话" }?.title == "能继续", "a session that can take a message is not crowded out")
+        let low = AgentDockQuota(id: "c", source: .codex, title: "每周", remaining: 0, resetAt: nil, observedAt: Date(), stale: false, window: .weekly)
+        check(QuickInputCatalog.targetRows(data: data, sources: [.codex], quota: { _ in low }, query: "").first?.tone == .attention, "almost no quota is flagged")
         let filtered = QuickInputCatalog.targetRows(data: data, sources: [.codex, .claude], quota: { _ in nil }, query: "claude")
         check(filtered.first?.kind == .agent(.claude))
         let projects = QuickInputCatalog.projects(sessions: data.sessions, recents: ["/repo/old", "/repo/waw"], exists: { $0 != "/repo/old" })
@@ -354,6 +363,91 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         spin(0.1)
         check(state.quickInputShortcutError == nil, "turning it off clears the error")
         withExtendedLifetime(hotKeys) {}
+        withExtendedLifetime(controller) {}
+    }
+
+    private static func dock(_ state: AppState) -> DesktopDockController {
+        let bundle = Bundle(path: "dist/While AI Works.app")!
+        state.desktopEnabled = false; state.desktopPetEnabled = true; state.desktopPetPresentation = .dock
+        return DesktopDockController(state: state, mascot: MascotController(bundle: bundle), cardMascot: MascotController(bundle: bundle))
+    }
+    private static func compose(_ windows: [NSWindow], to url: URL) {
+        let ids = windows.map { CGWindowID($0.windowNumber) }
+        let list = ids.map { UnsafeRawPointer(bitPattern: UInt($0)) }.withUnsafeBufferPointer { CFArrayCreate(nil, unsafeBitCast($0.baseAddress, to: UnsafeMutablePointer<UnsafeRawPointer?>?.self), ids.count, nil) }!
+        guard let image = CGImage(windowListFromArrayScreenBounds: .null, windowArray: list, imageOption: [.boundsIgnoreFraming, .bestResolution]) else { return }
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])?.write(to: url)
+        print("snapshot: \(url.path)")
+    }
+
+    /// The panel against the real dock: the note must land on the right tile, the tile
+    /// must react, and the receipt must sit beside the dock on whichever edge it is on.
+    static func dockHandover() {
+        let state = makeState()
+        var data = AgentDockData()
+        let running = session("00000000-0000-4000-8000-000000000001", running: true)
+        data.sessions = [running]
+        state.agentDashboard = data
+        state.sendAgentMessage = { _, _ in .steered }
+        let dockController = dock(state)
+        dockController.refresh(); spin(0.5)
+        guard let center = dockController.tileCenter(for: .codex), let frame = dockController.visibleDockFrame else { check(false, "the dock is on screen"); return }
+        check(frame.contains(center), "the tile is inside the dock")
+        check(dockController.tileCenter(for: .workbuddy) == nil, "an unwatched source has no tile")
+        let controller = QuickInputController(state: state, environment: environment(), tileCenter: { dockController.tileCenter(for: $0) }, dockFrame: { dockController.visibleDockFrame })
+        controller.show(); spin(0.3)
+        controller.model.pick(QuickInputRow(id: "s", kind: .session(running), title: "", subtitle: ""))
+        textView(in: controller.panel.contentView)?.insertText("补充", replacementRange: NSRange(location: 0, length: 0))
+        let landings = state.quickInputPulse.landings
+        controller.model.submit()
+        spin(0.2)
+        check(state.quickInputPulse.landings == landings, "the tile reacts when the note arrives, not when it leaves")
+        eventually({ state.quickInputPulse.landings == landings + 1 }, "the flight finishes")
+        check(state.quickInputPulse.source == .codex)
+        eventually({ controller.model.receipt?.title == "已插入当前这一步" }, "the receipt reports the result")
+        spin(0.4)
+        let receipt = controller.receiptPanel.frame
+        check(controller.receiptPanel.isVisible && controller.receiptPanel.alphaValue > 0.9, "the receipt shows")
+        check(receipt.maxX <= frame.minX && receipt.maxX >= frame.minX - 40, "the receipt sits beside a right-edge dock: \(receipt) \(frame)")
+        check(!controller.isShown && !controller.panel.isVisible, "the panel has left")
+        if let index = ProcessInfo.processInfo.arguments.firstIndex(of: "--snapshot"), index + 1 < ProcessInfo.processInfo.arguments.count {
+            compose([controller.receiptPanel], to: URL(fileURLWithPath: ProcessInfo.processInfo.arguments[index + 1]).appendingPathComponent("quick-input-receipt.png"))
+        }
+        controller.model.dismissReceipt(); spin(0.3)
+        withExtendedLifetime(controller) {}
+        withExtendedLifetime(dockController) {}
+    }
+
+    /// This Mac's own sessions through the app's own pipeline. Reads only: nothing is sent.
+    /// Quit the installed app first, as the two would share its local sockets.
+    @MainActor static func realData(_ arguments: [String]) {
+        let state = makeState()
+        state.selectedSources = [.codex, .claude, .hermes, .dsh]
+        let hub = AgentHubDataController(state: state)
+        let begin = Date()
+        while state.agentDashboard.updatedAt == nil && Date().timeIntervalSince(begin) < 90 { spin(0.2) }
+        spin(5)
+        let data = state.agentDashboard
+        print("real sessions \(data.sessions.count), quotas \(data.quotas.count)")
+        let controller = QuickInputController(state: state, tileCenter: { _ in nil }, dockFrame: { nil })
+        let model = controller.model
+        print("real projects:", model.projects.map(\.name))
+        controller.show(); spin(0.3)
+        model.togglePicker(.target); spin(0.5)
+        for row in model.rows {
+            print("row", row.section ?? "-", "|", String(row.title.prefix(24)), "|", String(row.subtitle.prefix(40)), "|", row.trailing, "| enabled", row.enabled)
+        }
+        for session in data.sessions.filter({ $0.parentSessionID == nil }).prefix(12) {
+            print("session", session.source.rawValue, "cwd", session.workingDirectory != nil, "canSend", session.canSend, "running", session.running, "event", session.event)
+        }
+        if let index = arguments.firstIndex(of: "--snapshot"), index + 1 < arguments.count {
+            compose([controller.panel], to: URL(fileURLWithPath: arguments[index + 1]).appendingPathComponent("quick-input-real-target.png"))
+            model.togglePicker(.project); spin(0.5)
+            compose([controller.panel], to: URL(fileURLWithPath: arguments[index + 1]).appendingPathComponent("quick-input-real-project.png"))
+        }
+        controller.dismiss(); spin(0.3)
+        hub.stop()
+        withExtendedLifetime(hub) {}
         withExtendedLifetime(controller) {}
     }
 

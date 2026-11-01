@@ -102,10 +102,12 @@ enum QuickInputCatalog {
             let reading = quota(source).flatMap { $0.stale ? nil : $0.remaining }
             return QuickInputRow(id: "agent:" + source.rawValue, kind: .agent(source), title: source.clientName,
                 subtitle: supported ? "打开\(QuickInputHandoff.destination(source))并填好内容" : "暂时不能接收任务",
-                trailing: reading.map { "额度 \(Int($0.rounded()))%" } ?? "", enabled: supported)
+                trailing: reading.map { "额度 \(Int($0.rounded()))%" } ?? "", tone: (reading ?? 100) <= 15 ? .attention : .plain, enabled: supported)
         }
         let candidates = data.sessions.filter { $0.parentSessionID == nil && sources.contains($0.source) && matches($0.title, $0.source.clientName, $0.project ?? "") }
-        let sessions = candidates.prefix(query.isEmpty ? 6 : 12).map { session -> QuickInputRow in
+        // Sessions that can take a message come first; the rest stay visible with the reason.
+        let ordered = candidates.filter { $0.canSend && !isWaiting($0) } + candidates.filter { !$0.canSend || isWaiting($0) }
+        let sessions = ordered.prefix(query.isEmpty ? 6 : 12).map { session -> QuickInputRow in
             let waiting = isWaiting(session)
             let where_ = [session.source.clientName, path(of: session).map { QuickInputProject(path: $0).name } ?? session.project].compactMap { $0 }.joined(separator: " · ")
             return QuickInputRow(id: "session:" + session.dockIdentity, kind: .session(session), title: session.title,
