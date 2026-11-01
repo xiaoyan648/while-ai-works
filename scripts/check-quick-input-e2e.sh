@@ -1,7 +1,7 @@
 #!/bin/bash
 # Starts real agents in the default terminal and waits for their sessions to appear.
 # Spends a little quota and leaves the sessions open. Not part of the regular checks.
-# Usage: check-quick-input-e2e.sh <trusted directory> [claude codex hermes] [--links]
+# Usage: check-quick-input-e2e.sh <trusted directory> [codexCLI claudeCode hermes] [--resume] [--open]
 set -euo pipefail
 source "$(dirname "$0")/toolchain.sh"
 app_sources=()

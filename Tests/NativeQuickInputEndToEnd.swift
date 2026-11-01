@@ -5,7 +5,7 @@ import WhileCore
 /// The real thing, on this Mac: real session data, the real launcher, the default terminal and
 /// the agents themselves. It starts live sessions that spend a little quota and stay open, so
 /// it is never part of the regular checks. Quit other While AI Works instances first.
-/// Usage: check-quick-input-e2e.sh <trusted directory> [claude codex hermes] [--links]
+/// Usage: check-quick-input-e2e.sh <trusted directory> [codexCLI claudeCode hermes] [--resume] [--open]
 private func spin(_ seconds: TimeInterval) { RunLoop.main.run(until: Date().addingTimeInterval(seconds)) }
 private func front() -> String { NSWorkspace.shared.frontmostApplication?.localizedName ?? "?" }
 
@@ -15,10 +15,10 @@ private func front() -> String { NSWorkspace.shared.frontmostApplication?.locali
         NSApp.setActivationPolicy(.accessory)
         AgentCommandEnvironment.configure()
         var arguments = Array(ProcessInfo.processInfo.arguments.dropFirst())
-        let links = arguments.contains("--links")
-        arguments.removeAll { $0 == "--links" }
+        let resume = arguments.contains("--resume"), opening = arguments.contains("--open")
+        arguments.removeAll { $0.hasPrefix("--") }
         guard let directory = arguments.first else { fputs("a directory is required\n", stderr); exit(2) }
-        let sources = arguments.dropFirst().compactMap(WorkSource.init(rawValue:))
+        let clients = arguments.dropFirst().compactMap(QuickInputClient.init(rawValue:))
         let suite = "WhileAIWorks.QuickInputE2E." + UUID().uuidString
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
@@ -33,51 +33,83 @@ private func front() -> String { NSWorkspace.shared.frontmostApplication?.locali
         environment.startTimeout = 75
         let model = QuickInputModel(state: state, environment: environment)
         let workspace = QuickInputProject(path: directory)
+        model.prepareForSummon(); spin(2)
+        model.togglePicker(.agent)
+        print("clients:", model.rows.map { $0.title + "(" + $0.subtitle + ")" })
+        model.closePicker()
         var failed = 0
-        for source in sources {
-            let run = String(UUID().uuidString.prefix(6))
-            let prompt = "WAW E2E \(run) \"引号\" $(不展开)：只回复 ok，不要调用工具，不要改文件。"
-            model.prepareForSummon()
-            model.togglePicker(.agent)
-            guard let row = model.rows.first(where: { $0.source == source }) else { print("\(source): not listed"); failed += 1; continue }
-            model.pick(row)
-            model.pick(workspace: workspace)
-            model.textChanged(prompt, cursor: (prompt as NSString).length)
-            let before = front(), started = Date()
-            var frontWhileStarting = Set<String>()
-            model.submit()
-            if model.notice != nil { print("\(source): could not start: \(model.notice ?? "")"); failed += 1; continue }
+
+        func waitForReceipt(_ label: String, started: Date, before: String) {
+            var seen = Set<String>()
             while Date().timeIntervalSince(started) < 80 {
                 spin(0.1)
-                frontWhileStarting.insert(front())
+                seen.insert(front())
                 if Int(Date().timeIntervalSince(started) * 10) % 40 == 0 { state.refreshAgentData() }
                 if let receipt = model.receipt, receipt.tone == .success || receipt.tone == .warning { break }
             }
-            let elapsed = String(format: "%.1f", Date().timeIntervalSince(started))
-            let outcome = model.receipt?.title ?? "no receipt"
             let confirmed = model.receipt?.tone == .success
             if !confirmed { failed += 1 }
-            print("\(source): \(confirmed ? "PASS" : "FAIL") \(elapsed)s | \(outcome) | \(model.receipt?.body.prefix(40) ?? "") | front \(before) -> \(front()), seen \(frontWhileStarting.sorted())")
-            spin(6)
-            let session = model.dockSessions.first { $0.source == source && $0.title.contains(run) } ?? model.dockSessions.first { $0.source == source && QuickInputCatalog.path(of: $0) == directory }
-            print("  in dock: \(session.map { "\(QuickInputCatalog.sessionRow($0).trailing) | \($0.title.prefix(40)) | url \($0.navigationURL?.scheme ?? "none") | canSend \($0.canSend)" } ?? "missing")")
-            model.dismissReceipt()
-            spin(1)
+            print("\(label): \(confirmed ? "PASS" : "FAIL") \(String(format: "%.1f", Date().timeIntervalSince(started)))s | \(model.receipt?.title ?? "no receipt") | front \(before) -> \(front()), seen \(seen.sorted())")
         }
-        if links {
+
+        for client in clients {
+            let run = String(UUID().uuidString.prefix(6))
+            let prompt = "WAW E2E \(run) \"引号\" $(不展开)：只回复 ok，不要调用工具，不要改文件。"
+            model.prepareForSummon(); spin(1)
+            model.togglePicker(.agent)
+            guard let row = model.rows.first(where: { $0.client == client }) else { print("\(client): not offered"); failed += 1; continue }
+            model.pick(row)
+            model.pick(workspace: workspace)
+            model.textChanged(prompt, cursor: (prompt as NSString).length)
+            print("\(client): sendable \(model.canSendNow), hint \(model.hint ?? "none")")
+            guard model.canSendNow else { model.textChanged("", cursor: 0); model.closePicker(); continue }
+            let before = front(), started = Date()
+            model.submit(send: true)
+            if model.notice != nil { print("\(client): could not start: \(model.notice ?? "")"); failed += 1; continue }
+            waitForReceipt(client.rawValue, started: started, before: before)
+            spin(25)
+            state.refreshAgentData(); spin(3)
+            let session = model.dockSessions.first { $0.title.contains(run) } ?? model.dockSessions.first { QuickInputCatalog.client(of: $0) == client && QuickInputCatalog.path(of: $0) == directory }
+            print("  in dock: \(session.map { "\(QuickInputCatalog.status($0).text) | \($0.title.prefix(30)) | client \(QuickInputCatalog.client(of: $0)?.rawValue ?? "?") | canSend \(QuickInputCatalog.canSend($0, claudeCodeWorks: true))" } ?? "missing")")
+            model.dismissReceipt(); spin(0.5)
+        }
+
+        if resume {
+            // The newest ended Codex CLI session takes a second message by being resumed.
+            state.refreshAgentData(); spin(3)
+            model.prepareForSummon(); spin(1.5)
+            let candidates = model.dockSessions.filter { QuickInputCatalog.client(of: $0) == .codexCLI && $0.title.contains("WAW") }
+            print("resume candidates:", candidates.map { String($0.title.prefix(14)) })
+            var resumed = false
+            for session in candidates where !resumed {
+                model.pick(session: session); spin(0.1)
+                guard model.canSendNow else { print("  still open, not resumed:", String(session.title.prefix(14))); continue }
+                resumed = true
+                let text = "WAW E2E 续发：只回复 ok2，不要调用工具。"
+                model.textChanged(text, cursor: (text as NSString).length)
+                let before = front(), started = Date()
+                model.submit(send: true)
+                waitForReceipt("resume", started: started, before: before)
+                model.dismissReceipt()
+            }
+            if !resumed { print("resume: every candidate is still open") }
+            model.clearSessionTarget()
+        }
+
+        if opening {
             // Opens real windows; nothing is sent. Focus is handed back after each one.
             let previous = NSWorkspace.shared.frontmostApplication
-            for source in [WorkSource.codex, .claude] {
-                model.prepareForSummon()
+            for client in [QuickInputClient.codexApp, .claudeApp, .codexCLI] {
+                model.prepareForSummon(); spin(0.5)
                 model.togglePicker(.agent)
-                if let row = model.rows.first(where: { $0.source == source }) { model.pick(row) }
+                guard let row = model.rows.first(where: { $0.client == client }) else { print("\(client): not offered"); continue }
+                model.pick(row)
                 model.pick(workspace: workspace)
-                model.textChanged("WAW 深链验证：无需发送", cursor: 12)
-                print("\(source): open verb \(model.secondaryVerb ?? "none")")
-                model.submit(openClient: true)
-                print("  notice \(model.notice ?? "none") | receipt \(model.receipt?.title ?? "none")")
-                spin(3)
-                print("  front \(front())")
+                model.textChanged("WAW 打开验证：无需发送", cursor: 12)
+                model.submit()
+                spin(2)
+                print("\(client): notice \(model.notice ?? "none") | receipt \(model.receipt?.title ?? "none") | front \(front())")
+                model.dismissReceipt()
                 previous?.activate(); spin(1)
             }
         }

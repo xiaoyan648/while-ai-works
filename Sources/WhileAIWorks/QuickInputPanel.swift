@@ -24,13 +24,11 @@ final class QuickInputTextView: NSTextView {
         switch Int(event.keyCode) {
         case 36, 76:
             if modifiers == .shift { insertText("\n", replacementRange: selectedRange()) }
-            else { model.submit(openClient: modifiers == .command) }
+            else { model.submit(send: modifiers == .command) }
         case 53:
             if model.pickerVisible { model.closePicker() } else { onEscape() }
         case 48 where modifiers.isEmpty:
-            if inPlace { if model.placePane == .workspaces { model.enterSessions() } else { model.leaveSessions() } }
-            else if model.pickerVisible { model.pickSelected() }
-            else { model.togglePicker(.agent) }
+            if model.pickerVisible { model.pickSelected() } else { model.togglePicker(.agent) }
         case 125 where model.pickerVisible: model.moveSelection(1)
         case 126 where model.pickerVisible: model.moveSelection(-1)
         case 124 where inPlace && selectedRange().location == (string as NSString).length: model.enterSessions()
@@ -216,9 +214,8 @@ struct QuickInputView: View {
             ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
                 Button { model.pick(row) } label: {
                     HStack(spacing: 10) {
-                        AgentMark(source: row.source, size: 22).opacity(row.enabled ? 1 : 0.45)
+                        AgentMark(source: row.client.source, size: 22)
                         Text(row.title).font(.system(size: 14, weight: .medium)).lineLimit(1).fixedSize()
-                            .foregroundStyle(row.enabled ? Color.primary : Color.secondary)
                         Text(row.subtitle).font(.system(size: 13)).foregroundStyle(.secondary).lineLimit(1)
                         Spacer(minLength: 8)
                         Text(row.trailing).font(.system(size: 12)).lineLimit(1).fixedSize()
@@ -322,8 +319,8 @@ struct QuickInputView: View {
                     .frame(width: 18, height: 18).background(Circle().fill(Theme.well))
                 Text("开新会话").font(.system(size: 14, weight: .medium))
                 Spacer(minLength: 8)
-                if let source = focus.flatMap({ model.memory.projectAgents[$0.path] }).flatMap(WorkSource.init(rawValue:)) ?? model.targetAgent {
-                    Text(source.clientName).font(.system(size: 12)).foregroundStyle(.secondary)
+                if let client = focus.flatMap(model.client(for:)) {
+                    Text(client.title).font(.system(size: 12)).foregroundStyle(.secondary)
                 }
             }
             .padding(.horizontal, 10).frame(height: 36).contentShape(Rectangle())
@@ -332,7 +329,7 @@ struct QuickInputView: View {
         .buttonStyle(.plain).focusable(false).modifier(QuickInputHoverFill())
     }
     private func sessionRow(_ session: AgentDockSession, selected: Bool, showWorkspace: Bool) -> some View {
-        let row = QuickInputCatalog.sessionRow(session)
+        let status = QuickInputCatalog.status(session)
         return Button { model.pick(session: session) } label: {
             HStack(spacing: 9) {
                 AgentMark(source: session.source, size: 18)
@@ -342,8 +339,8 @@ struct QuickInputView: View {
                         .font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1).layoutPriority(-1)
                 }
                 Spacer(minLength: 8)
-                Text(row.trailing).font(.system(size: 12)).lineLimit(1).fixedSize()
-                    .foregroundStyle(row.tone == .working ? Theme.accent : row.tone == .attention ? Theme.attention : Color.secondary)
+                Text(status.text).font(.system(size: 12)).lineLimit(1).fixedSize()
+                    .foregroundStyle(status.tone == .working ? Theme.accent : status.tone == .attention ? Theme.attention : Color.secondary)
             }
             .padding(.horizontal, 10).frame(height: 36).contentShape(Rectangle())
             .background(highlight(selected, id: "session"))
@@ -351,7 +348,7 @@ struct QuickInputView: View {
         .buttonStyle(.plain).focusable(false).modifier(QuickInputHoverFill())
         .help(session.title)
         .id(session.dockIdentity)
-        .accessibilityIdentifier("quick-input-" + row.id)
+        .accessibilityIdentifier("quick-input-session-" + session.dockIdentity)
     }
 
     private var footer: some View {
@@ -364,12 +361,12 @@ struct QuickInputView: View {
                 }
             }
             Spacer(minLength: 4)
-            if let secondary = model.secondaryVerb {
-                action(secondary, keys: ["⌘", "↵"], primary: false) { model.submit(openClient: true) }
-                    .accessibilityIdentifier("quick-input-secondary")
+            if model.canSendNow {
+                action("发送", keys: ["⌘", "↵"], primary: false) { model.submit(send: true) }
+                    .accessibilityIdentifier("quick-input-send")
             }
             action(model.primaryVerb, keys: ["↵"], primary: true) { model.submit() }
-                .accessibilityIdentifier("quick-input-primary")
+                .accessibilityIdentifier("quick-input-open")
         }
         .frame(minHeight: 48)
         .padding(.leading, 12).padding(.trailing, 8).padding(.vertical, 3)
@@ -393,7 +390,8 @@ struct QuickInputView: View {
         if model.pickerVisible {
             HStack(spacing: 12) {
                 word("↑↓ 移动")
-                if model.pickerKind == .place { word(model.placePane == .sessions ? "← 工作区" : "→ 选会话") }
+                if model.pickerKind == .place { word(model.placePane == .sessions ? "← 工作区" : "→ 会话") }
+                word("⇥ 选中")
                 word("esc 返回")
             }
             .padding(.horizontal, 3)
@@ -402,9 +400,9 @@ struct QuickInputView: View {
                 word("继续")
                 segment(session.title, source: session.source, filled: true) { model.togglePicker(.place) }
                 if let path = QuickInputCatalog.path(of: session) { word(QuickInputProject(path: path).name + " ·") }
-                let row = QuickInputCatalog.sessionRow(session)
-                Text(row.trailing).font(.system(size: 13))
-                    .foregroundStyle(row.tone == .working ? Theme.accent : row.tone == .attention ? Theme.attention : Color.secondary)
+                let status = QuickInputCatalog.status(session)
+                Text(status.text).font(.system(size: 13))
+                    .foregroundStyle(status.tone == .working ? Theme.accent : status.tone == .attention ? Theme.attention : Color.secondary)
                 Button(action: model.clearSessionTarget) {
                     Image(systemName: "xmark").font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary)
                         .frame(width: 24, height: 24).contentShape(Rectangle())
@@ -414,8 +412,8 @@ struct QuickInputView: View {
             }
         } else {
             HStack(spacing: 3) {
-                word("交给")
-                segment(model.targetAgent?.clientName ?? "选择 Agent", source: model.targetAgent, filled: model.targetAgent != nil) { model.togglePicker(.agent) }
+                word("用")
+                segment(model.targetClient?.title ?? "选择 Agent", source: model.targetClient?.source, filled: model.targetClient != nil) { model.togglePicker(.agent) }
                 word("在")
                 segment(model.project?.name ?? "选择工作区", source: nil, filled: model.project != nil) { model.togglePicker(.place) }
                 word("开新会话")
@@ -448,7 +446,7 @@ struct QuickInputReceiptView: View {
         case .success: return Theme.accent
         case .warning: return Theme.attention
         case .failure: return Color(nsColor: .adaptive(light: 0xB4472B, dark: 0xF0A08A))
-        case .progress, .handedOff: return .primary
+        case .progress, .note: return .primary
         }
     }
     private func label(_ action: QuickInputReceipt.Action) -> String {
