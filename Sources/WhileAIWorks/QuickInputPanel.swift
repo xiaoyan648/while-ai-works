@@ -247,6 +247,7 @@ struct QuickInputView: View {
                             ForEach(Array(workspaces.enumerated()), id: \.element.id) { index, project in
                                 Button { model.pick(workspace: project) } label: {
                                     HStack(spacing: 8) {
+                                        if project.isAll { Image(systemName: "square.stack").font(.system(size: 12)).foregroundStyle(.secondary) }
                                         Text(project.name).font(.system(size: 14, weight: .medium)).lineLimit(1).truncationMode(.middle)
                                         Spacer(minLength: 4)
                                         let count = model.sessionCount(in: project)
@@ -256,7 +257,7 @@ struct QuickInputView: View {
                                     .background(highlight(project == focus, id: "workspace", quiet: pane == .sessions))
                                 }
                                 .buttonStyle(.plain).focusable(false).id(project.id)
-                                .help(project.path)
+                                .help(project.isAll ? "所有会话，顺序和猫条一致" : project.path)
                                 .accessibilityIdentifier("quick-input-workspace-" + project.name)
                                 // A pointer resting where the list opens must not steal focus from the keyboard.
                                 .onContinuousHover { phase in
@@ -286,13 +287,13 @@ struct QuickInputView: View {
             .padding(6).frame(width: 216)
             Rectangle().fill(.separator).frame(width: 0.5)
             VStack(alignment: .leading, spacing: 0) {
-                columnTitle(focus.map { $0.name + " 的会话" } ?? "会话").lineLimit(1)
+                columnTitle(focus.map { $0.isAll ? "和猫条相同的顺序" : $0.name + " 的会话" } ?? "会话").lineLimit(1)
                 ScrollViewReader { reader in
                     ScrollView {
                         VStack(spacing: 0) {
-                            newSessionRow(focus)
+                            if focus?.isAll != true { newSessionRow(focus) }
                             ForEach(Array(sessions.enumerated()), id: \.element.dockIdentity) { index, session in
-                                sessionRow(session, selected: pane == .sessions && model.sessionIndex == index + 1)
+                                sessionRow(session, selected: pane == .sessions && model.sessionIndex == index + 1, showWorkspace: focus?.isAll == true)
                             }
                         }
                     }
@@ -330,12 +331,16 @@ struct QuickInputView: View {
         }
         .buttonStyle(.plain).focusable(false).modifier(QuickInputHoverFill())
     }
-    private func sessionRow(_ session: AgentDockSession, selected: Bool) -> some View {
+    private func sessionRow(_ session: AgentDockSession, selected: Bool, showWorkspace: Bool) -> some View {
         let row = QuickInputCatalog.sessionRow(session)
         return Button { model.pick(session: session) } label: {
             HStack(spacing: 9) {
                 AgentMark(source: session.source, size: 18)
                 Text(session.title).font(.system(size: 14, weight: .medium)).lineLimit(1)
+                if showWorkspace {
+                    Text(QuickInputCatalog.path(of: session).map { QuickInputProject(path: $0).name } ?? "无工作区")
+                        .font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1).layoutPriority(-1)
+                }
                 Spacer(minLength: 8)
                 Text(row.trailing).font(.system(size: 12)).lineLimit(1).fixedSize()
                     .foregroundStyle(row.tone == .working ? Theme.accent : row.tone == .attention ? Theme.attention : Color.secondary)

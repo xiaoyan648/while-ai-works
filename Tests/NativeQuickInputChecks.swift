@@ -1,4 +1,5 @@
 import AppKit
+import AgentHUDCore
 import Carbon
 import SwiftUI
 import WhileCore
@@ -41,6 +42,7 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         placePicker()
         sending()
         openingSessions()
+        jumping()
         try keyboard()
         dockHandover()
         if arguments.contains("--real") { MainActor.assumeIsolated { realData(arguments) } }
@@ -134,13 +136,18 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
                         session("00000000-0000-4000-8000-000000000003", source: .claude, title: "终端会话", cwd: "/repo/waw", sendable: false),
                         session("00000000-0000-4000-8000-000000000004", title: "订阅校验", cwd: "/repo/waw")]
         let projects = QuickInputCatalog.projects(sessions: sessions, recents: ["/repo/old", "/repo/waw"], exists: { $0 != "/repo/old" })
-        check(projects.map(\.path) == ["/repo/waw", "/repo/cineflow"], "recents first, unique, and only existing directories")
+        check(projects.map(\.path) == ["/repo/cineflow", "/repo/waw"], "dock order, then recents; unique and only existing directories")
         check(QuickInputCatalog.projects(sessions: [session("x", cwd: "/a/app"), session("y", cwd: "/b/app")], recents: [], exists: { _ in true }).count == 2, "worktrees with one name stay apart")
         let waw = QuickInputProject(path: "/repo/waw")
         let inWaw = QuickInputCatalog.sessions(in: waw, of: sessions, query: "")
-        check(inWaw.map(\.title) == ["订阅校验", "等待", "终端会话"], "sessions that take messages first: \(inWaw.map(\.title))")
-        check(QuickInputCatalog.sessionRow(inWaw[1]).tone == .attention && QuickInputCatalog.sessionRow(inWaw[2]).trailing == "仅打开")
-        check(QuickInputCatalog.workspaces(projects: projects, sessions: sessions, query: "订阅").map(\.path) == ["/repo/waw"], "a session title finds its workspace")
+        check(inWaw.map(\.title) == ["等待", "终端会话", "订阅校验"], "the order given, which is the dock's: \(inWaw.map(\.title))")
+        check(QuickInputCatalog.sessionRow(inWaw[0]).tone == .attention && QuickInputCatalog.sessionRow(inWaw[1]).trailing == "仅打开")
+        check(QuickInputCatalog.workspaces(projects: projects, sessions: sessions, query: "").first == .all, "all sessions come first")
+        check(QuickInputCatalog.workspaces(projects: projects, sessions: sessions, query: "订阅") == [.all, QuickInputProject(path: "/repo/waw")], "a session title finds all, then its workspace")
+        check(QuickInputCatalog.workspaces(projects: projects, sessions: sessions, query: "waw").first?.name == "waw", "a workspace name comes first")
+        let homeless = sessions + [session("00000000-0000-4000-8000-000000000005", title: "无处可归", cwd: nil)]
+        check(QuickInputCatalog.sessions(in: .all, of: homeless, query: "").count == 5 && QuickInputCatalog.sessions(in: .all, of: homeless, query: "无处").count == 1, "a session with no workspace is still reachable")
+        check(QuickInputCatalog.sessions(in: .all, of: homeless, query: "claude").map(\.title) == ["终端会话"], "searching a client name works too")
         check(QuickInputCatalog.sessions(in: waw, of: sessions, query: "订阅").map(\.title) == ["订阅校验"])
         check(QuickInputCatalog.sessions(in: waw, of: sessions, query: "waw").count == 3, "a workspace name shows everything in it")
     }
@@ -276,7 +283,7 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
     static func placePicker() {
         let state = makeState()
         var data = AgentDockData()
-        let running = session("00000000-0000-4000-8000-000000000001", title: "修复充值边界", cwd: "/repo/cineflow", running: true)
+        let running = session("00000000-0000-4000-8000-000000000001", title: "修复充值边界", cwd: "/repo/cineflow", running: true, event: .working)
         let idle = session("00000000-0000-4000-8000-000000000002", title: "有效期排查", cwd: "/repo/cineflow")
         let other = session("00000000-0000-4000-8000-000000000003", title: "订阅校验", cwd: "/repo/waw")
         data.sessions = [running, idle, other]
@@ -285,7 +292,15 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         model.prepareForSummon()
         model.togglePicker(.agent)
         model.pick(model.rows.first { $0.source == .codex }!)
-        check(model.pickerKind == .place && model.workspaces.map(\.name) == ["cineflow", "waw"] && model.placePane == .workspaces)
+        check(model.pickerKind == .place && model.workspaces.map(\.name) == ["全部会话", "cineflow", "waw"] && model.placePane == .workspaces)
+        check(model.focusedWorkspace == .all && model.focusedSessions.count == 3 && model.primaryVerb == "选会话" && model.secondaryVerb == nil, "all sessions show first when no workspace is chosen yet")
+        model.pickSelected()
+        check(model.placePane == .sessions && model.sessionIndex == 1 && model.pickerKind == .place, "Enter on all moves into the sessions")
+        model.moveSelection(-1)
+        check(model.sessionIndex == 1, "all has no new-session row to land on")
+        model.leaveSessions()
+        model.moveSelection(1)
+        check(model.focusedWorkspace?.name == "cineflow")
         check(model.focusedSessions.map(\.title) == ["修复充值边界", "有效期排查"], "the sessions on the right belong to the focused workspace")
         check(model.primaryVerb == "在这里开新会话")
 
@@ -295,7 +310,7 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         check(model.focusedWorkspace?.name == "waw", "it stops at the end")
         model.moveSelection(-1)
         model.enterSessions()
-        check(model.placePane == .sessions && model.sessionIndex == 1 && model.primaryVerb == "继续这个会话")
+        check(model.focusedWorkspace?.name == "cineflow" && model.placePane == .sessions && model.sessionIndex == 1 && model.primaryVerb == "继续这个会话")
         model.moveSelection(1)
         check(model.sessionIndex == 2)
         model.moveSelection(-2)
@@ -308,6 +323,7 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
 
         // Picking a session settles the agent and the workspace together.
         model.togglePicker(.place)
+        check(model.focusedWorkspace?.name == "cineflow", "the list opens on the current workspace")
         model.moveSelection(1)
         model.enterSessions()
         model.pickSelected()
@@ -328,11 +344,18 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
 
         // A pointer focuses a workspace, and the keyboard carries on from there.
         model.togglePicker(.place)
-        model.focusWorkspace(at: 1)
+        model.focusWorkspace(at: 2)
         check(model.focusedWorkspace?.name == "waw")
         model.focusWorkspace(at: 9)
         check(model.focusedWorkspace?.name == "waw", "an index out of range changes nothing")
-        check(model.sessionCount(in: QuickInputProject(path: "/repo/cineflow")) == 2)
+        check(model.sessionCount(in: QuickInputProject(path: "/repo/cineflow")) == 2 && model.sessionCount(in: .all) == 3)
+        model.closePicker()
+
+        // A pending request makes a session wait, even when its own record has not caught up.
+        model.pick(session: running)
+        check(model.primaryVerb == "插入当前步")
+        state.agentInteractions = [.init(request: PermissionRequest(id: "r", source: .codex, sessionID: running.id, toolName: "Bash", summary: "ls", detail: nil, cwd: "/repo/cineflow", at: Date()))]
+        check(model.primaryVerb == "打开会话" && model.targetSession?.event == .approval, "a request is never talked over: \(model.primaryVerb)")
     }
 
     static func sending() {
@@ -375,6 +398,57 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         check(state.quickInputPulse.rejections == 1 && model.receipt?.lingers == true)
         model.perform(.dismiss)
         check(model.receipt == nil, "every lingering receipt can be closed")
+    }
+
+    /// ⌘Enter as a router: nothing typed, or straight from an open list.
+    static func jumping() {
+        let state = makeState()
+        var opened: [AgentDockSession] = [], links: [URL] = [], copied: [String] = []
+        state.openAgentSession = { opened.append($0) }
+        var data = AgentDockData()
+        let idle = session("00000000-0000-4000-8000-000000000001", title: "充值有效期排查", cwd: "/repo/cineflow")
+        data.sessions = [idle, session("00000000-0000-4000-8000-000000000002", title: "订阅校验", cwd: "/repo/waw")]
+        state.agentDashboard = data
+        var dismissed = 0
+        let model = QuickInputModel(state: state, environment: environment(opened: { links.append($0) }, copied: { copied.append($0) }))
+        model.onDismiss = { dismissed += 1 }
+        model.prepareForSummon()
+
+        // Nothing typed, no list: an empty client at the workspace. Nothing to report afterwards.
+        model.submit(openClient: true)
+        check(model.pickerKind == .agent && links.isEmpty, "it still needs to know who")
+        model.pick(model.rows.first { $0.source == .codex }!)
+        model.pick(workspace: QuickInputProject(path: "/repo/cineflow"))
+        model.submit(openClient: true)
+        check(links.last?.absoluteString == "codex://new?path=%2Frepo%2Fcineflow" && dismissed == 1 && model.receipt == nil, "an empty jump: \(links)")
+        model.submit()
+        check(links.count == 1, "Enter with nothing typed does nothing")
+
+        // Typing `#关键词` and ⌘Enter goes straight to the session, and the token never reaches the clipboard.
+        model.textChanged("#有效", cursor: 3)
+        check(model.pickerVisible && model.secondaryVerb == "打开会话")
+        model.submit(openClient: true)
+        check(opened.map(\.id) == [idle.id] && copied.isEmpty && model.draft.isEmpty && !model.pickerVisible)
+
+        // With text it carries the text along.
+        model.textChanged("带上这句 #订阅", cursor: 8)
+        model.submit(openClient: true)
+        check(opened.count == 2 && copied == ["带上这句"], "copied \(copied)")
+
+        // A workspace selected in the list opens a new client there.
+        model.togglePicker(.place)
+        model.focusWorkspace(at: model.workspaces.firstIndex(of: QuickInputProject(path: "/repo/waw"))!)
+        check(model.secondaryVerb == "在 Codex 打开")
+        model.submit(openClient: true)
+        check(links.last?.absoluteString == "codex://new?path=%2Frepo%2Fwaw" && !model.pickerVisible)
+
+        // All sessions has nowhere to open; ⌘Enter moves into the list like Enter does.
+        model.togglePicker(.place)
+        model.focusWorkspace(at: 0)
+        model.submit(openClient: true)
+        check(model.placePane == .sessions && model.pickerVisible)
+        model.submit(openClient: true)
+        check(opened.count == 3)
     }
 
     static func openingSessions() {
@@ -506,6 +580,8 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         key(48, "\t", to: panel)
         check(controller.model.placePane == .sessions, "Tab moves across too")
         key(48, "\t", to: panel)
+        check(controller.model.focusedWorkspace == .all, "nothing chosen yet, so the list starts on all sessions")
+        key(125, "", to: panel)
         key(36, "\r", to: panel)
         check(controller.model.project?.name == "cineflow" && controller.model.pickerKind == nil)
         spin(0.35)
@@ -613,10 +689,13 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         spin(5)
         let data = state.agentDashboard
         print("real sessions \(data.sessions.count), quotas \(data.quotas.count)")
+        let roots = data.sessions.filter { $0.parentSessionID == nil }
+        print("real roots \(roots.count), no directory \(roots.filter { QuickInputCatalog.path(of: $0) == nil }.count), directory gone \(roots.filter { QuickInputCatalog.path(of: $0).map { !FileManager.default.fileExists(atPath: $0) } ?? false }.count)")
         let controller = QuickInputController(state: state, environment: environment(), tileCenter: { _ in nil }, dockFrame: { nil })
         let model = controller.model
         controller.show(); spin(0.3)
         model.togglePicker(.place); spin(0.5)
+        print("dock order:", model.dockSessions.filter { $0.parentSessionID == nil }.prefix(5).map { String($0.title.prefix(10)) + "/" + "\($0.event)" })
         for project in model.workspaces.prefix(6) {
             print("workspace", project.name, model.sessionCount(in: project))
         }

@@ -5,7 +5,10 @@ import Combine
 struct QuickInputProject: Equatable, Identifiable, Codable {
     let path: String
     var id: String { path }
-    var name: String { URL(fileURLWithPath: path).lastPathComponent }
+    var name: String { isAll ? "全部会话" : URL(fileURLWithPath: path).lastPathComponent }
+    /// Every session, including those with no directory or one that no longer exists.
+    static let all = QuickInputProject(path: "")
+    var isAll: Bool { path.isEmpty }
 }
 
 enum QuickInputTarget: Equatable {
@@ -182,9 +185,10 @@ enum QuickInputCatalog {
     /// Whether a message can go straight in. Anything else opens in its client instead.
     static func takesMessages(_ session: AgentDockSession) -> Bool { session.canSend && !isWaiting(session) }
 
+    /// Workspaces in the dock's order, so the busiest come first; recently used ones follow.
     static func projects(sessions: [AgentDockSession], recents: [String], exists: (String) -> Bool) -> [QuickInputProject] {
         var seen = Set<String>()
-        return (recents + sessions.compactMap(path)).filter { seen.insert($0).inserted && exists($0) }.map { QuickInputProject(path: $0) }
+        return (sessions.compactMap(path) + recents).filter { seen.insert($0).inserted && exists($0) }.map { QuickInputProject(path: $0) }
     }
 
     static func agentRows(sources: [WorkSource], quota: (WorkSource) -> AgentDockQuota?, query: String) -> [QuickInputRow] {
@@ -197,20 +201,26 @@ enum QuickInputCatalog {
         }
     }
 
-    /// Workspaces that match by name or hold a session that does.
-    static func workspaces(projects: [QuickInputProject], sessions: [AgentDockSession], query: String) -> [QuickInputProject] {
-        guard !query.isEmpty else { return Array(projects.prefix(12)) }
-        return projects.filter { project in
-            project.path.localizedCaseInsensitiveContains(query)
-                || sessions.contains { path(of: $0) == project.path && $0.title.localizedCaseInsensitiveContains(query) }
-        }
+    private static func matches(_ session: AgentDockSession, _ query: String) -> Bool {
+        session.title.localizedCaseInsensitiveContains(query) || session.source.clientName.localizedCaseInsensitiveContains(query)
     }
-    /// A name match shows everything in the workspace; otherwise only the sessions the search found.
+    /// Without a search, everything under "all" first. With one, workspaces named by it come first,
+    /// then "all" for the sessions it found, then the workspaces those sessions live in.
+    static func workspaces(projects: [QuickInputProject], sessions: [AgentDockSession], query: String) -> [QuickInputProject] {
+        guard !query.isEmpty else { return [.all] + projects.prefix(30) }
+        let roots = sessions.filter { $0.parentSessionID == nil }
+        let named = projects.filter { $0.path.localizedCaseInsensitiveContains(query) }
+        let holding = projects.filter { project in !named.contains(project) && roots.contains { path(of: $0) == project.path && matches($0, query) } }
+        return named + (roots.contains { matches($0, query) } ? [.all] : []) + holding
+    }
+    /// In the order they were given, which is the dock's. A workspace named by the search shows
+    /// everything in it; otherwise only the sessions the search found.
     static func sessions(in project: QuickInputProject?, of sessions: [AgentDockSession], query: String) -> [AgentDockSession] {
         guard let project else { return [] }
-        let all = sessions.filter { $0.parentSessionID == nil && path(of: $0) == project.path }
-        let found = query.isEmpty || project.path.localizedCaseInsensitiveContains(query) ? all : all.filter { $0.title.localizedCaseInsensitiveContains(query) }
-        return Array((found.filter(takesMessages) + found.filter { !takesMessages($0) }).prefix(20))
+        let roots = sessions.filter { $0.parentSessionID == nil }
+        let inside = project.isAll ? roots : roots.filter { path(of: $0) == project.path }
+        let found = query.isEmpty || (!project.isAll && project.path.localizedCaseInsensitiveContains(query)) ? inside : inside.filter { matches($0, query) }
+        return Array(found.prefix(40))
     }
     static func sessionRow(_ session: AgentDockSession) -> QuickInputRow {
         let waiting = isWaiting(session)
@@ -319,32 +329,41 @@ final class QuickInputModel: ObservableObject {
         }
     }
     var selectedSources: [WorkSource] { WorkSource.dockOrder.filter { state.selectedSources.contains($0) } }
+    /// The dock's rows, in the dock's order. A pending request counts as waiting even when
+    /// the session's own record has not caught up.
+    var dockSessions: [AgentDockSession] {
+        state.sessionRows(for: selectedSources).map { row in
+            var session = row.session
+            session.event = row.event
+            return session
+        }
+    }
     var targetSession: AgentDockSession? {
         guard case .session(let identity) = target else { return nil }
-        return state.agentDashboard.sessions.first { $0.dockIdentity == identity }
+        return dockSessions.first { $0.dockIdentity == identity }
     }
     var targetAgent: WorkSource? {
         if case .agent(let source) = target { return source }
         return targetSession?.source
     }
     var projects: [QuickInputProject] {
-        QuickInputCatalog.projects(sessions: state.agentDashboard.sessions, recents: memory.recents, exists: environment.directoryExists)
+        QuickInputCatalog.projects(sessions: dockSessions, recents: memory.recents, exists: environment.directoryExists)
     }
     var rows: [QuickInputRow] {
         pickerKind == .agent ? QuickInputCatalog.agentRows(sources: selectedSources, quota: state.dockQuota(for:), query: pickerQuery) : []
     }
     var workspaces: [QuickInputProject] {
-        QuickInputCatalog.workspaces(projects: projects, sessions: state.agentDashboard.sessions, query: pickerQuery)
+        QuickInputCatalog.workspaces(projects: projects, sessions: dockSessions, query: pickerQuery)
     }
     var focusedWorkspace: QuickInputProject? {
         let list = workspaces
         return list.isEmpty ? nil : list[min(workspaceIndex, list.count - 1)]
     }
     var focusedSessions: [AgentDockSession] {
-        QuickInputCatalog.sessions(in: focusedWorkspace, of: state.agentDashboard.sessions, query: pickerQuery)
+        QuickInputCatalog.sessions(in: focusedWorkspace, of: dockSessions, query: pickerQuery)
     }
     func sessionCount(in project: QuickInputProject) -> Int {
-        state.agentDashboard.sessions.filter { $0.parentSessionID == nil && QuickInputCatalog.path(of: $0) == project.path }.count
+        QuickInputCatalog.sessions(in: project, of: dockSessions, query: "").count
     }
     /// A search that only found a session title lands on that session, so Enter cannot start a new one by accident.
     var placePane: QuickInputPlacePane {
@@ -356,7 +375,8 @@ final class QuickInputModel: ObservableObject {
     var primaryVerb: String {
         if pickerVisible {
             guard pickerKind == .place else { return "选择" }
-            return placePane == .sessions && sessionIndex > 0 && !focusedSessions.isEmpty ? "继续这个会话" : "在这里开新会话"
+            if selectedPlaceSession != nil { return "继续这个会话" }
+            return focusedWorkspace?.isAll == true ? "选会话" : "在这里开新会话"
         }
         if let session = targetSession {
             guard QuickInputCatalog.takesMessages(session) else { return "打开会话" }
@@ -364,11 +384,34 @@ final class QuickInputModel: ObservableObject {
         }
         return targetAgent != nil && project != nil ? "发送" : "下一步"
     }
-    var secondaryVerb: String? {
-        guard !pickerVisible else { return nil }
-        if let session = targetSession { return QuickInputCatalog.takesMessages(session) ? "打开会话" : nil }
-        guard let source = targetAgent, project != nil, QuickInputCapabilities.of(source).prefill else { return nil }
+    /// The session under the cursor in the right column, if any.
+    private var selectedPlaceSession: AgentDockSession? {
+        guard pickerKind == .place, placePane == .sessions, sessionIndex > 0 else { return nil }
+        let sessions = focusedSessions
+        return sessions.indices.contains(sessionIndex - 1) ? sessions[sessionIndex - 1] : nil
+    }
+    /// The agent a workspace would start with, as `pick(workspace:)` decides it.
+    private func agent(for workspace: QuickInputProject) -> WorkSource? {
+        if agentPicked { return targetAgent }
+        return memory.projectAgents[workspace.path].flatMap(WorkSource.init(rawValue:)) ?? targetAgent
+    }
+    private func openVerb(_ source: WorkSource?) -> String? {
+        guard let source, QuickInputCapabilities.of(source).prefill else { return nil }
         return "在 " + destination(source) + " 打开"
+    }
+    var secondaryVerb: String? {
+        if pickerVisible {
+            if pickerKind == .agent {
+                let current = rows
+                guard project != nil, current.indices.contains(selection), current[selection].enabled else { return nil }
+                return openVerb(current[selection].source)
+            }
+            if selectedPlaceSession != nil { return "打开会话" }
+            guard let focus = focusedWorkspace, !focus.isAll else { return nil }
+            return openVerb(agent(for: focus))
+        }
+        if let session = targetSession { return QuickInputCatalog.takesMessages(session) ? "打开会话" : nil }
+        return project == nil ? nil : openVerb(targetAgent)
     }
     var hint: String? {
         if notice != nil { return notice }
@@ -425,7 +468,7 @@ final class QuickInputModel: ObservableObject {
         case .place:
             if placePane == .sessions {
                 chosenPane = .sessions
-                sessionIndex = min(focusedSessions.count, max(0, sessionIndex + delta))
+                sessionIndex = min(focusedSessions.count, max(focusedWorkspace?.isAll == true ? 1 : 0, sessionIndex + delta))
             } else {
                 chosenPane = .workspaces
                 workspaceIndex = min(max(0, workspaces.count - 1), max(0, workspaceIndex + delta))
@@ -440,6 +483,7 @@ final class QuickInputModel: ObservableObject {
     }
     func enterSessions() {
         guard pickerKind == .place, focusedWorkspace != nil else { return }
+        guard focusedWorkspace?.isAll != true || !focusedSessions.isEmpty else { return }
         chosenPane = .sessions; sessionIndex = focusedSessions.isEmpty ? 0 : 1
     }
     func leaveSessions() { if pickerKind == .place { chosenPane = .workspaces } }
@@ -463,6 +507,7 @@ final class QuickInputModel: ObservableObject {
         if project == nil { openPicker(.place, note: "还差工作区，内容不会丢。") }
     }
     func pick(workspace: QuickInputProject) {
+        guard !workspace.isAll else { enterSessions(); return }
         removeToken()
         project = workspace
         if case .session = target { target = nil }
@@ -493,8 +538,14 @@ final class QuickInputModel: ObservableObject {
     // MARK: Enter
 
     /// Enter sends and ⌘Enter opens the client. Queueing and interrupting happen there, where the session can be seen.
+    /// With nothing typed, ⌘Enter is a plain jump. From an open list it goes straight to what is selected.
     func submit(openClient: Bool = false) {
-        if pickerVisible { pickSelected(); return }
+        if pickerVisible {
+            let session = openClient ? selectedPlaceSession : nil
+            if let session { removeToken(); closePicker(); open(session, text: draft.trimmingCharacters(in: .whitespacesAndNewlines)); return }
+            pickSelected()
+            guard openClient, !pickerVisible else { return }
+        }
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         if case .session = target {
             guard let session = targetSession else { target = nil; notice = "这个会话已不在列表里，换一个吧。"; return }
@@ -504,7 +555,7 @@ final class QuickInputModel: ObservableObject {
             send(text, to: session)
             return
         }
-        guard !text.isEmpty else { return }
+        guard openClient || !text.isEmpty else { return }
         guard case .agent(let source) = target else { openPicker(.agent, note: "先选谁来做，内容不会丢。"); return }
         guard let project else { openPicker(.place, note: "还差工作区，内容不会丢。"); return }
         if openClient {
@@ -547,13 +598,14 @@ final class QuickInputModel: ObservableObject {
     private func handOff(_ text: String, to source: WorkSource, in project: QuickInputProject) {
         let fits = text.count <= QuickInputHandoff.promptLimit
         let desktop = source == .claude && hasClaudeDesktop
-        guard let url = QuickInputHandoff.url(source: source, path: project.path, prompt: fits ? text : nil, claudeDesktop: desktop) else { notice = "这个地址打不开，换个工作区试试。"; return }
+        guard let url = QuickInputHandoff.url(source: source, path: project.path, prompt: fits && !text.isEmpty ? text : nil, claudeDesktop: desktop) else { notice = "这个地址打不开，换个工作区试试。"; return }
         guard environment.canOpen(url) else { notice = QuickInputHandoff.missingHandler(source); return }
         if !fits { environment.copy(text) }
         guard environment.open(url) else { notice = "没能打开\(destination(source))，内容还在。"; return }
         remember(agent: source, project: project.path)
         finishComposing()
         onDismiss()
+        guard !text.isEmpty else { return }
         receipt = QuickInputReceipt(title: "已带到\(destination(source))，等你发送",
             body: fits ? "发送之前不会开始。" : "内容较长，已复制到剪贴板。粘贴后发送。", tone: .handedOff)
     }
