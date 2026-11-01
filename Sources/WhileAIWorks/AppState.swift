@@ -431,8 +431,6 @@ final class AppState: ObservableObject {
     @Published var quickInputEnabled = true { didSet { defaults.set(quickInputEnabled, forKey: "quickInput.enabled") } }
     @Published var quickInputShortcut = QuickInputShortcut.optionSpace { didSet { defaults.set(quickInputShortcut.rawValue, forKey: "quickInput.shortcut") } }
     @Published var quickInputShortcutError: String?
-    /// The terminal new sessions start in, by bundle ID; empty picks automatically.
-    @Published var quickInputTerminal = "" { didSet { defaults.set(quickInputTerminal, forKey: "quickInput.terminal") } }
     @Published var quickInputPulse = QuickInputPulse()
     let quickInputSummon = PassthroughSubject<Void, Never>()
     /// The same store as every other preference, so a preview build keeps its own.
@@ -462,7 +460,6 @@ final class AppState: ObservableObject {
         shortcutModifiers = (0...2).contains(savedModifiers) ? savedModifiers : 0
         quickInputEnabled = defaults.object(forKey: "quickInput.enabled") as? Bool ?? true
         quickInputShortcut = QuickInputShortcut(rawValue: defaults.integer(forKey: "quickInput.shortcut")) ?? .optionSpace
-        quickInputTerminal = defaults.string(forKey: "quickInput.terminal") ?? ""
         let book = FishingBook.load(defaults: defaults)
         fishingBook = book
         let progression = FishingProgression(defaults: defaults, book: book)

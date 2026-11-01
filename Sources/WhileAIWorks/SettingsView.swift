@@ -101,14 +101,6 @@ struct SettingsView: View {
             }
             .disabled(!state.quickInputEnabled)
             .accessibilityIdentifier("quick-input-shortcut")
-            Picker("新会话的终端", selection: $state.quickInputTerminal) {
-                Text("自动").tag("")
-                ForEach(QuickInputTerminal.allCases, id: \.rawValue) { Text($0.title).tag($0.rawValue) }
-            }
-            .disabled(!state.quickInputEnabled)
-            .accessibilityIdentifier("quick-input-terminal")
-            Text("发送新任务时，在这里启动 Agent。自动会优先用正在运行的终端，依次是 Otty、Ghostty、iTerm、终端。")
-                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             if let error = state.quickInputShortcutError {
                 Text(error).font(.callout).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
             }

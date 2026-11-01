@@ -105,8 +105,6 @@ enum QuickInputStart {
         let source: WorkSource
         let directory: String
         let prompt: String
-        /// A terminal the user chose, by bundle ID; nil picks automatically.
-        var terminal: String? = nil
     }
     static func arguments(source: WorkSource, executable: String, directory: String) -> [String]? {
         switch source {
@@ -139,19 +137,8 @@ enum QuickInputStart {
     }
 }
 
-enum QuickInputTerminal: String, CaseIterable, Equatable {
-    case otty = "io.appmakes.otty", ghostty = "com.mitchellh.ghostty", iTerm = "com.googlecode.iterm2", terminal = "com.apple.Terminal"
-    var title: String {
-        switch self { case .otty: return "Otty"; case .ghostty: return "Ghostty"; case .iTerm: return "iTerm"; case .terminal: return "终端"}
-    }
-    /// The user's choice wins while it is installed; then a terminal already in use, then the first one installed.
-    static func preferred(chosen: String? = nil, running: [String], installed: (String) -> Bool) -> QuickInputTerminal {
-        if let chosen, let terminal = QuickInputTerminal(rawValue: chosen), installed(chosen) { return terminal }
-        return allCases.first { running.contains($0.rawValue) } ?? allCases.first { installed($0.rawValue) } ?? .terminal
-    }
-}
-
-/// Starts the script in the chosen terminal, then gives the front back to whatever the user was doing.
+/// Starts the script with whatever opens scripts on this Mac, which is what the user's default
+/// terminal means there, then gives the front back to whatever the user was doing.
 enum QuickInputLauncher {
     static func launch(_ request: QuickInputStart.Request) -> String? {
         let search = ProcessInfo.processInfo.environment["PATH"] ?? ""
@@ -167,36 +154,21 @@ enum QuickInputLauncher {
                   manager.createFile(atPath: scriptFile.path, contents: Data(script.utf8), attributes: [.posixPermissions: 0o700]) else { return nil }
         } catch { return nil }
         let workspace = NSWorkspace.shared
-        let terminal = QuickInputTerminal.preferred(chosen: request.terminal, running: workspace.runningApplications.compactMap(\.bundleIdentifier),
-                                                    installed: { workspace.urlForApplication(withBundleIdentifier: $0) != nil })
-        guard let application = workspace.urlForApplication(withBundleIdentifier: terminal.rawValue) else { return nil }
+        func discard() { try? manager.removeItem(at: promptFile); try? manager.removeItem(at: scriptFile) }
+        guard let handler = workspace.urlForApplication(toOpen: scriptFile), let terminal = Bundle(url: handler)?.bundleIdentifier else { discard(); return nil }
         let previous = workspace.frontmostApplication
         let process = Process()
-        // A session started from inside another Claude Code must not inherit its markers.
-        process.environment = ProcessInfo.processInfo.environment.filter { !$0.key.hasPrefix("CLAUDE_CODE_") && $0.key != "CLAUDECODE" }
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        process.arguments = ["-g", scriptFile.path]
         process.standardInput = FileHandle.nullDevice; process.standardOutput = FileHandle.nullDevice; process.standardError = FileHandle.nullDevice
-        if terminal == .otty {
-            process.executableURL = application.appendingPathComponent("Contents/MacOS/otty-cli")
-            process.arguments = ["open", request.directory, "--command", QuickInputStart.quote(scriptFile.path), "--quiet"]
-        } else if terminal == .ghostty {
-            // Ghostty honours `-e` only when its binary is run directly, not through `open`.
-            process.executableURL = application.appendingPathComponent("Contents/MacOS/ghostty")
-            process.arguments = ["--window-save-state=never", "--working-directory=" + request.directory, "-e", scriptFile.path]
-        } else {
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-            process.arguments = ["-g", "-a", application.path, scriptFile.path]
-        }
-        do { try process.run() } catch {
-            try? manager.removeItem(at: promptFile); try? manager.removeItem(at: scriptFile)
-            return nil
-        }
+        do { try process.run() } catch { discard(); return nil }
         returnFront(to: previous, from: terminal, deadline: Date().addingTimeInterval(2))
-        return terminal.rawValue
+        return terminal
     }
-    private static func returnFront(to previous: NSRunningApplication?, from terminal: QuickInputTerminal, deadline: Date) {
-        guard let previous, previous.bundleIdentifier != terminal.rawValue else { return }
+    private static func returnFront(to previous: NSRunningApplication?, from terminal: String, deadline: Date) {
+        guard let previous, previous.bundleIdentifier != terminal else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-            if NSWorkspace.shared.frontmostApplication?.bundleIdentifier == terminal.rawValue { previous.activate() }
+            if NSWorkspace.shared.frontmostApplication?.bundleIdentifier == terminal { previous.activate() }
             else if Date() < deadline { returnFront(to: previous, from: terminal, deadline: deadline) }
         }
     }
@@ -542,7 +514,7 @@ final class QuickInputModel: ObservableObject {
 
     private func start(_ text: String, source: WorkSource, in project: QuickInputProject) {
         let known = Set(state.agentDashboard.sessions.map(\.dockIdentity))
-        guard let terminal = environment.start(.init(source: source, directory: project.path, prompt: text, terminal: state.quickInputTerminal.isEmpty ? nil : state.quickInputTerminal)) else {
+        guard let terminal = environment.start(.init(source: source, directory: project.path, prompt: text)) else {
             notice = QuickInputCapabilities.of(source).prefill ? "没能启动 \(source.clientName)。确认它已安装，或按 ⌘↵ 用客户端打开。" : "没能启动 \(source.clientName)。确认它已安装。"
             return
         }

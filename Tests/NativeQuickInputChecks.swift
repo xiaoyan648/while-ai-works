@@ -120,12 +120,6 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         }
         check(!manager.fileExists(atPath: "/tmp/waw-should-not-exist"), "the prompt is never executed")
         check(QuickInputStart.script(source: .dsh, executable: "x", directory: "/", promptFile: "p", searchPath: "") == nil)
-        check(QuickInputTerminal.preferred(running: ["com.apple.Terminal", "x"], installed: { _ in true }) == .terminal, "the terminal in use wins")
-        check(QuickInputTerminal.preferred(running: [], installed: { $0 == QuickInputTerminal.iTerm.rawValue }) == .iTerm)
-        check(QuickInputTerminal.preferred(running: [], installed: { _ in false }) == .terminal)
-        check(QuickInputTerminal.preferred(running: ["io.appmakes.otty", "com.mitchellh.ghostty"], installed: { _ in true }) == .otty, "Otty comes first when several run")
-        check(QuickInputTerminal.preferred(chosen: "com.googlecode.iterm2", running: ["io.appmakes.otty"], installed: { _ in true }) == .iTerm, "the user's choice wins")
-        check(QuickInputTerminal.preferred(chosen: "com.googlecode.iterm2", running: ["io.appmakes.otty"], installed: { $0 != "com.googlecode.iterm2" }) == .otty, "a choice no longer installed falls back")
     }
 
     static func catalog() {
@@ -234,16 +228,6 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         toTerminal.textChanged("看看", cursor: 2)
         toTerminal.submit(openClient: true)
         check(claudeOpened.last?.scheme == "claude-cli")
-
-        // The terminal chosen in settings reaches the launcher.
-        var chosen: [QuickInputStart.Request] = []
-        state.quickInputTerminal = "io.appmakes.otty"
-        let picky = QuickInputModel(state: state, environment: environment(started: { chosen.append($0) }))
-        picky.prepareForSummon()
-        picky.textChanged("开工", cursor: 2)
-        picky.submit()
-        check(chosen.first?.terminal == "io.appmakes.otty")
-        state.quickInputTerminal = ""
 
         // A typed token picks an agent and leaves the sentence clean; `@` inside plain text stays.
         model.textChanged("看一下 @", cursor: 5)
