@@ -109,11 +109,12 @@ Enter 发送，⌘Enter 打开客户端。按钮文字随目标变化，写的�
 
 ### 新会话怎么启动
 
-在用户正在用的终端里启动 Agent 的交互模式，优先级是已运行的 Ghostty、iTerm、Terminal，其次是已安装的。
+在终端里启动 Agent 的交互模式。终端可在设置里指定；自动模式先看正在运行的，再看已安装的，顺序都是 Otty、Ghostty、iTerm、Terminal。不看 macOS 的 `.command` 默认打开方式，它可能指向任意应用。
 
 - 交互模式保留了审批和 hook，也让用户随时能接手。进程不归 WAW，WAW 退出或更新不影响任务。
 - 提示词写入 0600 的临时文件，由 0700 的脚本读取后立刻删除，shell 和终端都不解析它。运行期间提示词会出现在进程参数里。
-- Ghostty 只在直接运行可执行文件时接受 `-e`，会短暂抢走前台，WAW 检测到后立刻把前台还给原应用（实测约 0.5 秒）。iTerm、Terminal 通过 `open -g` 打开 `.command`。
+- Otty 用 `otty-cli open 目录 --command 脚本`，实测不抢前台。
+- Ghostty 只在直接运行可执行文件时接受 `-e`，会短暂抢走前台，WAW 检测到后立刻把前台还给原应用（实测约 0.5 秒）。iTerm、Terminal 通过 `open -g` 打开 `.command`，未实测。
 - 启动时清除 `CLAUDECODE`、`CLAUDE_CODE_*`，否则从 Claude Code 里启动的 WAW 会让新会话不保存记录。
 - 回执先写「正在启动」。看到该客户端在该目录出现新会话才写「交给 X 了」；25 秒没有出现就提示可能在等确认（比如信任目录），并提供「打开终端」。
 
@@ -177,9 +178,11 @@ Enter 发送，⌘Enter 打开客户端。按钮文字随目标变化，写的�
 | 目标 | 开新会话 | 带到客户端 | 继续已有会话 |
 | --- | --- | --- | --- |
 | Codex | 终端运行 `codex -C 目录 -- 提示词`，优先用桌面端自带的引擎 | [`codex://new?prompt=&path=`](https://learn.chatgpt.com/docs/reference/commands) | 桌面端会话走 IPC 并核对回执；其他只能打开 |
-| Claude Code | 终端运行 `claude -- 提示词` | [`claude-cli://open?cwd=&q=`](https://code.claude.com/docs/en/deep-links)，`q` 最长 5000 字符，需已注册链接处理器 | 只能打开 |
+| Claude Code | 终端运行 `claude -- 提示词` | 装了桌面端时用 `claude://code/new?folder=&q=`，否则用 [`claude-cli://open?cwd=&q=`](https://code.claude.com/docs/en/deep-links)，后者 `q` 最长 5000 字符，需已注册链接处理器 | 只能打开，桌面端会话跳到 `claude://claude.ai/epitaxy/` |
 | Hermes | 终端运行 `hermes chat --in 目录 --query=提示词` | 无 | 只能打开 |
 | DSH 等 | 暂不支持 | 无 | 只能打开 |
+
+`claude://code/new` 来自桌面端应用的链接处理代码和它的 Finder 服务，官方文档没写，版本更新后可能变化。它只填入内容，不发送，桌面端也没有公开的发送接口，所以 Enter 仍然走终端。
 
 为什么不走这些路：
 
@@ -224,7 +227,8 @@ QuickInputController：窗口伸缩、飞行动画、回执窗口
 1. 真实拼音输入。`scripts/check-quick-input.sh` 已覆盖组词状态下 Return 不发送。
 2. `.hudWindow` 玻璃在亮色文档、深色壁纸、深浅两种外观下的观感和可读性。
 3. 窗口伸缩和飞行动画是否流畅。
-4. 干净环境下 Claude Code、Codex 的完整启动，以及会话出现在猫条。开发环境里验证了自动提交和 hook 触发；iTerm、Terminal 的后台打开未实测。
+4. 干净环境下 Claude Code、Codex 的完整启动，以及会话出现在猫条。开发环境里验证了自动提交和 hook 触发；Codex 引擎在模拟终端里只跑到 loading；iTerm、Terminal 的后台打开未实测。
+5. `claude://code/new` 是否带上目录和内容。
 
 ## 验收
 

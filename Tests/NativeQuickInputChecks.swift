@@ -81,6 +81,9 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         check(claude.hasPrefix("claude-cli://open?cwd=%2Frepo%2Fx&q=%E7%9C%8B"))
         check(QuickInputHandoff.url(source: .claude, path: "/repo/x", prompt: nil)!.absoluteString == "claude-cli://open?cwd=%2Frepo%2Fx")
         check(QuickInputHandoff.url(source: .dsh, path: "/repo", prompt: "x") == nil)
+        let desktop = QuickInputHandoff.url(source: .claude, path: "/repo/x", prompt: "看一下", claudeDesktop: true)!.absoluteString
+        check(desktop.hasPrefix("claude://code/new?folder=%2Frepo%2Fx&source=while-ai-works&q=%E7%9C%8B"), desktop)
+        check(QuickInputHandoff.destination(.claude, claudeDesktop: true) == "Claude" && QuickInputHandoff.destination(.claude, claudeDesktop: false) == "终端")
         check(QuickInputCapabilities.of(.codex).start && QuickInputCapabilities.of(.claude).prefill)
         check(QuickInputCapabilities.of(.hermes).start && !QuickInputCapabilities.of(.hermes).prefill && !QuickInputCapabilities.of(.dsh).start)
     }
@@ -120,6 +123,9 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         check(QuickInputTerminal.preferred(running: ["com.apple.Terminal", "x"], installed: { _ in true }) == .terminal, "the terminal in use wins")
         check(QuickInputTerminal.preferred(running: [], installed: { $0 == QuickInputTerminal.iTerm.rawValue }) == .iTerm)
         check(QuickInputTerminal.preferred(running: [], installed: { _ in false }) == .terminal)
+        check(QuickInputTerminal.preferred(running: ["io.appmakes.otty", "com.mitchellh.ghostty"], installed: { _ in true }) == .otty, "Otty comes first when several run")
+        check(QuickInputTerminal.preferred(chosen: "com.googlecode.iterm2", running: ["io.appmakes.otty"], installed: { _ in true }) == .iTerm, "the user's choice wins")
+        check(QuickInputTerminal.preferred(chosen: "com.googlecode.iterm2", running: ["io.appmakes.otty"], installed: { $0 != "com.googlecode.iterm2" }) == .otty, "a choice no longer installed falls back")
     }
 
     static func catalog() {
@@ -205,6 +211,39 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         model.submit(openClient: true)
         check(opened.count == 1 && started.count == 1 && model.draft == "x", "⌘Enter does nothing where it is not offered")
         model.textChanged("", cursor: 0)
+
+        // Claude goes to its desktop app when there is one, and to the terminal link otherwise.
+        var claudeOpened: [URL] = []
+        var withDesktop = environment(opened: { claudeOpened.append($0) })
+        withDesktop.canOpen = { _ in true }
+        let toDesktop = QuickInputModel(state: state, environment: withDesktop)
+        toDesktop.prepareForSummon()
+        toDesktop.togglePicker(.agent)
+        toDesktop.pick(toDesktop.rows.first { $0.source == .claude }!)
+        check(toDesktop.secondaryVerb == "在 Claude 打开")
+        toDesktop.textChanged("看看", cursor: 2)
+        toDesktop.submit(openClient: true)
+        check(claudeOpened.last?.scheme == "claude" && toDesktop.receipt?.title == "已带到Claude，等你发送")
+        var noDesktop = environment(opened: { claudeOpened.append($0) })
+        noDesktop.canOpen = { $0.scheme != "claude" }
+        let toTerminal = QuickInputModel(state: state, environment: noDesktop)
+        toTerminal.prepareForSummon()
+        toTerminal.togglePicker(.agent)
+        toTerminal.pick(toTerminal.rows.first { $0.source == .claude }!)
+        check(toTerminal.secondaryVerb == "在 终端 打开")
+        toTerminal.textChanged("看看", cursor: 2)
+        toTerminal.submit(openClient: true)
+        check(claudeOpened.last?.scheme == "claude-cli")
+
+        // The terminal chosen in settings reaches the launcher.
+        var chosen: [QuickInputStart.Request] = []
+        state.quickInputTerminal = "io.appmakes.otty"
+        let picky = QuickInputModel(state: state, environment: environment(started: { chosen.append($0) }))
+        picky.prepareForSummon()
+        picky.textChanged("开工", cursor: 2)
+        picky.submit()
+        check(chosen.first?.terminal == "io.appmakes.otty")
+        state.quickInputTerminal = ""
 
         // A typed token picks an agent and leaves the sentence clean; `@` inside plain text stays.
         model.textChanged("看一下 @", cursor: 5)

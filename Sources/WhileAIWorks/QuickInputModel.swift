@@ -72,12 +72,18 @@ struct QuickInputCapabilities: Equatable {
 /// Official deep links only fill the client's composer. The user still presses send there.
 enum QuickInputHandoff {
     static let promptLimit = 5000
-    static func destination(_ source: WorkSource) -> String { source == .claude ? "终端" : source.clientName }
-    static func url(source: WorkSource, path: String, prompt: String?) -> URL? {
+    /// Claude's desktop app takes a new Code session when it is installed; the link for it comes from
+    /// the app's own handler rather than its documentation, so the terminal link stays as the fallback.
+    static let claudeDesktopProbe = URL(string: "claude://code/new")!
+    static func destination(_ source: WorkSource, claudeDesktop: Bool) -> String {
+        source == .claude ? (claudeDesktop ? "Claude" : "终端") : source.clientName
+    }
+    static func url(source: WorkSource, path: String, prompt: String?, claudeDesktop: Bool = false) -> URL? {
         var fields: [(String, String)]
         let base: String
         switch source {
         case .codex: base = "codex://new"; fields = [("path", path)]; if let prompt { fields.append(("prompt", prompt)) }
+        case .claude where claudeDesktop: base = "claude://code/new"; fields = [("folder", path), ("source", "while-ai-works")]; if let prompt { fields.append(("q", prompt)) }
         case .claude: base = "claude-cli://open"; fields = [("cwd", path)]; if let prompt { fields.append(("q", prompt)) }
         default: return nil
         }
@@ -99,6 +105,8 @@ enum QuickInputStart {
         let source: WorkSource
         let directory: String
         let prompt: String
+        /// A terminal the user chose, by bundle ID; nil picks automatically.
+        var terminal: String? = nil
     }
     static func arguments(source: WorkSource, executable: String, directory: String) -> [String]? {
         switch source {
@@ -132,10 +140,14 @@ enum QuickInputStart {
 }
 
 enum QuickInputTerminal: String, CaseIterable, Equatable {
-    case ghostty = "com.mitchellh.ghostty", iTerm = "com.googlecode.iterm2", terminal = "com.apple.Terminal"
-    /// The terminal already in use wins; otherwise the first one installed.
-    static func preferred(running: [String], installed: (String) -> Bool) -> QuickInputTerminal {
-        allCases.first { running.contains($0.rawValue) } ?? allCases.first { installed($0.rawValue) } ?? .terminal
+    case otty = "io.appmakes.otty", ghostty = "com.mitchellh.ghostty", iTerm = "com.googlecode.iterm2", terminal = "com.apple.Terminal"
+    var title: String {
+        switch self { case .otty: return "Otty"; case .ghostty: return "Ghostty"; case .iTerm: return "iTerm"; case .terminal: return "终端"}
+    }
+    /// The user's choice wins while it is installed; then a terminal already in use, then the first one installed.
+    static func preferred(chosen: String? = nil, running: [String], installed: (String) -> Bool) -> QuickInputTerminal {
+        if let chosen, let terminal = QuickInputTerminal(rawValue: chosen), installed(chosen) { return terminal }
+        return allCases.first { running.contains($0.rawValue) } ?? allCases.first { installed($0.rawValue) } ?? .terminal
     }
 }
 
@@ -155,7 +167,7 @@ enum QuickInputLauncher {
                   manager.createFile(atPath: scriptFile.path, contents: Data(script.utf8), attributes: [.posixPermissions: 0o700]) else { return nil }
         } catch { return nil }
         let workspace = NSWorkspace.shared
-        let terminal = QuickInputTerminal.preferred(running: workspace.runningApplications.compactMap(\.bundleIdentifier),
+        let terminal = QuickInputTerminal.preferred(chosen: request.terminal, running: workspace.runningApplications.compactMap(\.bundleIdentifier),
                                                     installed: { workspace.urlForApplication(withBundleIdentifier: $0) != nil })
         guard let application = workspace.urlForApplication(withBundleIdentifier: terminal.rawValue) else { return nil }
         let previous = workspace.frontmostApplication
@@ -163,7 +175,10 @@ enum QuickInputLauncher {
         // A session started from inside another Claude Code must not inherit its markers.
         process.environment = ProcessInfo.processInfo.environment.filter { !$0.key.hasPrefix("CLAUDE_CODE_") && $0.key != "CLAUDECODE" }
         process.standardInput = FileHandle.nullDevice; process.standardOutput = FileHandle.nullDevice; process.standardError = FileHandle.nullDevice
-        if terminal == .ghostty {
+        if terminal == .otty {
+            process.executableURL = application.appendingPathComponent("Contents/MacOS/otty-cli")
+            process.arguments = ["open", request.directory, "--command", QuickInputStart.quote(scriptFile.path), "--quiet"]
+        } else if terminal == .ghostty {
             // Ghostty honours `-e` only when its binary is run directly, not through `open`.
             process.executableURL = application.appendingPathComponent("Contents/MacOS/ghostty")
             process.arguments = ["--window-save-state=never", "--working-directory=" + request.directory, "-e", scriptFile.path]
@@ -381,7 +396,7 @@ final class QuickInputModel: ObservableObject {
         guard !pickerVisible else { return nil }
         if let session = targetSession { return QuickInputCatalog.takesMessages(session) ? "打开会话" : nil }
         guard let source = targetAgent, project != nil, QuickInputCapabilities.of(source).prefill else { return nil }
-        return "在 " + QuickInputHandoff.destination(source) + " 打开"
+        return "在 " + destination(source) + " 打开"
     }
     var hint: String? {
         if notice != nil { return notice }
@@ -402,6 +417,8 @@ final class QuickInputModel: ObservableObject {
             applyRememberedAgent()
         }
     }
+    private var hasClaudeDesktop: Bool { environment.canOpen(QuickInputHandoff.claudeDesktopProbe) }
+    private func destination(_ source: WorkSource) -> String { QuickInputHandoff.destination(source, claudeDesktop: source == .claude && hasClaudeDesktop) }
     private func applyRememberedAgent() {
         let remembered = project.flatMap { memory.projectAgents[$0.path] } ?? memory.lastAgent
         guard let source = remembered.flatMap(WorkSource.init(rawValue:)), state.selectedSources.contains(source), QuickInputCapabilities.of(source).start else { return }
@@ -525,7 +542,7 @@ final class QuickInputModel: ObservableObject {
 
     private func start(_ text: String, source: WorkSource, in project: QuickInputProject) {
         let known = Set(state.agentDashboard.sessions.map(\.dockIdentity))
-        guard let terminal = environment.start(.init(source: source, directory: project.path, prompt: text)) else {
+        guard let terminal = environment.start(.init(source: source, directory: project.path, prompt: text, terminal: state.quickInputTerminal.isEmpty ? nil : state.quickInputTerminal)) else {
             notice = QuickInputCapabilities.of(source).prefill ? "没能启动 \(source.clientName)。确认它已安装，或按 ⌘↵ 用客户端打开。" : "没能启动 \(source.clientName)。确认它已安装。"
             return
         }
@@ -557,14 +574,15 @@ final class QuickInputModel: ObservableObject {
 
     private func handOff(_ text: String, to source: WorkSource, in project: QuickInputProject) {
         let fits = text.count <= QuickInputHandoff.promptLimit
-        guard let url = QuickInputHandoff.url(source: source, path: project.path, prompt: fits ? text : nil) else { notice = "这个地址打不开，换个工作区试试。"; return }
+        let desktop = source == .claude && hasClaudeDesktop
+        guard let url = QuickInputHandoff.url(source: source, path: project.path, prompt: fits ? text : nil, claudeDesktop: desktop) else { notice = "这个地址打不开，换个工作区试试。"; return }
         guard environment.canOpen(url) else { notice = QuickInputHandoff.missingHandler(source); return }
         if !fits { environment.copy(text) }
-        guard environment.open(url) else { notice = "没能打开\(QuickInputHandoff.destination(source))，内容还在。"; return }
+        guard environment.open(url) else { notice = "没能打开\(destination(source))，内容还在。"; return }
         remember(agent: source, project: project.path)
         finishComposing()
         onDismiss()
-        receipt = QuickInputReceipt(title: "已带到\(QuickInputHandoff.destination(source))，等你发送",
+        receipt = QuickInputReceipt(title: "已带到\(destination(source))，等你发送",
             body: fits ? "发送之前不会开始。" : "内容较长，已复制到剪贴板。粘贴后发送。", tone: .handedOff)
     }
 
