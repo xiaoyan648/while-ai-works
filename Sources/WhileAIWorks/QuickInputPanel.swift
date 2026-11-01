@@ -254,7 +254,7 @@ struct QuickInputView: View {
                                     .background(highlight(project == focus, id: "workspace", quiet: pane == .sessions))
                                 }
                                 .buttonStyle(.plain).focusable(false).id(project.id)
-                                .help(project.isAll ? "所有会话，顺序和猫条一致" : project.path)
+                                .help(project.isAll ? "所有 Agent 的会话，顺序和猫条一致" : project.path)
                                 .accessibilityIdentifier("quick-input-workspace-" + project.name)
                                 // A pointer resting where the list opens must not steal focus from the keyboard.
                                 .onContinuousHover { phase in
@@ -284,7 +284,10 @@ struct QuickInputView: View {
             .padding(6).frame(width: 216)
             Rectangle().fill(.separator).frame(width: 0.5)
             VStack(alignment: .leading, spacing: 0) {
-                columnTitle(focus.map { $0.isAll ? "和猫条相同的顺序" : $0.name + " 的会话" } ?? "会话").lineLimit(1)
+                columnTitle(focus.map { project in
+                    if project.isAll { return "所有 Agent，和猫条相同的顺序" }
+                    return project.name + " 的" + (model.client(for: project).map { " " + $0.title + " " } ?? "") + "会话"
+                } ?? "会话").lineLimit(1)
                 ScrollViewReader { reader in
                     ScrollView {
                         VStack(spacing: 0) {

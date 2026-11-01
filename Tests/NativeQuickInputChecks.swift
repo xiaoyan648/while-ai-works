@@ -187,6 +187,12 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         check(QuickInputCatalog.workspaces(projects: projects, sessions: list, query: "waw").first == waw, "a workspace name comes first")
         let homeless = session("00000000-0000-4000-8000-000000000005", title: "无处可归", cwd: nil)
         check(QuickInputCatalog.sessions(in: .all, of: list + [homeless], query: "无处").count == 1, "a session with no workspace is still reachable")
+        // A workspace lists its client's sessions; only "all" crosses clients.
+        check(QuickInputCatalog.sessions(in: waw, of: list, query: "", client: .codexApp).map(\.title) == ["等待", "订阅校验"], "no Claude under Codex")
+        check(QuickInputCatalog.sessions(in: waw, of: list, query: "", client: .claudeCode).map(\.title) == ["终端会话"])
+        check(QuickInputCatalog.sessions(in: waw, of: list, query: "", client: .codexCLI).isEmpty, "the desktop app and the command line are separate")
+        check(QuickInputCatalog.sessions(in: .all, of: list, query: "", client: .codexCLI).count == 4, "all crosses clients")
+        check(QuickInputCatalog.workspaces(projects: projects, sessions: list, query: "终端", client: { _ in .codexApp }) == [.all], "another client's session is only found under all")
         let dead = session("00000000-0000-4000-8000-000000000006", title: "去不了", cwd: "/repo/waw", kind: .noRoute)
         check(!QuickInputCatalog.canOpen(dead) && QuickInputCatalog.sessions(in: .all, of: [dead], query: "").isEmpty, "nothing Enter cannot reach is listed")
 
@@ -221,12 +227,34 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         // Enter walks through what is missing and never loses the text or acts on a guess.
         model.textChanged("检查一下", cursor: 4)
         model.submit()
-        check(model.pickerKind == .agent && model.pickerNote != nil && model.draft == "检查一下" && ran.isEmpty && opened.isEmpty)
+        check(model.pickerKind == .agent && model.pickerNote != nil && model.draft == "检查一下 @" && ran.isEmpty && opened.isEmpty, "the list opens as if @ had been typed: \(model.draft)")
         check(model.primaryVerb == "选中" && model.secondaryVerb == nil, "nowhere to go until there is a workspace")
         model.submit()
-        check(model.target == .client(.codexApp) && model.pickerKind == .place, "Enter in a list only chooses")
+        check(model.target == .client(.codexApp) && model.pickerKind == .place && model.draft == "检查一下 #", "Enter in a list only chooses, and the next list follows: \(model.draft)")
+
+        // A list that opened by itself searches like any other, and leaves nothing behind.
+        model.textChanged("检查一下 #cine", cursor: 10)
+        check(model.pickerVisible && model.pickerQuery == "cine" && model.focusedWorkspace?.name == "cineflow", "typing searches")
         model.pick(workspace: QuickInputProject(path: "/repo/cineflow"))
         check(model.project?.path == "/repo/cineflow" && model.pickerKind == nil && opened.isEmpty && ran.isEmpty, "choosing never acts")
+        check(model.draft == "检查一下", "the trigger and its space are gone: \(model.draft.debugDescription)")
+        model.togglePicker(.place)
+        check(model.draft == "检查一下 #" && model.draftRevision > 0)
+        model.textChanged("检查一下 #xy", cursor: 8)
+        model.closePicker()
+        check(model.draft == "检查一下", "Escape takes the search with it: \(model.draft.debugDescription)")
+        model.togglePicker(.place)
+        model.cursorMoved(2)
+        check(model.draft == "检查一下" && model.pickerKind == nil, "moving away from the list closes it and leaves no stray trigger: \(model.draft.debugDescription)")
+        model.togglePicker(.place)
+        model.textChanged("检查一下 ", cursor: 5)
+        check(model.draft == "检查一下 " && model.pickerKind == nil, "deleting the trigger by hand just closes the list")
+        model.textChanged("检查一下", cursor: 4)
+        model.togglePicker(.agent)
+        model.togglePicker(.place)
+        check(model.draft == "检查一下 #" && model.pickerKind == .place, "switching lists swaps the trigger: \(model.draft)")
+        model.togglePicker(.place)
+        check(model.draft == "检查一下" && model.pickerKind == nil, "closing it restores the text")
 
         // A desktop app cannot start work, so Enter carries the text there, filled in. One button, one action.
         check(model.primaryVerb == "带过去" && model.secondaryVerb == nil && !model.canSendNow)
@@ -249,6 +277,7 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         // A command line can start work: Enter sends and stays here, and only claims what it has seen.
         model.togglePicker(.agent)
         model.pick(model.rows.first { $0.client == .codexCLI }!)
+        check(model.draft.isEmpty, "an empty draft gets no stray space")
         check(model.primaryVerb == "打开" && !model.canSendNow, "nothing to send yet, so Enter opens it")
         model.textChanged("开工", cursor: 2)
         check(model.primaryVerb == "发送" && model.secondaryVerb == "打开" && model.canSendNow)
@@ -384,6 +413,27 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         check(model.target == .session(other.dockIdentity) && model.project?.name == "waw" && model.pickerKind == nil && opened.isEmpty)
         model.clearSessionTarget()
         check(model.target == .client(.codexApp) && model.project?.name == "waw", "stepping back keeps the client and workspace")
+
+        // Under a workspace only the current client's sessions show. All sessions is the way across.
+        var mixed = data
+        let claudeThere = session("00000000-0000-4000-8000-000000000004", source: .claude, title: "克劳德的会话", cwd: "/repo/cineflow", kind: .claudeApp)
+        mixed.sessions.append(claudeThere)
+        state.agentDashboard = mixed
+        model.togglePicker(.place)
+        model.focusWorkspace(at: model.workspaces.firstIndex(of: QuickInputProject(path: "/repo/cineflow"))!)
+        check(!model.focusedSessions.contains { $0.source == .claude } && model.sessionCount(in: QuickInputProject(path: "/repo/cineflow")) == 2, "no Claude under Codex")
+        model.focusWorkspace(at: 0)
+        check(model.focusedSessions.contains { $0.id == claudeThere.id }, "all crosses clients")
+        model.enterSessions()
+        while model.focusedSessions.indices.contains(model.sessionIndex - 1), model.focusedSessions[model.sessionIndex - 1].id != claudeThere.id { model.moveSelection(1) }
+        model.pickSelected()
+        check(model.targetClient == .claudeApp && model.project?.path == "/repo/cineflow", "choosing it makes Claude the client")
+        model.togglePicker(.place)
+        check(model.focusedSessions.map(\.title) == ["克劳德的会话"], "now the workspace lists Claude's")
+        model.closePicker()
+        model.togglePicker(.agent)
+        model.pick(model.rows.first { $0.client == .codexApp }!)
+        state.agentDashboard = data
 
         // Search: a name match stays on the workspace, a title match lands on the session.
         model.textChanged("#cine", cursor: 5)

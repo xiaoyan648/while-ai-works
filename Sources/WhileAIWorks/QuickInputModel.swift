@@ -374,20 +374,23 @@ enum QuickInputCatalog {
         session.title.localizedCaseInsensitiveContains(query) || session.source.clientName.localizedCaseInsensitiveContains(query)
     }
     /// Without a search, everything under "all" first. With one, workspaces named by it come first,
-    /// then "all" for the sessions it found, then the workspaces those sessions live in.
-    static func workspaces(projects: [QuickInputProject], sessions: [AgentDockSession], query: String) -> [QuickInputProject] {
+    /// then "all" for the sessions it found, then the workspaces holding such a session for their client.
+    static func workspaces(projects: [QuickInputProject], sessions: [AgentDockSession], query: String, client: (QuickInputProject) -> QuickInputClient? = { _ in nil }) -> [QuickInputProject] {
         guard !query.isEmpty else { return [.all] + projects.prefix(30) }
         let roots = sessions.filter { $0.parentSessionID == nil && canOpen($0) }
         let named = projects.filter { $0.path.localizedCaseInsensitiveContains(query) }
-        let holding = projects.filter { project in !named.contains(project) && roots.contains { path(of: $0) == project.path && matches($0, query) } }
+        let holding = projects.filter { project in
+            !named.contains(project) && !self.sessions(in: project, of: roots, query: query, client: client(project)).isEmpty
+        }
         return named + (roots.contains { matches($0, query) } ? [.all] : []) + holding
     }
-    /// In the order they were given, which is the dock's. A workspace named by the search shows
-    /// everything in it; otherwise only the sessions the search found. Nothing Enter cannot reach is listed.
-    static func sessions(in project: QuickInputProject?, of sessions: [AgentDockSession], query: String) -> [AgentDockSession] {
+    /// In the order they were given, which is the dock's. A workspace lists only its client's sessions;
+    /// "all" is the one place that crosses clients. A workspace named by the search shows everything of
+    /// that client in it; otherwise only what the search found. Nothing Enter cannot reach is listed.
+    static func sessions(in project: QuickInputProject?, of sessions: [AgentDockSession], query: String, client: QuickInputClient? = nil) -> [AgentDockSession] {
         guard let project else { return [] }
         let roots = sessions.filter { $0.parentSessionID == nil && canOpen($0) }
-        let inside = project.isAll ? roots : roots.filter { path(of: $0) == project.path }
+        let inside = project.isAll ? roots : roots.filter { path(of: $0) == project.path && (client == nil || self.client(of: $0) == client) }
         let found = query.isEmpty || (!project.isAll && project.path.localizedCaseInsensitiveContains(query)) ? inside : inside.filter { matches($0, query) }
         return Array(found.prefix(40))
     }
@@ -478,6 +481,10 @@ final class QuickInputModel: ObservableObject {
     @Published private var live: [String: pid_t] = [:]
     @Published private var available: Set<QuickInputClient> = []
     private var pickerToken: NSRange?
+    /// The trigger was put there to make a list searchable, so it leaves with the list. Whether a
+    /// space went in front of it, so that goes too.
+    private var tokenInserted = false
+    private var tokenSpaced = false
     private var clientPicked = false
     private var pendingStart: PendingStart?
     private var subscriptions: Set<AnyCancellable> = []
@@ -540,17 +547,17 @@ final class QuickInputModel: ObservableObject {
         return QuickInputCatalog.clientRows(clients: clients, claudeCodeWorks: claudeCodeWorks, quota: state.dockQuota(for:), query: pickerQuery)
     }
     var workspaces: [QuickInputProject] {
-        QuickInputCatalog.workspaces(projects: projects, sessions: dockSessions, query: pickerQuery)
+        QuickInputCatalog.workspaces(projects: projects, sessions: dockSessions, query: pickerQuery, client: client(for:))
     }
     var focusedWorkspace: QuickInputProject? {
         let list = workspaces
         return list.isEmpty ? nil : list[min(workspaceIndex, list.count - 1)]
     }
     var focusedSessions: [AgentDockSession] {
-        QuickInputCatalog.sessions(in: focusedWorkspace, of: dockSessions, query: pickerQuery)
+        QuickInputCatalog.sessions(in: focusedWorkspace, of: dockSessions, query: pickerQuery, client: focusedWorkspace.flatMap(client(for:)))
     }
     func sessionCount(in project: QuickInputProject) -> Int {
-        QuickInputCatalog.sessions(in: project, of: dockSessions, query: "").count
+        QuickInputCatalog.sessions(in: project, of: dockSessions, query: "", client: client(for: project)).count
     }
     /// A search that only found a session title lands on that session, so Enter cannot start a new one by accident.
     var placePane: QuickInputPlacePane {
@@ -635,13 +642,17 @@ final class QuickInputModel: ObservableObject {
         draft = text; notice = nil
         syncToken(cursor: cursor)
     }
-    func cursorMoved(_ cursor: Int) { syncToken(cursor: cursor) }
+    func cursorMoved(_ cursor: Int) {
+        // The cursor left a trigger that was put there for the list: the text is untouched, so it can go.
+        if tokenInserted, QuickInputToken.match(in: draft, cursor: cursor) == nil { closePicker(); return }
+        syncToken(cursor: cursor)
+    }
     private func syncToken(cursor: Int) {
         if let match = QuickInputToken.match(in: draft, cursor: cursor) {
             let kind: QuickInputPickerKind = match.trigger == "@" ? .agent : .place
             if pickerKind != kind || pickerQuery != match.query { selection = 0; workspaceIndex = 0; sessionIndex = 1; chosenPane = nil }
             pickerKind = kind; pickerQuery = match.query; pickerToken = match.range; pickerNote = nil
-        } else if pickerToken != nil { closePicker() }
+        } else if pickerToken != nil { tokenInserted = false; closePicker() }
     }
 
     // MARK: Pickers. Enter, Tab or a click only chooses, so choosing can never send anything.
@@ -649,11 +660,23 @@ final class QuickInputModel: ObservableObject {
     func togglePicker(_ kind: QuickInputPickerKind) {
         if pickerKind == kind { closePicker() } else { openPicker(kind, note: nil) }
     }
+    /// However a list opens, it works the same: the trigger goes into the text, so typing searches
+    /// exactly as it does after pressing `@` or `#` by hand.
     private func openPicker(_ kind: QuickInputPickerKind, note: String?) {
-        pickerKind = kind; pickerQuery = ""; pickerToken = nil; pickerNote = note; selection = 0; sessionIndex = 1; chosenPane = nil
+        closePicker()
+        tokenSpaced = !draft.isEmpty && draft.last?.isWhitespace == false
+        let trigger = kind == .agent ? "@" : "#"
+        setDraft(draft + (tokenSpaced ? " " : "") + trigger)
+        pickerToken = NSRange(location: (draft as NSString).length - 1, length: 1)
+        tokenInserted = true
+        pickerKind = kind; pickerQuery = ""; pickerNote = note; selection = 0; sessionIndex = 1; chosenPane = nil
         workspaceIndex = project.flatMap { current in workspaces.firstIndex(of: current) } ?? 0
     }
-    func closePicker() { pickerKind = nil; pickerQuery = ""; pickerToken = nil; pickerNote = nil; selection = 0; chosenPane = nil }
+    func closePicker() {
+        if tokenInserted { removeToken() }
+        tokenInserted = false
+        pickerKind = nil; pickerQuery = ""; pickerToken = nil; pickerNote = nil; selection = 0; chosenPane = nil
+    }
     func moveSelection(_ delta: Int) {
         switch pickerKind {
         case .agent: selection = min(max(0, rows.count - 1), max(0, selection + delta))
@@ -715,9 +738,10 @@ final class QuickInputModel: ObservableObject {
         pick(workspace: QuickInputProject(path: path))
     }
     private func removeToken() {
-        guard let token = pickerToken, token.location + token.length <= (draft as NSString).length else { return }
+        guard var token = pickerToken, token.location + token.length <= (draft as NSString).length else { return }
+        if tokenInserted, tokenSpaced, token.location > 0 { token = NSRange(location: token.location - 1, length: token.length + 1) }
         setDraft((draft as NSString).replacingCharacters(in: token, with: ""))
-        pickerToken = nil
+        pickerToken = nil; tokenInserted = false
     }
     private func setDraft(_ text: String) { draft = text; draftRevision += 1 }
     func clearSessionTarget() {
