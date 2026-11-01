@@ -64,7 +64,7 @@ private func front() -> String { NSWorkspace.shared.frontmostApplication?.locali
             print("\(client): sendable \(model.canSendNow), hint \(model.hint ?? "none")")
             guard model.canSendNow else { model.textChanged("", cursor: 0); model.closePicker(); continue }
             let before = front(), started = Date()
-            model.submit(send: true)
+            model.submit()
             if model.notice != nil { print("\(client): could not start: \(model.notice ?? "")"); failed += 1; continue }
             waitForReceipt(client.rawValue, started: started, before: before)
             spin(25)
@@ -78,22 +78,32 @@ private func front() -> String { NSWorkspace.shared.frontmostApplication?.locali
             // The newest ended Codex CLI session takes a second message by being resumed.
             state.refreshAgentData(); spin(3)
             model.prepareForSummon(); spin(1.5)
-            let candidates = model.dockSessions.filter { QuickInputCatalog.client(of: $0) == .codexCLI && $0.title.contains("WAW") }
+            let candidates = model.dockSessions.filter { QuickInputCatalog.client(of: $0) == .codexCLI && ($0.title.contains("WAW") || $0.title.contains("回复 ok")) }
             print("resume candidates:", candidates.map { String($0.title.prefix(14)) })
             var resumed = false
             for session in candidates where !resumed {
                 model.pick(session: session); spin(0.1)
-                guard model.canSendNow else { print("  still open, not resumed:", String(session.title.prefix(14))); continue }
-                resumed = true
                 let text = "WAW E2E 续发：只回复 ok2，不要调用工具。"
                 model.textChanged(text, cursor: (text as NSString).length)
+                guard model.canSendNow else { print("  still held by a process, not resumed:", String(session.title.prefix(14))); model.textChanged("", cursor: 0); continue }
+                resumed = true
                 let before = front(), started = Date()
-                model.submit(send: true)
+                model.submit()
                 waitForReceipt("resume", started: started, before: before)
                 model.dismissReceipt()
             }
             if !resumed { print("resume: every candidate is still open") }
             model.clearSessionTarget()
+        }
+
+        // Liveness comes from the agents, and a held session's terminal comes forward whichever it is.
+        let held = QuickInputLiveness.current()
+        print("live sessions:", held.count, "| CLI among them:", model.dockSessions.filter { held[$0.id] != nil && $0.navigationURL == nil }.map { String($0.title.prefix(12)) })
+        if opening, let pid = model.dockSessions.first(where: { held[$0.id] != nil && $0.navigationURL == nil }).flatMap({ held[$0.id] }) {
+            let previous = NSWorkspace.shared.frontmostApplication
+            print("bring forward:", QuickInputLiveness.bringOwnerForward(of: pid)); spin(0.8)
+            print("  front \(front())")
+            previous?.activate(); spin(0.8)
         }
 
         if opening {
@@ -106,7 +116,7 @@ private func front() -> String { NSWorkspace.shared.frontmostApplication?.locali
                 model.pick(row)
                 model.pick(workspace: workspace)
                 model.textChanged("WAW 打开验证：无需发送", cursor: 12)
-                model.submit()
+                model.submit(go: true)
                 spin(2)
                 print("\(client): notice \(model.notice ?? "none") | receipt \(model.receipt?.title ?? "none") | front \(front())")
                 model.dismissReceipt()

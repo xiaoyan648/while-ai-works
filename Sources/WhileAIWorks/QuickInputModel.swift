@@ -1,6 +1,7 @@
 import AppKit
 import AgentHUDCore
 import Combine
+import UniformTypeIdentifiers
 
 struct QuickInputProject: Equatable, Identifiable, Codable {
     let path: String
@@ -13,7 +14,7 @@ struct QuickInputProject: Equatable, Identifiable, Codable {
 
 /// Who can start a new session. A desktop app and its command line are separate things to the
 /// user and can do different things, so they are separate here: what a client can do never
-/// changes behind its name. Apps open with the text filled in; only terminals can send it.
+/// changes behind its name. Apps open with the text filled in; only terminals can start work on it.
 enum QuickInputClient: String, CaseIterable, Identifiable {
     case codexApp, codexCLI, claudeApp, claudeCode, hermes
     var id: String { rawValue }
@@ -49,6 +50,13 @@ enum QuickInputClient: String, CaseIterable, Identifiable {
         return URL(string: base + "?" + query.joined(separator: "&"))
     }
     static let promptLimit = 5000
+    /// An existing Codex desktop thread opens with the text in its composer. The app reads
+    /// `prompt` on thread links too, though its documentation only lists it for new ones.
+    static func threadLink(_ session: AgentDockSession, prompt: String) -> URL? {
+        guard session.navigationURL?.scheme == "codex", let base = session.navigationURL?.absoluteString, !base.contains("?") else { return nil }
+        let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~")
+        return prompt.addingPercentEncoding(withAllowedCharacters: allowed).flatMap { URL(string: base + "?prompt=" + $0) }
+    }
 }
 
 enum QuickInputTarget: Equatable {
@@ -112,7 +120,7 @@ enum QuickInputRun {
         let command: Command
         let directory: String
         var prompt: String? = nil
-        /// Sending leaves the user where they are; opening takes them there.
+        /// Sending leaves the user where they are; going takes them there.
         var background = false
     }
     static func quote(_ text: String) -> String { "'" + text.replacingOccurrences(of: "'", with: "'\\''") + "'" }
@@ -166,20 +174,16 @@ enum QuickInputRun {
     }
 }
 
-/// Runs the script in whatever opens scripts on this Mac, which is what the user's default
-/// terminal means there.
+/// Runs the script with whatever opens scripts on this Mac, which is what the user's default
+/// terminal means there. The one exception is how to start Otty, nothing else about it.
 enum QuickInputLauncher {
-    /// How a terminal runs a command. Handing some of them a script through `open` looks like
-    /// success but leaves it unrun: Otty only opens a pane, and Ghostty ignores `-e`.
+    /// `open` is the only way macOS offers, and terminals run what it hands them. Otty shows the
+    /// script instead, and has its own command for running one.
     static func command(terminal: String, application: URL, script: String, directory: String) -> (executable: URL, arguments: [String]) {
-        switch terminal {
-        case "io.appmakes.otty":
+        if terminal == "io.appmakes.otty" {
             return (application.appendingPathComponent("Contents/MacOS/otty-cli"), ["open", directory, "--command", QuickInputRun.quote(script), "--quiet"])
-        case "com.mitchellh.ghostty":
-            return (application.appendingPathComponent("Contents/MacOS/ghostty"), ["--window-save-state=never", "--working-directory=" + directory, "-e", script])
-        default:
-            return (URL(fileURLWithPath: "/usr/bin/open"), ["-g", script])
         }
+        return (URL(fileURLWithPath: "/usr/bin/open"), [script])
     }
     /// A script that never ran still holds its prompt. Anything this old was not going to.
     private static func removeStale(in folder: URL, now: Date = Date()) {
@@ -219,19 +223,25 @@ enum QuickInputLauncher {
         process.standardInput = FileHandle.nullDevice; process.standardOutput = FileHandle.nullDevice; process.standardError = FileHandle.nullDevice
         do { try process.run() } catch { discard(); return nil }
         if request.background {
-            returnFront(to: previous, from: terminal, deadline: Date().addingTimeInterval(2))
+            returnFront(to: previous, from: terminal, script: scriptFile.path, deadline: Date().addingTimeInterval(8))
         } else {
+            // Not every way of starting one brings the terminal forward.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
                 NSRunningApplication.runningApplications(withBundleIdentifier: terminal).first?.activate()
             }
         }
         return terminal
     }
-    private static func returnFront(to previous: NSRunningApplication?, from terminal: String, deadline: Date) {
+    /// Terminals may need the front to run a script at all, and how long differs, so the script
+    /// says when: the first thing it does is delete itself. Only then does the front go back.
+    private static func returnFront(to previous: NSRunningApplication?, from terminal: String, script: String, deadline: Date) {
         guard let previous, previous.bundleIdentifier != terminal else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            guard !FileManager.default.fileExists(atPath: script) || Date() >= deadline else {
+                returnFront(to: previous, from: terminal, script: script, deadline: deadline)
+                return
+            }
             if NSWorkspace.shared.frontmostApplication?.bundleIdentifier == terminal { previous.activate() }
-            else if Date() < deadline { returnFront(to: previous, from: terminal, deadline: deadline) }
         }
     }
 }
@@ -255,39 +265,59 @@ enum QuickInputReadiness {
     }
 }
 
-/// Otty knows which agent session each pane holds, which is the way back to a session still
-/// running in a terminal: the session itself records no route.
-enum QuickInputOtty {
-    static func pane(for sessionID: String, in listing: Data) -> String? {
-        guard let root = try? JSONSerialization.jsonObject(with: listing) as? [String: Any],
-              let panes = root["data"] as? [[String: Any]] else { return nil }
-        return panes.first { $0["agent_session_id"] as? String == sessionID }?["id"] as? String
+/// Which sessions a live process still holds, asked of the agents rather than the terminal, so it
+/// holds in any terminal: Claude Code registers its process, and Codex keeps its log open.
+enum QuickInputLiveness {
+    static func claudeSessions(in folder: URL, isAlive: (pid_t) -> Bool = { kill($0, 0) == 0 }) -> [String: pid_t] {
+        var found: [String: pid_t] = [:]
+        for file in (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? [] where file.pathExtension == "json" {
+            guard let data = try? Data(contentsOf: file), let entry = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let id = entry["sessionId"] as? String, let pid = (entry["pid"] as? NSNumber)?.int32Value, isAlive(pid) else { continue }
+            found[id] = pid
+        }
+        return found
     }
-    static func sessionIDs(in listing: Data) -> Set<String> {
-        guard let root = try? JSONSerialization.jsonObject(with: listing) as? [String: Any],
-              let panes = root["data"] as? [[String: Any]] else { return [] }
-        return Set(panes.compactMap { $0["agent_session_id"] as? String })
+    /// `lsof -Fpn` lists a `p<pid>` line followed by that process's `n<path>` lines.
+    static func codexSessions(lsof output: String) -> [String: pid_t] {
+        var found: [String: pid_t] = [:], pid: pid_t = 0
+        for line in output.split(separator: "\n") {
+            if line.hasPrefix("p") { pid = pid_t(line.dropFirst()) ?? 0; continue }
+            guard line.hasPrefix("n"), line.contains("/rollout-"), line.hasSuffix(".jsonl"), line.count > 42 else { continue }
+            let id = String(line.dropLast(6).suffix(36)).lowercased()
+            if UUID(uuidString: id) != nil { found[id] = pid }
+        }
+        return found
     }
-    static func url(pane: String) -> URL? {
-        pane.range(of: #"^[A-Za-z0-9_-]{1,128}$"#, options: .regularExpression) == nil ? nil : URL(string: "otty://pane/" + pane)
-    }
-    private static func listing() -> Data? {
-        let bundle = "io.appmakes.otty"
-        guard !NSRunningApplication.runningApplications(withBundleIdentifier: bundle).isEmpty,
-              let application = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundle) else { return nil }
+    static func current() -> [String: pid_t] {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        var found = claudeSessions(in: home.appendingPathComponent(".claude/sessions", isDirectory: true))
         let process = Process(), output = Pipe()
-        process.executableURL = application.appendingPathComponent("Contents/MacOS/otty-cli")
-        process.arguments = ["pane", "list", "--json"]
+        process.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
+        process.arguments = ["-c", "codex", "-Fpn"]
         process.standardOutput = output; process.standardError = FileHandle.nullDevice; process.standardInput = FileHandle.nullDevice
-        guard (try? process.run()) != nil else { return nil }
-        let data = output.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        return data
+        if (try? process.run()) != nil {
+            let data = output.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            found.merge(codexSessions(lsof: String(decoding: data, as: UTF8.self))) { current, _ in current }
+        }
+        return found
     }
-    static func route(for session: AgentDockSession) -> URL? {
-        listing().flatMap { pane(for: session.id, in: $0) }.flatMap(url(pane:))
+    /// Climbs from a process to the app it runs inside, which is its terminal, whichever that is.
+    /// Terminals that host sessions in a background service break the chain; the default terminal
+    /// is then the best guess at where it is.
+    static func bringOwnerForward(of pid: pid_t) -> Bool {
+        var current = pid
+        for _ in 0..<16 where current > 1 {
+            if let app = NSRunningApplication(processIdentifier: current), app.activationPolicy == .regular { return app.activate() }
+            var info = kinfo_proc(), size = MemoryLayout<kinfo_proc>.stride
+            var query = [CTL_KERN, KERN_PROC, KERN_PROC_PID, current]
+            guard sysctl(&query, 4, &info, &size, nil, 0) == 0, size > 0 else { break }
+            current = info.kp_eproc.e_ppid
+        }
+        guard let type = UTType(filenameExtension: "command"), let handler = NSWorkspace.shared.urlForApplication(toOpen: type),
+              let bundle = Bundle(url: handler)?.bundleIdentifier else { return false }
+        return NSRunningApplication.runningApplications(withBundleIdentifier: bundle).first?.activate() ?? false
     }
-    static func openSessions() -> Set<String> { listing().map(sessionIDs(in:)) ?? [] }
 }
 
 enum QuickInputCatalog {
@@ -310,13 +340,13 @@ enum QuickInputCatalog {
         session.navigationURL != nil || session.localSessionLock != nil || session.localBridgeRoot != nil
             || session.running || isWaiting(session) || session.resumeCommand != nil
     }
-    /// A session ⌘Enter can send to: a running or idle Codex desktop thread, or an ended command-line
-    /// session that can be resumed with the message. A session waiting on the user takes nothing, and
-    /// one still open in a terminal is not resumed, even while idle: two processes would share it.
-    static func canSend(_ session: AgentDockSession, claudeCodeWorks: Bool, openInTerminal: Set<String> = []) -> Bool {
+    /// A session a message can go straight into: a running or idle Codex desktop thread, or an ended
+    /// command-line session that can be resumed with it. A session waiting on the user takes nothing,
+    /// and one a process still holds is not resumed, even while idle: two processes would share it.
+    static func canSend(_ session: AgentDockSession, claudeCodeWorks: Bool, live: Set<String> = []) -> Bool {
         guard !isWaiting(session) else { return false }
         if session.canSend { return true }
-        guard !session.running, session.navigationURL == nil, !openInTerminal.contains(session.id),
+        guard !session.running, session.navigationURL == nil, !live.contains(session.id),
               session.resumeCommand != nil, UUID(uuidString: session.id) != nil, path(of: session) != nil else { return false }
         switch client(of: session) {
         case .codexCLI: return true
@@ -334,7 +364,7 @@ enum QuickInputCatalog {
     static func clientRows(clients: [QuickInputClient], claudeCodeWorks: Bool, quota: (WorkSource) -> AgentDockQuota?, query: String) -> [QuickInputRow] {
         clients.filter { query.isEmpty || $0.title.localizedCaseInsensitiveContains(query) }.map { client in
             let reading = quota(client.source).flatMap { $0.stale ? nil : $0.remaining }
-            let subtitle = client == .claudeCode && !claudeCodeWorks ? "命令行未登录，只能打开" : client.runsInTerminal ? "终端" : "桌面端"
+            let subtitle = client == .claudeCode && !claudeCodeWorks ? "命令行未登录，发不了" : client.runsInTerminal ? "终端" : "桌面端"
             return QuickInputRow(id: "client:" + client.rawValue, client: client, subtitle: subtitle,
                 trailing: reading.map { "额度 \(Int($0.rounded()))%" } ?? "", tone: (reading ?? 100) <= 15 ? .attention : .plain)
         }
@@ -415,17 +445,16 @@ struct QuickInputEnvironment {
     var startTimeout: TimeInterval = 25
     /// False when Claude Code's command line is known not to work; nil when it cannot be told.
     var claudeCodeReadiness: () -> Bool? = QuickInputReadiness.claudeCode
-    /// Sessions known to be open in a terminal right now.
-    var terminalSessions: () -> Set<String> = QuickInputOtty.openSessions
-    /// A way back to a session that records none of its own.
-    var terminalRoute: (AgentDockSession) -> URL? = QuickInputOtty.route(for:)
+    /// Sessions a live process still holds, with that process.
+    var liveSessions: () -> [String: pid_t] = QuickInputLiveness.current
+    var bringOwnerForward: (pid_t) -> Bool = QuickInputLiveness.bringOwnerForward(of:)
     /// Checks supply their own chooser; the real one needs the panel to hand focus back to.
     var usesSystemChooser = true
 }
 
-/// One rule for the keys, everywhere: Enter takes you there with the text, and ⌘Enter sends it
-/// and leaves you where you are, shown only where sending is possible. WAW delivers and
-/// watches; the conversation stays in the agent's own client.
+/// One rule for the keys: Enter hands the text over the quickest way there is, sending it and
+/// leaving you where you are if that is possible, carrying it there if not. ⌘Enter is for following
+/// it there. WAW delivers and watches; the conversation stays in the agent's own client.
 final class QuickInputModel: ObservableObject {
     static let messageLimit = 16_384
     let state: AppState
@@ -446,7 +475,7 @@ final class QuickInputModel: ObservableObject {
     @Published private(set) var receipt: QuickInputReceipt?
     @Published private(set) var memory: QuickInputMemory
     @Published private var claudeCodeWorks = true
-    @Published private var openInTerminal = Set<String>()
+    @Published private var live: [String: pid_t] = [:]
     @Published private var available: Set<QuickInputClient> = []
     private var pickerToken: NSRange?
     private var clientPicked = false
@@ -547,30 +576,39 @@ final class QuickInputModel: ObservableObject {
         guard let client, client.runsInTerminal else { return false }
         return client != .claudeCode || claudeCodeWorks
     }
-    /// Whether ⌘Enter does anything right now, on what is selected or under the cursor.
+    private var hasText: Bool { !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    private func sendable(_ session: AgentDockSession) -> Bool {
+        QuickInputCatalog.canSend(session, claudeCodeWorks: claudeCodeWorks, live: Set(live.keys))
+    }
+    /// Whether Enter sends right now: there is something to send and somewhere that takes it.
     var canSendNow: Bool {
-        if pickerVisible {
-            if pickerKind == .agent {
-                let current = rows
-                return project != nil && current.indices.contains(selection) && canSendNew(current[selection].client)
-            }
-            if let session = selectedPlaceSession { return QuickInputCatalog.canSend(session, claudeCodeWorks: claudeCodeWorks, openInTerminal: openInTerminal) }
-            guard let focus = focusedWorkspace, !focus.isAll else { return false }
-            return canSendNew(client(for: focus))
-        }
-        if let session = targetSession { return QuickInputCatalog.canSend(session, claudeCodeWorks: claudeCodeWorks, openInTerminal: openInTerminal) }
+        guard !pickerVisible, hasText else { return false }
+        if let session = targetSession { return sendable(session) }
         return project != nil && canSendNew(targetClient)
     }
-    /// Enter is always "open". It only says something else while it still needs an answer.
+    /// What Enter does, written on the button. Without a way to send it carries the text there;
+    /// with nothing to hand over it simply opens.
     var primaryVerb: String {
-        if pickerVisible, pickerKind == .place, placePane == .workspaces, focusedWorkspace?.isAll == true { return "选会话" }
-        if !pickerVisible, targetSession == nil, targetClient == nil || project == nil { return "下一步" }
-        return "打开"
+        if pickerVisible { return pickerKind == .place && placePane == .workspaces && focusedWorkspace?.isAll == true ? "选会话" : "选中" }
+        if targetSession == nil, targetClient == nil || project == nil { return "下一步" }
+        if canSendNow { return "发送" }
+        return hasText ? "带过去" : "打开"
+    }
+    /// ⌘Enter follows the text there. It is only offered where it differs from Enter, or from a
+    /// list, where Enter only chooses.
+    var secondaryVerb: String? {
+        if pickerVisible {
+            if pickerKind == .agent { return project != nil && !rows.isEmpty ? "打开" : nil }
+            if selectedPlaceSession != nil { return "打开" }
+            guard let focus = focusedWorkspace, !focus.isAll else { return nil }
+            return client(for: focus) == nil ? nil : "打开"
+        }
+        return canSendNow ? "打开" : nil
     }
     var hint: String? {
         if notice != nil { return notice }
         if target == nil && project == nil { return "只选这一次，之后每个工作区记住上次的选择。" }
-        if targetSession == nil, targetClient == .claudeCode, !claudeCodeWorks { return "命令行未登录，只能打开。登录后可以直接发送。" }
+        if targetSession == nil, targetClient == .claudeCode, !claudeCodeWorks { return "命令行未登录，发不了，只能带过去。" }
         return nil
     }
 
@@ -579,10 +617,10 @@ final class QuickInputModel: ObservableObject {
     func prepareForSummon() {
         notice = nil; closePicker()
         available = Set(QuickInputClient.allCases.filter(environment.isAvailable))
-        let readiness = environment.claudeCodeReadiness, terminalSessions = environment.terminalSessions
+        let readiness = environment.claudeCodeReadiness, liveSessions = environment.liveSessions
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let works = readiness() != false, open = terminalSessions()
-            DispatchQueue.main.async { self?.claudeCodeWorks = works; self?.openInTerminal = open }
+            let works = readiness() != false, held = liveSessions()
+            DispatchQueue.main.async { self?.claudeCodeWorks = works; self?.live = held }
         }
         if case .session = target, targetSession == nil { target = nil }
         if target == nil {
@@ -606,7 +644,7 @@ final class QuickInputModel: ObservableObject {
         } else if pickerToken != nil { closePicker() }
     }
 
-    // MARK: Pickers. Tab or a click only chooses, so the text can still be written afterwards.
+    // MARK: Pickers. Enter, Tab or a click only chooses, so choosing can never send anything.
 
     func togglePicker(_ kind: QuickInputPickerKind) {
         if pickerKind == kind { closePicker() } else { openPicker(kind, note: nil) }
@@ -689,23 +727,23 @@ final class QuickInputModel: ObservableObject {
 
     // MARK: Enter and ⌘Enter
 
-    func submit(send: Bool = false) {
+    func submit(go: Bool = false) {
         if pickerVisible {
             // Entering "all sessions" is the one step in a list that chooses nothing.
             if pickerKind == .place, placePane == .workspaces, focusedWorkspace?.isAll == true { enterSessions(); return }
-            guard !send || canSendNow else { return }
+            guard !go || secondaryVerb != nil else { return }
             pickSelected()
-            if pickerVisible { return }
+            if pickerVisible || !go { return }
         }
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         if case .session = target {
             guard let session = targetSession else { target = nil; notice = "这个会话已不在列表里，换一个吧。"; return }
-            if send { self.send(text, to: session) } else { open(session, text: text) }
+            if !go, canSendNow { send(text, to: session) } else { open(session, text: text) }
             return
         }
         guard case .client(let client) = target else { openPicker(.agent, note: "先选谁来做，内容不会丢。"); return }
         guard let project else { openPicker(.place, note: "还差工作区，内容不会丢。"); return }
-        if send { start(text, client: client, in: project) } else { open(client, in: project, text: text) }
+        if !go, canSendNow { start(text, client: client, in: project) } else { open(client, in: project, text: text) }
     }
 
     // MARK: Going there
@@ -728,24 +766,26 @@ final class QuickInputModel: ObservableObject {
         if copied { receipt = QuickInputReceipt(title: "内容已复制", body: "粘贴后发送。", tone: .note) }
     }
 
-    /// The order every session is tried in, so none is a dead end: its own route, the pane it is
-    /// in, or resuming it. Only a session running somewhere with no route has nowhere to go.
+    /// The order every session is tried in, so none is a dead end: its own route, the terminal its
+    /// process runs in, or resuming it. Only a session running somewhere unknown has nowhere to go.
+    /// Codex threads take the text directly; everywhere else it waits on the clipboard.
     private func open(_ session: AgentDockSession, text: String) {
-        let recorded = session.navigationURL != nil || session.localSessionLock != nil || session.localBridgeRoot != nil
-        var arrived = false
-        if recorded {
-            state.openAgentSession(session); arrived = true
-        } else if let route = environment.terminalRoute(session), environment.open(route) {
+        var arrived = false, filled = false
+        if session.navigationURL != nil || session.localSessionLock != nil || session.localBridgeRoot != nil {
+            if !text.isEmpty, text.count <= QuickInputClient.promptLimit, let url = QuickInputClient.threadLink(session, prompt: text), environment.open(url) { filled = true }
+            else { state.openAgentSession(session) }
             arrived = true
+        } else if let pid = live[session.id] {
+            arrived = environment.bringOwnerForward(pid)
         } else if !session.running, let directory = QuickInputCatalog.path(of: session), environment.directoryExists(directory) {
             arrived = resume(session, directory: directory)
         }
-        if !text.isEmpty { environment.copy(text) }
+        if !text.isEmpty, !filled { environment.copy(text) }
         finishComposing()
         onDismiss()
         if !arrived {
             receipt = QuickInputReceipt(title: "回到它所在的窗口", body: text.isEmpty ? "这个会话运行在没有跳转入口的地方。" : "这个会话运行在没有跳转入口的地方。内容已复制。", tone: .note)
-        } else if !text.isEmpty {
+        } else if !text.isEmpty, !filled {
             receipt = QuickInputReceipt(title: "内容已复制", body: "粘贴后发送。", tone: .note)
         }
     }
@@ -763,7 +803,6 @@ final class QuickInputModel: ObservableObject {
     // MARK: Sending
 
     private func start(_ text: String, client: QuickInputClient, in project: QuickInputProject) {
-        guard canSendNew(client), !text.isEmpty else { return }
         let known = Set(dockSessions.map(\.dockIdentity))
         guard let terminal = environment.run(.init(command: .new(client), directory: project.path, prompt: text, background: true)) else {
             notice = "没能启动 \(client.title)。确认它已安装。"; return
@@ -803,7 +842,6 @@ final class QuickInputModel: ObservableObject {
     }
 
     private func send(_ text: String, to session: AgentDockSession) {
-        guard QuickInputCatalog.canSend(session, claudeCodeWorks: claudeCodeWorks, openInTerminal: openInTerminal), !text.isEmpty else { return }
         guard text.utf8.count <= Self.messageLimit else { notice = "内容太长，请缩短一些。"; return }
         if !session.canSend {
             guard let client = QuickInputCatalog.client(of: session), let directory = QuickInputCatalog.path(of: session) else { return }

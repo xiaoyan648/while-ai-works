@@ -24,7 +24,7 @@ final class QuickInputTextView: NSTextView {
         switch Int(event.keyCode) {
         case 36, 76:
             if modifiers == .shift { insertText("\n", replacementRange: selectedRange()) }
-            else { model.submit(send: modifiers == .command) }
+            else { model.submit(go: modifiers == .command) }
         case 53:
             if model.pickerVisible { model.closePicker() } else { onEscape() }
         case 48 where modifiers.isEmpty:
@@ -361,12 +361,12 @@ struct QuickInputView: View {
                 }
             }
             Spacer(minLength: 4)
-            if model.canSendNow {
-                action("发送", keys: ["⌘", "↵"], primary: false) { model.submit(send: true) }
-                    .accessibilityIdentifier("quick-input-send")
+            if let secondary = model.secondaryVerb {
+                action(secondary, keys: ["⌘", "↵"], primary: false) { model.submit(go: true) }
+                    .accessibilityIdentifier("quick-input-go")
             }
             action(model.primaryVerb, keys: ["↵"], primary: true) { model.submit() }
-                .accessibilityIdentifier("quick-input-open")
+                .accessibilityIdentifier("quick-input-primary")
         }
         .frame(minHeight: 48)
         .padding(.leading, 12).padding(.trailing, 8).padding(.vertical, 3)
@@ -391,7 +391,6 @@ struct QuickInputView: View {
             HStack(spacing: 12) {
                 word("↑↓ 移动")
                 if model.pickerKind == .place { word(model.placePane == .sessions ? "← 工作区" : "→ 会话") }
-                word("⇥ 选中")
                 word("esc 返回")
             }
             .padding(.horizontal, 3)

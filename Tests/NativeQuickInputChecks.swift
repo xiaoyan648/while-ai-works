@@ -70,8 +70,8 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         value.activate = { _ in }
         value.startTimeout = timeout
         value.claudeCodeReadiness = { claudeWorks }
-        value.terminalRoute = { _ in nil }
-        value.terminalSessions = { [] }
+        value.liveSessions = { [:] }
+        value.bringOwnerForward = { _ in true }
         value.usesSystemChooser = false
         return value
     }
@@ -145,12 +145,23 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         let app = URL(fileURLWithPath: "/Applications/T.app")
         let otty = QuickInputLauncher.command(terminal: "io.appmakes.otty", application: app, script: "/t/it's.command", directory: "/repo")
         check(otty.executable.path.hasSuffix("MacOS/otty-cli") && otty.arguments == ["open", "/repo", "--command", "'/t/it'\\''s.command'", "--quiet"], "\(otty.arguments)")
-        let other = QuickInputLauncher.command(terminal: "com.apple.Terminal", application: app, script: "/t/s.command", directory: "/repo")
-        check(other.executable.path == "/usr/bin/open" && other.arguments == ["-g", "/t/s.command"], "anything else takes the system's route")
+        for terminal in ["com.apple.Terminal", "com.googlecode.iterm2", "com.mitchellh.ghostty", "anything.else"] {
+            let generic = QuickInputLauncher.command(terminal: terminal, application: app, script: "/t/s.command", directory: "/repo")
+            check(generic.executable.path == "/usr/bin/open" && generic.arguments == ["/t/s.command"], "every other terminal takes the system's route")
+        }
         check(QuickInputReadiness.claudeLoggedIn(status: Data(#"{"loggedIn":false}"#.utf8)) == false && QuickInputReadiness.claudeLoggedIn(status: Data("x".utf8)) == nil, "an unreadable answer is not a no")
-        let listing = #"{"data":[{"id":"p_1","agent_session_id":null},{"id":"p_2","agent_session_id":"abc"}]}"#.data(using: .utf8)!
-        check(QuickInputOtty.pane(for: "abc", in: listing) == "p_2" && QuickInputOtty.pane(for: "x", in: listing) == nil)
-        check(QuickInputOtty.url(pane: "p_2")?.absoluteString == "otty://pane/p_2" && QuickInputOtty.url(pane: "p/../x") == nil)
+        check(QuickInputClient.threadLink(session("00000000-0000-4000-8000-000000000001"), prompt: "a b&c")?.absoluteString == "codex://threads/00000000-0000-4000-8000-000000000001?prompt=a%20b%26c", "an existing thread takes the text")
+        check(QuickInputClient.threadLink(session("00000000-0000-4000-8000-000000000001", source: .claude, kind: .claudeApp), prompt: "x") == nil, "Claude's thread links drop it")
+
+        // Liveness comes from the agents, whatever terminal they run in.
+        let claudeFolder = folder.appendingPathComponent("sessions", isDirectory: true)
+        try! manager.createDirectory(at: claudeFolder, withIntermediateDirectories: true)
+        try! #"{"pid":101,"sessionId":"alive"}"#.write(to: claudeFolder.appendingPathComponent("101.json"), atomically: true, encoding: .utf8)
+        try! #"{"pid":102,"sessionId":"gone"}"#.write(to: claudeFolder.appendingPathComponent("102.json"), atomically: true, encoding: .utf8)
+        try! "not json".write(to: claudeFolder.appendingPathComponent("x.json"), atomically: true, encoding: .utf8)
+        check(QuickInputLiveness.claudeSessions(in: claudeFolder, isAlive: { $0 == 101 }) == ["alive": 101])
+        let lsof = "p44\nfcwd\nn/Users/x\nf9\nn/Users/x/.codex/sessions/2026/11/01/rollout-2026-11-01T05-14-17-01A1969A-505B-7C83-9886-AC937E4FA471.jsonl\np45\nn/tmp/rollout-notes.jsonl\n"
+        check(QuickInputLiveness.codexSessions(lsof: lsof) == ["01a1969a-505b-7c83-9886-ac937e4fa471": 44], "\(QuickInputLiveness.codexSessions(lsof: lsof))")
     }
 
     static func catalog() {
@@ -190,8 +201,7 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         check(QuickInputCatalog.canSend(ended, claudeCodeWorks: true) && QuickInputCatalog.canSend(endedClaude, claudeCodeWorks: true), "an ended terminal session resumes with the message")
         check(!QuickInputCatalog.canSend(endedClaude, claudeCodeWorks: false), "not logged in, not sendable")
         check(!QuickInputCatalog.canSend(liveCLI, claudeCodeWorks: true), "a running terminal session cannot be resumed a second time")
-        check(!QuickInputCatalog.canSend(ended, claudeCodeWorks: true, openInTerminal: [ended.id]), "idle but still open in a pane: two processes would share it")
-        check(QuickInputOtty.sessionIDs(in: Data(#"{"data":[{"agent_session_id":"a"},{"agent_session_id":null}]}"#.utf8)) == ["a"])
+        check(!QuickInputCatalog.canSend(ended, claudeCodeWorks: true, live: [ended.id]), "idle but held by a process: two would share it")
         check(QuickInputCatalog.client(of: claudeApp) == .claudeApp && QuickInputCatalog.client(of: endedClaude) == .claudeCode && QuickInputCatalog.client(of: app) == .codexApp && QuickInputCatalog.client(of: ended) == .codexCLI)
     }
 
@@ -206,21 +216,20 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         state.agentDashboard = data
         model.prepareForSummon()
         spin()
-        check(model.target == nil && model.project == nil && model.primaryVerb == "下一步" && !model.canSendNow, "nothing is chosen for a first-time user")
+        check(model.target == nil && model.project == nil && model.primaryVerb == "下一步" && model.secondaryVerb == nil, "nothing is chosen for a first-time user")
 
         // Enter walks through what is missing and never loses the text or acts on a guess.
         model.textChanged("检查一下", cursor: 4)
         model.submit()
         check(model.pickerKind == .agent && model.pickerNote != nil && model.draft == "检查一下" && ran.isEmpty && opened.isEmpty)
-        model.pick(model.rows.first { $0.client == .codexApp }!)
-        check(model.target == .client(.codexApp) && model.pickerKind == .place)
+        check(model.primaryVerb == "选中" && model.secondaryVerb == nil, "nowhere to go until there is a workspace")
+        model.submit()
+        check(model.target == .client(.codexApp) && model.pickerKind == .place, "Enter in a list only chooses")
         model.pick(workspace: QuickInputProject(path: "/repo/cineflow"))
-        check(model.project?.path == "/repo/cineflow" && model.pickerKind == nil && opened.isEmpty, "choosing does not act")
+        check(model.project?.path == "/repo/cineflow" && model.pickerKind == nil && opened.isEmpty && ran.isEmpty, "choosing never acts")
 
-        // The app: Enter opens it with the text filled in. There is no sending, and no key offering it.
-        check(model.primaryVerb == "打开" && !model.canSendNow)
-        model.submit(send: true)
-        check(opened.isEmpty && ran.isEmpty && model.draft == "检查一下", "⌘Enter does nothing where it is not offered")
+        // A desktop app cannot start work, so Enter carries the text there, filled in. One button, one action.
+        check(model.primaryVerb == "带过去" && model.secondaryVerb == nil && !model.canSendNow)
         model.submit()
         check(opened.count == 1 && opened[0].absoluteString.hasPrefix("codex://new?path=%2Frepo%2Fcineflow&prompt=") && ran.isEmpty)
         check(dismissed == 1 && model.draft.isEmpty && copied.isEmpty && model.receipt == nil, "filled in, so nothing needs saying")
@@ -232,22 +241,18 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         reborn.prepareForSummon()
         check(reborn.target == .client(.codexApp) && reborn.project?.path == "/repo/cineflow", "the choice survives a restart")
 
-        // Enter with nothing typed is a plain jump.
+        // With nothing typed there is nothing to hand over, so Enter simply opens.
+        check(model.primaryVerb == "打开")
         model.submit()
         check(opened.last?.absoluteString == "codex://new?path=%2Frepo%2Fcineflow" && model.receipt == nil)
 
-        // The command line: Enter opens the terminal, in front, and the text waits on the clipboard.
+        // A command line can start work: Enter sends and stays here, and only claims what it has seen.
         model.togglePicker(.agent)
         model.pick(model.rows.first { $0.client == .codexCLI }!)
-        check(model.primaryVerb == "打开" && model.canSendNow)
-        model.textChanged("带过去", cursor: 3)
-        model.submit()
-        check(ran.last == .init(command: .new(.codexCLI), directory: "/repo/cineflow") && copied.last == "带过去" && model.receipt?.title == "内容已复制")
-
-        // ⌘Enter sends it and stays here, and only claims what it has seen.
-        model.dismissReceipt()
+        check(model.primaryVerb == "打开" && !model.canSendNow, "nothing to send yet, so Enter opens it")
         model.textChanged("开工", cursor: 2)
-        model.submit(send: true)
+        check(model.primaryVerb == "发送" && model.secondaryVerb == "打开" && model.canSendNow)
+        model.submit()
         check(ran.last == .init(command: .new(.codexCLI), directory: "/repo/cineflow", prompt: "开工", background: true))
         check(flown == [.codex] && model.draft.isEmpty && model.receipt?.title.contains("正在启动") == true && state.quickInputPulse.landings == 1)
         var after = data
@@ -258,20 +263,23 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         state.agentDashboard = after
         check(model.receipt?.title == "交给 Codex CLI 了" && model.receipt?.body == "开工" && model.receipt?.lingers == false)
 
-        // ⌘Enter with nothing typed has nothing to send.
-        let count = ran.count
-        model.submit(send: true)
-        check(ran.count == count)
+        // ⌘Enter follows it there instead: the terminal in front, the text on the clipboard.
+        model.dismissReceipt()
+        model.textChanged("带过去", cursor: 3)
+        model.submit(go: true)
+        check(ran.last == .init(command: .new(.codexCLI), directory: "/repo/cineflow") && copied.last == "带过去" && model.receipt?.title == "内容已复制")
+        model.dismissReceipt()
 
-        // A list follows the same rule: Enter goes, ⌘Enter sends, Tab only chooses.
+        // In a list Enter only chooses, so picking a target can never send anything. ⌘Enter goes straight there.
+        let starts = ran.count
         model.textChanged("看一下 @cla", cursor: 8)
-        check(model.pickerVisible && model.rows.first?.client == .claudeApp)
-        model.pickSelected()
-        check(model.draft == "看一下 " && model.target == .client(.claudeApp) && model.pickerKind == nil, "choosing leaves the text to finish")
+        check(model.pickerVisible && model.rows.first?.client == .claudeApp && model.secondaryVerb == "打开")
+        model.submit()
+        check(model.draft == "看一下 " && model.target == .client(.claudeApp) && model.pickerKind == nil && ran.count == starts, "Enter chose and did nothing else")
         let links = opened.count
         model.textChanged("看一下 @cla", cursor: 8)
-        model.submit()
-        check(opened.count == links + 1 && opened.last?.scheme == "claude" && model.draft.isEmpty, "Enter in the list goes straight there")
+        model.submit(go: true)
+        check(opened.count == links + 1 && opened.last?.scheme == "claude" && model.draft.isEmpty, "⌘Enter goes straight there with the text")
         model.textChanged("升级 @types/node", cursor: 14)
         check(!model.pickerVisible, "no match closes the list so the literal text stays")
         model.textChanged("", cursor: 0)
@@ -302,7 +310,7 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         cannot.togglePicker(.agent)
         cannot.pick(cannot.rows.first { $0.client == .codexCLI }!)
         cannot.textChanged("x", cursor: 1)
-        cannot.submit(send: true)
+        cannot.submit()
         check(cannot.notice != nil && cannot.draft == "x" && !stuck)
 
         // A start that never shows up says so and points at the terminal.
@@ -311,23 +319,21 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         silent.togglePicker(.agent)
         silent.pick(silent.rows.first { $0.client == .codexCLI }!)
         silent.textChanged("x", cursor: 1)
-        silent.submit(send: true)
+        silent.submit()
         eventually({ silent.receipt?.tone == .warning }, "a silent start is reported")
         check(silent.receipt?.actions.contains(.activate("io.appmakes.otty")) == true)
 
-        // A command line that is not logged in can still be opened, but sending is not offered.
-        var starts = 0
-        let loggedOut = QuickInputModel(state: state, environment: environment(ran: { _ in starts += 1 }, claudeWorks: false))
+        // A command line that is not logged in cannot start work, so Enter carries the text instead.
+        var requests: [QuickInputRun.Request] = []
+        let loggedOut = QuickInputModel(state: state, environment: environment(copied: { copied.append($0) }, ran: { requests.append($0) }, claudeWorks: false))
         loggedOut.prepareForSummon()
         loggedOut.togglePicker(.agent)
         loggedOut.pick(loggedOut.rows.first { $0.client == .claudeCode }!)
-        eventually({ !loggedOut.canSendNow }, "the check takes sending away")
-        check(loggedOut.hint?.contains("未登录") == true && loggedOut.primaryVerb == "打开")
         loggedOut.textChanged("看看", cursor: 2)
-        loggedOut.submit(send: true)
-        check(starts == 0 && loggedOut.draft == "看看", "no pretending to start")
+        eventually({ !loggedOut.canSendNow }, "the check takes sending away")
+        check(loggedOut.hint?.contains("未登录") == true && loggedOut.primaryVerb == "带过去" && loggedOut.secondaryVerb == nil)
         loggedOut.submit()
-        check(starts == 1, "Enter still opens it, where the login prompt can be seen")
+        check(requests == [.init(command: .new(.claudeCode), directory: "/repo/cineflow")] && copied.last == "看看", "no prompt, so no pretending to start")
     }
 
     static func placePicker() {
@@ -345,36 +351,36 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         model.togglePicker(.agent)
         model.pick(model.rows.first { $0.client == .codexApp }!)
         check(model.pickerKind == .place && model.workspaces.map(\.name) == ["全部会话", "cineflow", "waw"] && model.placePane == .workspaces)
-        check(model.focusedWorkspace == .all && model.focusedSessions.count == 3 && model.primaryVerb == "选会话" && !model.canSendNow)
+        check(model.focusedWorkspace == .all && model.focusedSessions.count == 3 && model.primaryVerb == "选会话" && model.secondaryVerb == nil)
         model.submit()
         check(model.placePane == .sessions && model.sessionIndex == 1 && model.pickerVisible, "Enter on all moves into the sessions")
+        check(model.primaryVerb == "选中" && model.secondaryVerb == "打开")
         model.moveSelection(-1)
         check(model.sessionIndex == 1, "all has no new-session row to land on")
         model.leaveSessions()
         model.moveSelection(1)
         check(model.focusedWorkspace?.name == "cineflow" && model.focusedSessions.map(\.title) == ["修复充值边界", "有效期排查"], "the right side belongs to the focused workspace")
-        check(model.primaryVerb == "打开")
         model.moveSelection(1)
         check(model.focusedWorkspace?.name == "waw" && model.focusedSessions.map(\.title) == ["订阅校验"])
         model.moveSelection(5)
         check(model.focusedWorkspace?.name == "waw", "it stops at the end")
         model.moveSelection(-1)
         model.enterSessions()
-        check(model.placePane == .sessions && model.sessionIndex == 1 && model.canSendNow)
+        check(model.placePane == .sessions && model.sessionIndex == 1)
         model.moveSelection(1)
         check(model.sessionIndex == 2)
         model.moveSelection(-2)
         check(model.sessionIndex == 0, "the first row on the right is a new session")
         model.leaveSessions()
-        model.pickSelected()
-        check(model.project?.name == "cineflow" && model.target == .client(.codexApp) && model.pickerKind == nil, "Tab on a workspace chooses it")
+        model.submit()
+        check(model.project?.name == "cineflow" && model.target == .client(.codexApp) && model.pickerKind == nil && links.isEmpty, "Enter on a workspace chooses it")
 
-        // Tab on a session chooses it, settling the client and workspace together.
+        // Enter on a session chooses it, settling the client and workspace together.
         model.togglePicker(.place)
         check(model.focusedWorkspace?.name == "cineflow", "the list opens on the current workspace")
         model.moveSelection(1)
         model.enterSessions()
-        model.pickSelected()
+        model.submit()
         check(model.target == .session(other.dockIdentity) && model.project?.name == "waw" && model.pickerKind == nil && opened.isEmpty)
         model.clearSessionTarget()
         check(model.target == .client(.codexApp) && model.project?.name == "waw", "stepping back keeps the client and workspace")
@@ -383,28 +389,31 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         model.textChanged("#cine", cursor: 5)
         check(model.placePane == .workspaces && model.focusedWorkspace?.name == "cineflow" && model.focusedSessions.count == 2)
         model.textChanged("#有效", cursor: 3)
-        check(model.placePane == .sessions && model.focusedSessions.map(\.title) == ["有效期排查"] && model.canSendNow, "Enter must not start a new session here")
+        check(model.placePane == .sessions && model.focusedSessions.map(\.title) == ["有效期排查"], "Enter must not start a new session here")
 
-        // The fast route: `#word` Enter goes straight to it, and the token reaches neither the draft nor the clipboard.
-        model.submit()
+        // The fast route: `#word` ⌘Enter goes straight to it, and the token reaches neither the draft nor the link.
+        model.submit(go: true)
         check(opened.map(\.id) == [idle.id] && copied.isEmpty && model.draft.isEmpty && !model.pickerVisible)
         model.textChanged("带上这句 #订阅", cursor: 8)
-        model.submit()
-        check(opened.count == 2 && copied == ["带上这句"], "copied \(copied)")
+        model.submit(go: true)
+        check(links.last?.absoluteString == "codex://threads/\(other.id)?prompt=%E5%B8%A6%E4%B8%8A%E8%BF%99%E5%8F%A5", "the thread opens with the text in it: \(String(describing: links.last))")
+        check(copied.isEmpty && opened.count == 1, "filled in, so there is nothing to paste")
 
-        // `#word` ⌘Enter sends straight to it.
+        // `#word` Enter chooses, then Enter sends: choosing can never send by itself.
         var sent: [(String, String)] = []
         state.sendAgentMessage = { session, text in sent.append((session.id, text)); return .accepted }
         model.textChanged("直接发 #有效", cursor: 7)
-        model.submit(send: true)
-        eventually({ sent.count == 1 }, "⌘Enter from the list sends")
-        check(sent[0].0 == idle.id && sent[0].1 == "直接发" && opened.count == 2)
+        model.submit()
+        check(sent.isEmpty && model.target == .session(idle.dockIdentity) && model.draft == "直接发 " && model.primaryVerb == "发送" && model.secondaryVerb == "打开")
+        model.submit()
+        eventually({ sent.count == 1 }, "the second Enter sends")
+        check(sent[0].0 == idle.id && sent[0].1 == "直接发")
         model.dismissReceipt()
 
         // A workspace from the list opens a new session there.
         model.togglePicker(.place)
         model.focusWorkspace(at: model.workspaces.firstIndex(of: QuickInputProject(path: "/repo/waw"))!)
-        model.submit()
+        model.submit(go: true)
         check(links.last?.absoluteString == "codex://new?path=%2Frepo%2Fwaw" && !model.pickerVisible)
 
         model.textChanged("x #不存在", cursor: 6)
@@ -427,67 +436,53 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         let ended = session("00000000-0000-4000-8000-000000000004", title: "结束的 CLI", kind: .cli)
         let endedClaude = session("00000000-0000-4000-8000-000000000005", source: .claude, title: "结束的 Claude Code", kind: .cli)
         let liveCLI = session("00000000-0000-4000-8000-000000000006", title: "运行中的 CLI", running: true, kind: .cli)
-        data.sessions = [running, idle, claudeApp, ended, endedClaude, liveCLI]
+        let idleHeld = session("00000000-0000-4000-8000-000000000007", title: "开着但空闲的 CLI", kind: .cli)
+        data.sessions = [running, idle, claudeApp, ended, endedClaude, liveCLI, idleHeld]
         state.agentDashboard = data
-        var opened: [AgentDockSession] = [], copied: [String] = [], links: [URL] = [], ran: [QuickInputRun.Request] = []
+        var opened: [AgentDockSession] = [], copied: [String] = [], links: [URL] = [], ran: [QuickInputRun.Request] = [], brought: [pid_t] = []
         var outcome = AgentMessageOutcome.steered, sent: [String] = []
         state.openAgentSession = { opened.append($0) }
         state.sendAgentMessage = { _, text in sent.append(text); return outcome }
-        var routed: URL? = nil
         var base = environment(opened: { links.append($0) }, copied: { copied.append($0) }, ran: { ran.append($0) })
-        base.terminalRoute = { _ in routed }
+        base.liveSessions = { [idleHeld.id: 77, liveCLI.id: 78] }
+        base.bringOwnerForward = { brought.append($0); return $0 == 77 }
         let model = QuickInputModel(state: state, environment: base)
         model.prepareForSummon()
-        spin()
+        spin(0.1)
 
-        // Enter on a session with its own route goes there, whatever kind it is.
-        model.pick(session: running)
-        check(model.primaryVerb == "打开" && model.canSendNow)
+        // A Codex desktop thread: Enter sends. ⌘Enter goes there with the text in the composer.
+        model.pick(session: idle)
         model.textChanged("补一句", cursor: 3)
-        model.submit()
-        check(opened.map(\.id) == [running.id] && copied == ["补一句"] && sent.isEmpty && model.receipt?.title == "内容已复制")
-        model.dismissReceipt()
-        model.pick(session: claudeApp)
-        check(model.primaryVerb == "打开" && !model.canSendNow, "Claude's app can only be opened")
-        model.submit()
-        check(opened.last?.id == claudeApp.id && copied.count == 1 && model.receipt == nil, "nothing typed is a plain jump")
+        check(model.primaryVerb == "发送" && model.secondaryVerb == "打开")
+        model.submit(go: true)
+        check(links.last?.absoluteString.hasPrefix("codex://threads/\(idle.id)?prompt=") == true && copied.isEmpty && sent.isEmpty && opened.isEmpty && model.receipt == nil)
 
-        // An ended terminal session has no route, so it comes back in the terminal. No dead ends.
-        model.pick(session: ended)
-        check(model.primaryVerb == "打开" && model.canSendNow)
-        model.submit()
-        check(ran.last == .init(command: .resume(.codexCLI, id: ended.id), directory: "/repo/cineflow"), "\(String(describing: ran.last))")
-        check(model.receipt == nil)
-
-        // A terminal session still running in an Otty pane is found there.
-        routed = URL(string: "otty://pane/p_2")
-        model.pick(session: liveCLI)
-        check(model.primaryVerb == "打开" && !model.canSendNow, "a running terminal session cannot take a message")
-        let runs = ran.count
-        model.submit()
-        check(links.last == routed && ran.count == runs, "never resumed a second time while it runs")
-
-        // Running somewhere with no route is the one case with nowhere to go, and it is said plainly.
-        routed = nil
-        model.pick(session: liveCLI)
-        model.textChanged("留着", cursor: 2)
-        model.submit()
-        check(ran.count == runs && copied.last == "留着" && model.receipt?.title == "回到它所在的窗口")
-        model.dismissReceipt()
-
-        // ⌘Enter into a running desktop thread inserts it, and the receipt says what happened.
+        // Enter into a running thread inserts it, and the receipt says what happened.
         model.pick(session: running)
         model.textChanged("补充", cursor: 2)
-        model.submit(send: true)
+        check(model.primaryVerb == "发送")
+        model.submit()
         eventually({ sent == ["补充"] && model.receipt?.title == "已插入当前这一步" }, "steering reports what happened")
-        check(state.quickInputPulse.source == .codex)
-        check(model.draft.isEmpty && model.targetSession == nil, "the next message starts fresh")
+        check(state.quickInputPulse.source == .codex && model.draft.isEmpty && model.targetSession == nil)
+        model.dismissReceipt()
 
-        // ⌘Enter into an ended terminal session resumes it with the message, in the background.
+        // Claude's desktop app takes nothing, so Enter carries it there on the clipboard.
+        model.pick(session: claudeApp)
+        model.textChanged("看看", cursor: 2)
+        check(model.primaryVerb == "带过去" && model.secondaryVerb == nil && !model.canSendNow)
+        model.submit()
+        check(opened.last?.id == claudeApp.id && copied.last == "看看" && model.receipt?.title == "内容已复制")
+        model.dismissReceipt()
+        model.pick(session: claudeApp)
+        check(model.primaryVerb == "打开")
+        model.submit()
+        check(opened.count == 2 && copied.count == 1 && model.receipt == nil, "nothing typed is a plain jump")
+
+        // An ended terminal session: Enter resumes it with the message, in the background.
         model.pick(session: endedClaude)
-        check(model.canSendNow)
         model.textChanged("接着做", cursor: 3)
-        model.submit(send: true)
+        check(model.primaryVerb == "发送" && model.secondaryVerb == "打开")
+        model.submit()
         check(ran.last == .init(command: .resume(.claudeCode, id: endedClaude.id), directory: "/repo/cineflow", prompt: "接着做", background: true))
         check(model.receipt?.title.contains("正在启动") == true)
         var revived = data
@@ -495,12 +490,36 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         state.agentDashboard = revived
         check(model.receipt?.title == "交给 Claude Code 了", "coming back to life is the proof: \(model.receipt?.title ?? "")")
         state.agentDashboard = data
+        model.dismissReceipt()
+
+        // ⌘Enter resumes it in front instead, with the text on the clipboard.
+        model.pick(session: ended)
+        model.textChanged("带上", cursor: 2)
+        model.submit(go: true)
+        check(ran.last == .init(command: .resume(.codexCLI, id: ended.id), directory: "/repo/cineflow") && copied.last == "带上")
+        model.dismissReceipt()
+
+        // Still held by a process, even idle: never resumed. Enter brings its terminal forward, whichever that is.
+        let runs = ran.count
+        model.pick(session: idleHeld)
+        model.textChanged("先放着", cursor: 3)
+        check(model.primaryVerb == "带过去" && !model.canSendNow, "two processes must not share a session")
+        model.submit()
+        check(ran.count == runs && brought == [77] && copied.last == "先放着" && model.receipt?.title == "内容已复制")
+        model.dismissReceipt()
+
+        // Running with no way to reach it is the one dead end, and it is said plainly.
+        model.pick(session: liveCLI)
+        model.textChanged("留着", cursor: 2)
+        model.submit()
+        check(ran.count == runs && copied.last == "留着" && model.receipt?.title == "回到它所在的窗口")
+        model.dismissReceipt()
 
         // An uncertain result keeps the text, warns, and never resends.
         model.pick(session: idle)
         outcome = .uncertain
         model.textChanged("继续", cursor: 2)
-        model.submit(send: true)
+        model.submit()
         eventually({ model.receipt?.tone == .warning }, "uncertain reaches a receipt")
         check(sent.count == 2 && model.warning != nil && model.receipt?.lingers == true && model.receipt?.actions.contains(.dismiss) == true)
         model.perform(.restore("继续"))
@@ -508,7 +527,7 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
 
         // A refused message comes back too, and the dock shakes rather than bumps.
         outcome = .unavailable
-        model.submit(send: true)
+        model.submit()
         eventually({ model.receipt?.tone == .failure }, "failure reaches a receipt")
         check(state.quickInputPulse.rejections == 1)
         model.perform(.dismiss)
@@ -516,9 +535,10 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
 
         // A pending request makes a session wait, even when its own record has not caught up.
         model.pick(session: running)
+        model.textChanged("等等", cursor: 2)
         check(model.canSendNow)
         state.agentInteractions = [.init(request: PermissionRequest(id: "r", source: .codex, sessionID: running.id, toolName: "Bash", summary: "ls", detail: nil, cwd: "/repo/cineflow", at: Date()))]
-        check(!model.canSendNow && model.targetSession?.event == .approval, "a request is never talked over")
+        check(!model.canSendNow && model.primaryVerb == "带过去" && model.targetSession?.event == .approval, "a request is never talked over")
         state.agentInteractions = []
 
         // A session that disappears is explained, and nothing is lost.
@@ -591,8 +611,8 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         check(controller.model.selection == 1)
         key(126, "", to: panel)
         check(controller.model.selection == 0)
-        key(48, "\t", to: panel)
-        check(controller.model.target == .client(.codexApp) && controller.model.pickerKind == .place, "Tab chooses, then where")
+        key(36, "\r", to: panel)
+        check(controller.model.target == .client(.codexApp) && controller.model.pickerKind == .place && opened.isEmpty, "Return chooses, then where")
         spin(0.35)
         check(panel.frame.height > 280, "both columns fit: \(panel.frame.height)")
         check(controller.model.focusedWorkspace == .all, "nothing chosen yet, so the list starts on all sessions")
@@ -601,8 +621,8 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         key(123, "", to: panel)
         check(controller.model.placePane == .workspaces, "left arrow returns")
         key(125, "", to: panel)
-        key(48, "\t", to: panel)
-        check(controller.model.project?.name == "cineflow" && controller.model.pickerKind == nil && opened.isEmpty, "Tab chose without going anywhere")
+        key(36, "\r", to: panel)
+        check(controller.model.project?.name == "cineflow" && controller.model.pickerKind == nil && opened.isEmpty, "Return chose without going anywhere")
         spin(0.35)
         check(panel.frame.height < 200, "the panel closes back up: \(panel.frame.height)")
 
@@ -614,12 +634,10 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         spin(0.2)
         check(textView(in: panel.contentView)?.string == "第一行\n第二行", "the draft is still in the editor")
 
-        // Return opens; ⌘Return sends where it can.
+        // Codex's app cannot start work: Return carries it there, and ⌘Return offers nothing more.
         panel.makeKey(); panel.makeFirstResponder(text); spin(0.05)
         key(36, "\r", [.command], to: panel)
-        check(opened.isEmpty && ran.isEmpty && controller.isShown, "the app takes no ⌘Return")
-        key(36, "\r", to: panel)
-        check(opened.count == 1 && opened[0].scheme == "codex" && ran.isEmpty, "Return opens it")
+        check(opened.count == 1 && opened[0].scheme == "codex" && ran.isEmpty, "⌘Return follows it there")
         spin(0.3)
         check(!controller.isShown)
         state.quickInputSummon.send()
@@ -629,8 +647,8 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         controller.model.togglePicker(.agent)
         controller.model.pick(controller.model.rows.first { $0.client == .codexCLI }!)
         text.insertText("开工", replacementRange: text.selectedRange())
-        key(36, "\r", [.command], to: panel)
-        check(ran.count == 1 && ran[0].prompt == "开工" && ran[0].directory == "/repo/cineflow" && ran[0].background, "⌘Return sends it")
+        key(36, "\r", to: panel)
+        check(ran.count == 1 && ran[0].prompt == "开工" && ran[0].directory == "/repo/cineflow" && ran[0].background, "Return sends it from a command line")
         spin(0.3)
         check(!controller.isShown && !panel.isVisible, "the panel leaves at once")
         controller.model.dismissReceipt()
@@ -680,7 +698,7 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         controller.model.pick(session: running)
         textView(in: controller.panel.contentView)?.insertText("补充", replacementRange: NSRange(location: 0, length: 0))
         let landings = state.quickInputPulse.landings
-        controller.model.submit(send: true)
+        controller.model.submit()
         spin(0.2)
         check(state.quickInputPulse.landings == landings, "the tile reacts when the note arrives, not when it leaves")
         eventually({ state.quickInputPulse.landings == landings + 1 }, "the flight finishes")
