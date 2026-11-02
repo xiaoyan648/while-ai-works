@@ -6,6 +6,48 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <channel>
         <title>While AI Works</title>
         <item>
+            <title>0.21.0</title>
+            <pubDate>Sun, 01 Nov 2026 21:41:57 -0500</pubDate>
+            <link>https://github.com/xiaoyan648/while-ai-works/releases/tag/v0.21.0</link>
+            <sparkle:version>45</sparkle:version>
+            <sparkle:shortVersionString>0.21.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description sparkle:format="markdown"><![CDATA[# 0.21.0 · 快捷输入
+
+版本 0.21.0，构建号 45。需要 macOS 14 或更新版本。
+
+## 新功能
+
+- 在任何应用里按 `⌥ 空格`，呼出输入框，把任务交给 Agent，不用切换窗口。可以在设置的「快捷输入」里关闭，或换成 `⌃ ⌥ K`、`⌥ ⌘ K`。
+- 回车把内容交出去：能直接发送就发送，你留在原地；不能发送就带到对应客户端。`⌘ 回车` 跟过去。
+- `@` 选 Agent：Codex、Codex CLI、Claude、Claude Code、Hermes、DSH。其中 DSH 只打开已有会话。
+- `#` 选工作区和会话。猫条里的会话排在前面，其余按更新时间，浏览显示最近 50 条，更早的输入关键词可以搜到。
+- 列表按厂商筛选。Codex 和 Codex CLI 看到的是同一批会话，Claude 和 Claude Code 也一样，选谁就用谁打开，比如用 Codex CLI 在终端继续桌面端的会话。
+- 命令行 Agent 在系统默认终端里运行，审批和接管都和平时一样。退出或更新猫条不影响它们。
+
+## 改进
+
+- Claude 订阅额度：桌面读取改为每 15～20 分钟一次，失败后逐步拉长间隔。查询失败时保留上次核实过的读数，并显示它实际的获取时间。
+
+## 使用说明
+
+- 桌面端的限制：Codex 桌面端已有的会话可以直接发送；新会话和 Claude 桌面端只能把内容填入输入框或复制，由你按发送。
+- Claude Code 命令行没有登录时不能直接发送，选它时会有提示。
+- 正在运行或等你处理的会话不会被插话打断，也不会被打开第二次。Codex 通过共享后台服务接入的终端窗口查不出来，会话空闲时可能再开一个窗口接上同一段对话。
+- 会话列表只读取这台 Mac 上的记录，不上传。
+
+## 下载
+
+- M 系列 Mac：`While-AI-Works-0.21.0-macOS-arm64.dmg`
+- Intel Mac：`While-AI-Works-0.21.0-macOS-x86_64.dmg`
+- ZIP 用于应用内更新，也可手动安装。
+
+当前使用 ad-hoc 签名，尚无 Developer ID 签名或 Apple 公证。Intel 包仅做交叉构建和归档检查，未在 Intel 硬件上验收。
+]]></description>
+            <enclosure url="https://github.com/xiaoyan648/while-ai-works/releases/download/v0.21.0/While-AI-Works-0.21.0-macOS-arm64.zip" length="35282492" type="application/octet-stream" sparkle:edSignature="jC42MlVj4OyAJ4cXUHSDVU1Wk2gOZvli356a/7o+mb3Xu60pZTE66H6q57Kl9n8UTLcSJTnhTKl5G4OiOBT/Cw=="/>
+        </item>
+        <item>
             <title>0.20.3</title>
             <pubDate>Tue, 27 Oct 2026 04:21:50 -0400</pubDate>
             <link>https://github.com/xiaoyan648/while-ai-works/releases/tag/v0.20.3</link>
@@ -75,38 +117,9 @@ Claude 已登录但猫条尚无读取权限时，在设置的 Claude 接入配�
 ]]></description>
             <enclosure url="https://github.com/xiaoyan648/while-ai-works/releases/download/v0.20.2/While-AI-Works-0.20.2-macOS-arm64.zip" length="32015807" type="application/octet-stream" sparkle:edSignature="erokx6zsMFdwYPyIwzcuYwgQShGWl2y/C2Sl3qZI8Mcb3LoFZRRmlR881rSF5gu3N+gKj48uzqqrCskGSMXdAA=="/>
         </item>
-        <item>
-            <title>0.20.1</title>
-            <pubDate>Sat, 24 Oct 2026 13:34:01 -0400</pubDate>
-            <link>https://github.com/xiaoyan648/while-ai-works/releases/tag/v0.20.1</link>
-            <sparkle:version>38</sparkle:version>
-            <sparkle:shortVersionString>0.20.1</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <description sparkle:format="markdown"><![CDATA[# 0.20.1 · 修复 DSH 桌面环境读取
-
-版本 0.20.1，构建号 38。需要 macOS 14 或更新版本。
-
-## DSH
-
-- 修复使用 fnm 安装 Node.js 时，DSH Web / TUI 已启动，猫条仍提示“读取 Harness 数据需要 Node.js”的问题。桌面启动不会继承终端的版本管理器环境，本版补充 fnm、nvm、Volta 安装目录识别，并优先使用 fnm 的默认版本。
-- 保留已有 PATH 的优先级，不执行 shell 启动脚本，不修改 DSH 配置或 API Key。
-- 本地读取失败时显示“读取异常”，避免“等待连接”被误解为需要重启 DSH。
-
-## 安装与更新
-
-通过“设置 → 关于 → 检查更新”升级，或者下载对应芯片的 DMG。原有设置和鱼获保留。
-
-- M 系列 Mac：`While-AI-Works-0.20.1-macOS-arm64.dmg`
-- Intel Mac：`While-AI-Works-0.20.1-macOS-x86_64.dmg`
-
-应用使用 ad-hoc 签名，尚无 Developer ID 签名和 Apple 公证；更新归档与清单有 Ed25519 签名。Intel 为交叉编译及安装包校验，未做 Intel 真机验收。
-]]></description>
-            <enclosure url="https://github.com/xiaoyan648/while-ai-works/releases/download/v0.20.1/While-AI-Works-0.20.1-macOS-arm64.zip" length="31992456" type="application/octet-stream" sparkle:edSignature="gG2rJ6rnAARncoiQd1AgoJmsni6AShWmxYqJoiggwHuOf/YOG2X2IHImyzmi23v72TedcLmVMOTdrssh46xrAA=="/>
-        </item>
     </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: /OQS/ZE1rQ/K2UbmGmUkiWweCdmzFvj3KdlHyETwo+5oYVpR9BzdmOCk/PVRxpoipKNLN0Wn6RvoKEaDnkzMCA==
-length: 7444
+edSignature: tH+mJZ13yFfdE3KcX7DQ3NaZ3oZ4xY1HW2AWYyfnNKEvTyubdRxmI+pTv2/5+h8q5y8zffbHaAGWL4+VKKDICw==
+length: 8490
 -->

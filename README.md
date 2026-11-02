@@ -68,6 +68,7 @@ https://github.com/user-attachments/assets/db49fc4e-1adf-49a4-b173-da68e032c6b1
 
 | 版本 | 这次带来了什么 |
 | --- | --- |
+| [**0.21.0**](docs/releases/0.21.0.md) | **快捷输入**：任何应用里按 `⌥ 空格`，把任务交给 Codex、Claude、Hermes，或回到已有会话；能发送就留在原地，不能发送就带过去。 |
 | [**0.20.3**](docs/releases/0.20.3.md) | **复用 Claude 已有登录**：优先读取桌面端订阅额度，再尝试 Claude Code；启动和监听开关静默检查，需要授权时由用户手动操作。 |
 | [**0.20.2**](docs/releases/0.20.2.md) | **DSH 原会话跳转与确认提醒**：接好 `dsh-tui` 监听，返回原终端面板，补齐计划审阅与限时问题提醒。 |
 | [**0.20.1**](docs/releases/0.20.1.md) | **DSH 桌面读取修复**：支持 fnm、nvm、Volta 的 Node 安装目录，纠正“等待连接”的误导状态。 |

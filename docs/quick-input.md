@@ -1,6 +1,6 @@
 # 快捷输入：方向与设计
 
-状态：M1 已实现，待真机确认，2026-11-01。分支 `feat/quick-input`，基于 `dadb0c6`（0.20.4-beta.1）。此前的讨论稿见工作目录外层 `docs/waw-command-input-plan-2026-10-30.md`。
+状态：M1 随 0.21.0 发布，2026-11-02。此前的讨论稿见工作目录外层 `docs/waw-command-input-plan-2026-10-30.md`。
 
 可交互原型：<https://claude.ai/artifact/HxQY2uV3TybnEMm9JgoMoZ>（默认私有，分享给同事需在页面的 Share 菜单操作）。原型停在两栏选择那一版，按键规则以本文为准。
 
