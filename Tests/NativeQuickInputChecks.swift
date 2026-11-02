@@ -47,6 +47,9 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         newSessions()
         placePicker()
         sessions()
+        localSessions()
+        otherClients()
+        dshOnlyOpens()
         try keyboard()
         dockHandover()
         if let index = arguments.firstIndex(of: "--snapshot"), index + 1 < arguments.count { snapshots(URL(fileURLWithPath: arguments[index + 1], isDirectory: true)) }
@@ -71,6 +74,7 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         value.startTimeout = timeout
         value.claudeCodeReadiness = { claudeWorks }
         value.liveSessions = { [:] }
+        value.localRecords = { QuickInputLocalRecords() }
         value.bringOwnerForward = { _ in true }
         value.usesSystemChooser = false
         return value
@@ -162,11 +166,13 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         check(QuickInputLiveness.claudeSessions(in: claudeFolder, isAlive: { $0 == 101 }) == ["alive": 101])
         let lsof = "p44\nfcwd\nn/Users/x\nf9\nn/Users/x/.codex/sessions/2026/11/01/rollout-2026-11-01T05-14-17-01A1969A-505B-7C83-9886-AC937E4FA471.jsonl\np45\nn/tmp/rollout-notes.jsonl\n"
         check(QuickInputLiveness.codexSessions(lsof: lsof) == ["01a1969a-505b-7c83-9886-ac937e4fa471": 44], "\(QuickInputLiveness.codexSessions(lsof: lsof))")
+        check(QuickInputLiveness.codexSessions(lsof: lsof, isShared: { $0 == 44 }).isEmpty, "the shared service keeps logs open with nobody there")
     }
 
     static func catalog() {
         let rows = QuickInputCatalog.clientRows(clients: QuickInputClient.allCases, claudeCodeWorks: false, quota: { _ in nil }, query: "")
-        check(rows.map(\.title) == ["Codex", "Codex CLI", "Claude", "Claude Code", "Hermes"], "five separate things")
+        check(rows.map(\.title) == ["Codex", "Codex CLI", "Claude", "Claude Code", "Hermes", "DSH"], "what opens a session")
+        check(rows.first { $0.client == .dsh }?.subtitle == "只打开已有会话" && !QuickInputClient.dsh.canStartNew)
         check(rows.first { $0.client == .claudeCode }?.subtitle.contains("未登录") == true)
         let low = AgentDockQuota(id: "c", source: .codex, title: "每周", remaining: 0, resetAt: nil, observedAt: Date(), stale: false, window: .weekly)
         check(QuickInputCatalog.clientRows(clients: [.codexApp], claudeCodeWorks: true, quota: { _ in low }, query: "").first?.tone == .attention, "almost no quota is flagged")
@@ -187,12 +193,20 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         check(QuickInputCatalog.workspaces(projects: projects, sessions: list, query: "waw").first == waw, "a workspace name comes first")
         let homeless = session("00000000-0000-4000-8000-000000000005", title: "无处可归", cwd: nil)
         check(QuickInputCatalog.sessions(in: .all, of: list + [homeless], query: "无处").count == 1, "a session with no workspace is still reachable")
-        // A workspace lists its client's sessions; only "all" crosses clients.
+        // A family shares its sessions; another family's are not listed anywhere under it.
         check(QuickInputCatalog.sessions(in: waw, of: list, query: "", client: .codexApp).map(\.title) == ["等待", "订阅校验"], "no Claude under Codex")
         check(QuickInputCatalog.sessions(in: waw, of: list, query: "", client: .claudeCode).map(\.title) == ["终端会话"])
-        check(QuickInputCatalog.sessions(in: waw, of: list, query: "", client: .codexCLI).isEmpty, "the desktop app and the command line are separate")
-        check(QuickInputCatalog.sessions(in: .all, of: list, query: "", client: .codexCLI).count == 4, "all crosses clients")
-        check(QuickInputCatalog.workspaces(projects: projects, sessions: list, query: "终端", client: { _ in .codexApp }) == [.all], "another client's session is only found under all")
+        check(QuickInputCatalog.sessions(in: waw, of: list, query: "", client: .codexCLI).map(\.title) == ["等待", "订阅校验"], "Codex and Codex CLI see the same sessions")
+        check(QuickInputCatalog.sessions(in: .all, of: list, query: "", client: .codexCLI).count == 3, "all is the current family")
+        check(QuickInputCatalog.sessions(in: .all, of: list, query: "").count == 4, "with no Agent chosen, every family")
+        check(QuickInputCatalog.workspaces(projects: projects, sessions: list, query: "终端", client: { _ in .codexApp }).isEmpty, "another family's session is not found")
+        check(QuickInputCatalog.workspaces(projects: projects, sessions: list, query: "终端", client: { _ in .claudeApp }) == [.all, waw])
+        check(QuickInputCatalog.workspaces(projects: projects, sessions: list, query: "repo").isEmpty, "a workspace matches by name, not by path")
+        check(QuickInputCatalog.workspaces(projects: projects, sessions: list, query: "codex").isEmpty, "a client's name is what @ is for")
+        // Browsing has a limit and search does not.
+        let many = (0..<60).map { session(String(format: "00000000-0000-4000-8000-0000000001%02d", $0), title: "第 \($0) 条", cwd: "/repo/waw") }
+        check(QuickInputCatalog.sessions(in: .all, of: many, query: "").count == 50 && QuickInputCatalog.sessions(in: .all, of: many, query: "第").count == 60)
+        check(QuickInputCatalog.counts(of: many + list, in: [.all, waw], client: { _ in .codexApp }) == ["": 63, "/repo/waw": 62], "a count is what it holds, not what fits")
         let dead = session("00000000-0000-4000-8000-000000000006", title: "去不了", cwd: "/repo/waw", kind: .noRoute)
         check(!QuickInputCatalog.canOpen(dead) && QuickInputCatalog.sessions(in: .all, of: [dead], query: "").isEmpty, "nothing Enter cannot reach is listed")
 
@@ -208,6 +222,14 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         check(!QuickInputCatalog.canSend(endedClaude, claudeCodeWorks: false), "not logged in, not sendable")
         check(!QuickInputCatalog.canSend(liveCLI, claudeCodeWorks: true), "a running terminal session cannot be resumed a second time")
         check(!QuickInputCatalog.canSend(ended, claudeCodeWorks: true, live: [ended.id]), "idle but held by a process: two would share it")
+        // The opener decides: a command line resumes what its app began. Only sessions that truly have no holder.
+        let desktop = QuickInputSessionIndex.record(claudeApp.id, .claude, title: "桌面", directory: "/repo/waw", at: Date(), url: claudeApp.navigationURL, resume: "claude --resume " + claudeApp.id)
+        check(QuickInputCatalog.canSend(desktop, via: .claudeCode, claudeCodeWorks: true) && !QuickInputCatalog.canSend(desktop, via: .claudeCode, claudeCodeWorks: false))
+        check(!QuickInputCatalog.canSend(ended, via: .codexApp, claudeCodeWorks: true), "an app only fills, whatever the session could do")
+        check(!QuickInputCatalog.canSend(desktop, via: .claudeCode, claudeCodeWorks: true, live: [desktop.id]))
+        let old = QuickInputSessionIndex.record(app.id, .codex, title: "旧", directory: "/repo/waw", at: Date(), url: app.navigationURL, resume: "codex resume " + app.id)
+        check(!old.canSend && !QuickInputCatalog.canSend(old, claudeCodeWorks: true), "an old thread has no owner to send to")
+        check(QuickInputCatalog.canSend(old, via: .codexCLI, claudeCodeWorks: true), "a command line resumes it instead")
         check(QuickInputCatalog.client(of: claudeApp) == .claudeApp && QuickInputCatalog.client(of: endedClaude) == .claudeCode && QuickInputCatalog.client(of: app) == .codexApp && QuickInputCatalog.client(of: ended) == .codexCLI)
     }
 
@@ -414,7 +436,7 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         model.clearSessionTarget()
         check(model.target == .client(.codexApp) && model.project?.name == "waw", "stepping back keeps the client and workspace")
 
-        // Under a workspace only the current client's sessions show. All sessions is the way across.
+        // Only the current family's sessions show, under a workspace and under all. @ is the way across.
         var mixed = data
         let claudeThere = session("00000000-0000-4000-8000-000000000004", source: .claude, title: "克劳德的会话", cwd: "/repo/cineflow", kind: .claudeApp)
         mixed.sessions.append(claudeThere)
@@ -423,7 +445,13 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         model.focusWorkspace(at: model.workspaces.firstIndex(of: QuickInputProject(path: "/repo/cineflow"))!)
         check(!model.focusedSessions.contains { $0.source == .claude } && model.sessionCount(in: QuickInputProject(path: "/repo/cineflow")) == 2, "no Claude under Codex")
         model.focusWorkspace(at: 0)
-        check(model.focusedSessions.contains { $0.id == claudeThere.id }, "all crosses clients")
+        check(!model.focusedSessions.contains { $0.id == claudeThere.id }, "all is the current family")
+        model.closePicker()
+        model.togglePicker(.agent)
+        model.pick(model.rows.first { $0.client == .claudeApp }!)
+        model.togglePicker(.place)
+        model.focusWorkspace(at: model.workspaces.firstIndex(of: .all)!)
+        check(model.focusedSessions.map(\.id) == [claudeThere.id], "\(model.focusedSessions.map(\.title))")
         model.enterSessions()
         while model.focusedSessions.indices.contains(model.sessionIndex - 1), model.focusedSessions[model.sessionIndex - 1].id != claudeThere.id { model.moveSelection(1) }
         model.pickSelected()
@@ -475,6 +503,145 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         check(model.focusedWorkspace == model.workspaces[2], "an index out of range changes nothing")
         check(model.sessionCount(in: .all) == 3)
         model.closePicker()
+    }
+
+    /// The records each agent keeps, read from a folder made for the check.
+    static func localSessions() {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("WAWQuickInputRecords-" + UUID().uuidString, isDirectory: true)
+        try! FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let log = folder.appendingPathComponent("rollout.jsonl")
+        try! #"{"type":"session_meta","payload":{"id":"x","originator":"codex-tui","cwd":"/a"}}"#.write(to: log, atomically: true, encoding: .utf8)
+        check(QuickInputSessionIndex.originator(ofLog: log.path) == "codex-tui")
+        let transcript = folder.appendingPathComponent("t.jsonl")
+        func write(_ lines: [String]) { try! (lines.joined(separator: "\n") + "\n").write(to: transcript, atomically: true, encoding: .utf8) }
+        func read() -> (title: String?, directory: String?) {
+            QuickInputSessionIndex.claudeTranscript(transcript, size: (try! Data(contentsOf: transcript)).count, window: 4096)
+        }
+        let meta = #"{"type":"user","isMeta":true,"cwd":"/repo/waw","message":{"content":"提示"}}"#
+        let wrapped = #"{"type":"user","message":{"content":"<command-name>/clear</command-name>"}}"#
+        let asked = #"{"type":"user","cwd":"/repo/waw","message":{"content":[{"type":"text","text":"修一下登录\n第二行"}]}}"#
+        write([meta, wrapped, asked])
+        check(read() == ("修一下登录", "/repo/waw"), "the first thing typed, one line of it: \(read())")
+        write([meta, asked, #"{"type":"ai-title","aiTitle":"生成的标题","sessionId":"s"}"#])
+        check(read().title == "生成的标题", "\(read())")
+        write([meta, wrapped])
+        check(read().title == nil, "nothing was asked, so it is no session to go back to")
+        let padding = #"{"type":"assistant","message":{"content":"\#(String(repeating: "x", count: 9000))"}}"#
+        write([asked, padding, #"{"type":"custom-title","customTitle":"起的名字","sessionId":"s"}"#])
+        check(read().title == "起的名字", "a title near the end of a long transcript: \(read())")
+        check(QuickInputSessionIndex.headline("  \n") == nil && QuickInputSessionIndex.headline(String(repeating: "长", count: 300))?.count == 120)
+    }
+
+    /// The Agent decides what opens a session, the session decides which conversation continues.
+    static func otherClients() {
+        let state = makeState()
+        func record(_ id: String, source: WorkSource = .codex, title: String, cwd: String = "/repo/old", kind: Kind) -> AgentDockSession {
+            var value = session(id, source: source, title: title, cwd: cwd, kind: kind)
+            value = QuickInputSessionIndex.record(value.id, source, title: title, directory: cwd, at: Date(timeIntervalSince1970: 1000), url: value.navigationURL,
+                                                  resume: (source == .claude ? "claude --resume " : "codex resume ") + value.id)
+            return value
+        }
+        let oldApp = record("00000000-0000-4000-8000-000000000021", title: "旧的桌面会话", kind: .codexApp)
+        let oldCLI = record("00000000-0000-4000-8000-000000000022", title: "旧的 CLI 会话", kind: .cli)
+        let oldClaudeApp = record("00000000-0000-4000-8000-000000000023", source: .claude, title: "旧的 Claude 桌面会话", kind: .claudeApp)
+        let oldClaudeCode = record("00000000-0000-4000-8000-000000000024", source: .claude, title: "旧的 Claude Code 会话", kind: .cli)
+        let held = record("00000000-0000-4000-8000-000000000025", title: "开在桌面端的 CLI 会话", kind: .cli)
+        let dock = session("00000000-0000-4000-8000-000000000026", title: "猫条里的", cwd: "/repo/waw", kind: .cli)
+        let duplicate = record(dock.id, title: "同一个的旧记录", kind: .cli)
+        var data = AgentDockData(); data.sessions = [dock]; state.agentDashboard = data
+        var links: [URL] = [], copied: [String] = [], ran: [QuickInputRun.Request] = [], brought: [pid_t] = []
+        var base = environment(opened: { links.append($0) }, copied: { copied.append($0) }, ran: { ran.append($0) })
+        base.localRecords = { QuickInputLocalRecords(sessions: [oldApp, oldCLI, oldClaudeApp, oldClaudeCode, held, duplicate], workspaces: ["/repo/old"]) }
+        base.liveSessions = { [held.id: 90] }
+        base.bringOwnerForward = { brought.append($0); return true }
+        let model = QuickInputModel(state: state, environment: base)
+        model.prepareForSummon()
+        eventually({ model.knownSessions.count == 6 }, "records join the dock's sessions: \(model.knownSessions.map(\.title))")
+        check(model.knownSessions.first?.id == dock.id && model.knownSessions.first?.title == "猫条里的", "the dock's own first, and what it knows wins")
+        check(model.projects.map(\.path).contains("/repo/old"), "a workspace only the records know")
+        spin(0.05)
+        func choose(_ client: QuickInputClient, then pickedSession: AgentDockSession) {
+            model.togglePicker(.agent)
+            model.pick(model.rows.first { $0.client == client }!)
+            if model.pickerVisible { model.closePicker() }
+            model.pick(session: pickedSession)
+        }
+        // Codex CLI takes up a desktop session: Enter resumes it with the message in the background.
+        choose(.codexCLI, then: oldApp)
+        model.textChanged("继续做", cursor: 3)
+        check(model.targetClient == .codexCLI && model.primaryVerb == "发送" && model.secondaryVerb == "打开")
+        model.submit()
+        check(ran.last == .init(command: .resume(.codexCLI, id: oldApp.id), directory: "/repo/old", prompt: "继续做", background: true), "\(String(describing: ran.last))")
+        model.dismissReceipt()
+        // ⌘Enter opens it in a terminal, with the text waiting.
+        choose(.codexCLI, then: oldApp)
+        model.textChanged("等我看", cursor: 3)
+        model.submit(go: true)
+        check(ran.last == .init(command: .resume(.codexCLI, id: oldApp.id), directory: "/repo/old") && copied.last == "等我看")
+        model.dismissReceipt()
+        // Codex takes up a CLI session: the thread opens in the app with the text filled in.
+        choose(.codexApp, then: oldCLI)
+        model.textChanged("带过去", cursor: 3)
+        check(model.targetClient == .codexApp && model.primaryVerb == "带过去" && model.secondaryVerb == nil, "an app only fills")
+        let before = ran.count, clipboard = copied.count
+        model.submit()
+        check(links.last?.absoluteString.hasPrefix("codex://threads/\(oldCLI.id)?prompt=") == true && ran.count == before && copied.count == clipboard)
+        // Claude imports a Claude Code session; the link carries no text, so the clipboard does.
+        choose(.claudeApp, then: oldClaudeCode)
+        model.textChanged("粘贴我", cursor: 3)
+        model.submit()
+        check(links.last?.absoluteString == "claude://resume?session=" + oldClaudeCode.id && copied.last == "粘贴我")
+        model.dismissReceipt()
+        // Claude Code takes up a desktop session.
+        choose(.claudeCode, then: oldClaudeApp)
+        model.submit(go: true)
+        check(ran.last == .init(command: .resume(.claudeCode, id: oldClaudeApp.id), directory: "/repo/old"))
+        // A session a process holds is never opened a second time: the chosen Agent gives way.
+        let opens = links.count, runs = ran.count
+        choose(.codexApp, then: held)
+        model.submit(go: true)
+        check(brought == [90] && links.count == opens && ran.count == runs, "goes to where it is")
+        // Choosing another of the family keeps the session; another family drops it.
+        choose(.codexApp, then: oldCLI)
+        model.togglePicker(.agent)
+        model.pick(model.rows.first { $0.client == .codexCLI }!)
+        check(model.targetSession?.id == oldCLI.id && model.targetClient == .codexCLI)
+        model.togglePicker(.agent)
+        model.pick(model.rows.first { $0.client == .claudeApp }!)
+        check(model.targetSession == nil && model.targetClient == .claudeApp)
+        // The list follows the Agent, and search reaches the records.
+        model.clearSessionTarget(); model.closePicker()
+        model.togglePicker(.agent); model.pick(model.rows.first { $0.client == .codexApp }!); model.closePicker()
+        model.textChanged("#旧的", cursor: 3)
+        check(model.pickerVisible && model.focusedSessions.allSatisfy { $0.source == .codex } && model.focusedSessions.count == 2, "\(model.focusedSessions.map(\.title))")
+        model.textChanged("#没有这个", cursor: 5)
+        check(!model.pickerVisible && model.hint?.contains("没找到") == true, "\(String(describing: model.hint))")
+    }
+
+    /// DSH is on the list to get back to its sessions, so it never offers a new one.
+    static func dshOnlyOpens() {
+        let state = makeState()
+        var dsh = session("00000000-0000-4000-8000-000000000031", source: .dsh, title: "DSH 会话", cwd: "/repo/waw", kind: .noRoute)
+        dsh.localSessionLock = "/tmp/lock"
+        let codex = session("00000000-0000-4000-8000-000000000032", title: "Codex 会话", cwd: "/repo/waw")
+        var data = AgentDockData(); data.sessions = [dsh, codex]; state.agentDashboard = data
+        var opened: [AgentDockSession] = [], ran = 0
+        state.openAgentSession = { opened.append($0) }
+        let model = QuickInputModel(state: state, environment: environment(ran: { _ in ran += 1 }))
+        model.prepareForSummon(); spin(0.05)
+        model.togglePicker(.agent)
+        model.pick(model.rows.first { $0.client == .dsh }!)
+        check(model.pickerKind == .place && !model.offersNewSession(in: model.focusedWorkspace), "goes on to its sessions")
+        check(model.primaryVerb == "选会话" && model.secondaryVerb == nil)
+        check(model.focusedSessions.map(\.id) == [dsh.id], "only its own: \(model.focusedSessions.map(\.title))")
+        let waw = model.workspaces.first { $0.path == "/repo/waw" }!
+        model.pick(workspace: waw)
+        check(model.project == nil && ran == 0, "a workspace is no place to start one")
+        model.pick(session: dsh)
+        check(model.targetClient == .dsh && !model.canSendNow && model.primaryVerb == "打开")
+        model.submit()
+        check(opened.map(\.id) == [dsh.id] && ran == 0)
     }
 
     static func sessions() {

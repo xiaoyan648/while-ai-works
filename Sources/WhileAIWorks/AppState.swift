@@ -784,8 +784,10 @@ struct AgentDockSession: Equatable, Identifiable, Sendable {
     var localBridgeRoot: String? = nil
     /// The full directory the session works in; `project` may only name its last component.
     var workingDirectory: String? = nil
+    /// Read from the client's records rather than followed live; no process is known to own it.
+    var historical = false
     var dockIdentity: String { source.rawValue + ":" + id }
-    var canSend: Bool { source == .codex && navigationURL?.scheme == "codex" && navigationURL?.lastPathComponent == id }
+    var canSend: Bool { !historical && source == .codex && navigationURL?.scheme == "codex" && navigationURL?.lastPathComponent == id }
 }
 enum AgentMessageOutcome: Equatable {
     case accepted, steered, unavailable, failed(String), uncertain

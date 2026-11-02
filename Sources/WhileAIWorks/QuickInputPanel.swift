@@ -234,27 +234,27 @@ struct QuickInputView: View {
 
     private var placeList: some View {
         let workspaces = model.workspaces, sessions = model.focusedSessions, pane = model.placePane
-        let focus = model.focusedWorkspace
+        let focus = model.focusedWorkspace, counts = model.sessionCounts(in: workspaces)
         return HStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 0) {
                 columnTitle("工作区")
                 ScrollViewReader { reader in
                     ScrollView {
-                        VStack(spacing: 0) {
+                        LazyVStack(spacing: 0) {
                             ForEach(Array(workspaces.enumerated()), id: \.element.id) { index, project in
                                 Button { model.pick(workspace: project) } label: {
                                     HStack(spacing: 8) {
                                         if project.isAll { Image(systemName: "square.stack").font(.system(size: 12)).foregroundStyle(.secondary) }
                                         Text(project.name).font(.system(size: 14, weight: .medium)).lineLimit(1).truncationMode(.middle)
                                         Spacer(minLength: 4)
-                                        let count = model.sessionCount(in: project)
+                                        let count = counts[project.id] ?? 0
                                         if count > 0 { Text(String(count)).font(.system(size: 12)).foregroundStyle(.secondary) }
                                     }
                                     .padding(.horizontal, 10).frame(height: 36).contentShape(Rectangle())
                                     .background(highlight(project == focus, id: "workspace", quiet: pane == .sessions))
                                 }
                                 .buttonStyle(.plain).focusable(false).id(project.id)
-                                .help(project.isAll ? "所有 Agent 的会话，顺序和猫条一致" : project.path)
+                                .help(project.isAll ? "猫条里的排在前面，更早的按更新时间" : project.path)
                                 .accessibilityIdentifier("quick-input-workspace-" + project.name)
                                 // A pointer resting where the list opens must not steal focus from the keyboard.
                                 .onContinuousHover { phase in
@@ -285,15 +285,20 @@ struct QuickInputView: View {
             Rectangle().fill(.separator).frame(width: 0.5)
             VStack(alignment: .leading, spacing: 0) {
                 columnTitle(focus.map { project in
-                    if project.isAll { return "所有 Agent，和猫条相同的顺序" }
-                    return project.name + " 的" + (model.client(for: project).map { " " + $0.title + " " } ?? "") + "会话"
+                    let family = model.client(for: project)?.familyTitle
+                    if project.isAll { return (family ?? "所有 Agent") + " 的全部会话" }
+                    return project.name + " 的" + (family.map { " " + $0 + " " } ?? "") + "会话"
                 } ?? "会话").lineLimit(1)
                 ScrollViewReader { reader in
                     ScrollView {
-                        VStack(spacing: 0) {
-                            if focus?.isAll != true { newSessionRow(focus) }
+                        LazyVStack(spacing: 0) {
+                            if model.offersNewSession(in: focus) { newSessionRow(focus) }
                             ForEach(Array(sessions.enumerated()), id: \.element.dockIdentity) { index, session in
                                 sessionRow(session, selected: pane == .sessions && model.sessionIndex == index + 1, showWorkspace: focus?.isAll == true)
+                            }
+                            if model.pickerQuery.isEmpty, let focus, (counts[focus.id] ?? 0) > sessions.count {
+                                Text("还有 \((counts[focus.id] ?? 0) - sessions.count) 条，输入关键词可以搜到")
+                                    .font(.system(size: 12)).foregroundStyle(.secondary).frame(height: 36)
                             }
                         }
                     }
@@ -399,8 +404,10 @@ struct QuickInputView: View {
             .padding(.horizontal, 3)
         } else if let session = model.targetSession {
             HStack(spacing: 3) {
+                word("用")
+                segment(model.targetClient?.title ?? session.source.clientName, source: session.source, filled: true) { model.togglePicker(.agent) }
                 word("继续")
-                segment(session.title, source: session.source, filled: true) { model.togglePicker(.place) }
+                segment(session.title, source: nil, filled: true) { model.togglePicker(.place) }
                 if let path = QuickInputCatalog.path(of: session) { word(QuickInputProject(path: path).name + " ·") }
                 let status = QuickInputCatalog.status(session)
                 Text(status.text).font(.system(size: 13))
@@ -416,9 +423,14 @@ struct QuickInputView: View {
             HStack(spacing: 3) {
                 word("用")
                 segment(model.targetClient?.title ?? "选择 Agent", source: model.targetClient?.source, filled: model.targetClient != nil) { model.togglePicker(.agent) }
-                word("在")
-                segment(model.project?.name ?? "选择工作区", source: nil, filled: model.project != nil) { model.togglePicker(.place) }
-                word("开新会话")
+                if model.targetClient?.canStartNew == false {
+                    word("打开")
+                    segment("选择会话", source: nil, filled: false) { model.togglePicker(.place) }
+                } else {
+                    word("在")
+                    segment(model.project?.name ?? "选择工作区", source: nil, filled: model.project != nil) { model.togglePicker(.place) }
+                    word("开新会话")
+                }
             }
         }
     }

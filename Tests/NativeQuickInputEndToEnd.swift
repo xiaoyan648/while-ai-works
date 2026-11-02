@@ -39,6 +39,27 @@ private func front() -> String { NSWorkspace.shared.frontmostApplication?.locali
         model.closePicker()
         var failed = 0
 
+        // What the agents keep on this Mac: how much, how fast, and whether it lines up with the dock.
+        for pass in ["first", "cached"] {
+            let began = Date(); var records = QuickInputLocalRecords(), done = false
+            Task { records = await QuickInputSessionIndex.shared.read(); done = true }
+            while !done { spin(0.01) }
+            let counts = Dictionary(grouping: records.sessions, by: \.source).map { "\($0.key.rawValue) \($0.value.count)" }.sorted()
+            print("records \(pass) read: \(Int(Date().timeIntervalSince(began) * 1000))ms | \(counts) | workspaces \(records.workspaces.count) | newest \(records.sessions.prefix(2).map { String($0.title.prefix(16)) })")
+        }
+        model.prepareForSummon(); spin(1.5)
+        let dockIDs = Set(model.dockSessions.map(\.id))
+        print("known \(model.knownSessions.count), dock \(dockIDs.count), one per id: \(Set(model.knownSessions.map(\.dockIdentity)).count == model.knownSessions.count)")
+        let lookalikes = model.knownSessions.filter { $0.historical && $0.source == .hermes && model.dockSessions.contains { $0.source == .hermes && $0.title == ($0.title) && !dockIDs.contains($0.id) } }
+        print("hermes ids in dock:", model.dockSessions.filter { $0.source == .hermes }.prefix(2).map { String($0.id.prefix(14)) }, "lookalikes", lookalikes.count)
+        let live = QuickInputLiveness.current()
+        print("held outside the shared service:", live.count)
+        for client in [QuickInputClient.codexCLI, .claudeApp, .hermes, .dsh] {
+            let shown = QuickInputCatalog.sessions(in: .all, of: model.knownSessions, query: "", client: client)
+            print("\(client.title): browse \(shown.count), first \(shown.prefix(2).map { String($0.title.prefix(14)) }), wrong family \(shown.filter { $0.source != client.source }.count)")
+        }
+        print("search 登录:", QuickInputCatalog.sessions(in: .all, of: model.knownSessions, query: "登录", client: nil).count, "| workspaces", QuickInputCatalog.workspaces(projects: model.projects, sessions: model.knownSessions, query: "waw").prefix(3).map(\.name))
+
         func waitForReceipt(_ label: String, started: Date, before: String) {
             var seen = Set<String>()
             while Date().timeIntervalSince(started) < 80 {
@@ -78,7 +99,7 @@ private func front() -> String { NSWorkspace.shared.frontmostApplication?.locali
             // The newest ended Codex CLI session takes a second message by being resumed.
             state.refreshAgentData(); spin(3)
             model.prepareForSummon(); spin(1.5)
-            let candidates = model.dockSessions.filter { QuickInputCatalog.client(of: $0) == .codexCLI && ($0.title.contains("WAW") || $0.title.contains("回复 ok")) }
+            let candidates = model.knownSessions.filter { QuickInputCatalog.client(of: $0) == .codexCLI && ($0.title.contains("WAW") || $0.title.contains("回复 ok")) }
             print("resume candidates:", candidates.map { String($0.title.prefix(14)) })
             var resumed = false
             for session in candidates where !resumed {
