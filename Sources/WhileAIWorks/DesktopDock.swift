@@ -1232,6 +1232,11 @@ final class DesktopDockController: NSObject {
             self.state.agentInteractionInputID = nil
             self.interactionWindow.show(id, appearance: self.state.desktopCompanionAppearance.native, beside: self.detailPanel.frame)
         }
+        state.showDockCard = { [weak self] source in
+            guard let self, self.state.desktopPetPresentation == .dock, self.panel.isVisible,
+                  !(self.state.desktopPetShowsStatus && self.state.desktopDockSource == source) else { return }
+            self.select(source)
+        }
         state.focusAgentComposer = { [weak self] in
             guard let self else { return }
             self.pinned = true; self.detailPanel.allowsKeyboard = true
@@ -1980,13 +1985,12 @@ private struct AgentDockSessionView: View, Equatable {
                             .accessibilityLabel("展开待处理请求").accessibilityIdentifier("agent-interaction-expand")
                     }
                 }
-                if session.navigationURL != nil || session.resumeCommand != nil {
-                    Button { state.openAgentSession(session) } label: {
-                        Image(systemName: session.navigationURL != nil ? "arrow.up.forward" : "doc.on.doc")
-                            .font(.system(size: 10)).frame(width: 24, height: 24)
+                if session.canOpen {
+                    Button { state.goToAgentSession(session) } label: {
+                        Image(systemName: "arrow.up.forward").font(.system(size: 10)).frame(width: 24, height: 24)
                     }.buttonStyle(.plain).foregroundStyle(.secondary)
-                        .help(session.navigationURL != nil ? "回到原会话" : "复制恢复命令，在原终端继续")
-                        .accessibilityLabel((session.navigationURL != nil ? "回到原会话：" : "复制恢复命令：") + session.title)
+                        .help("回到原会话")
+                        .accessibilityLabel("回到原会话：" + session.title)
                 }
             }
             if let selected {

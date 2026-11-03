@@ -208,6 +208,12 @@ final class AppState: ObservableObject {
     var showAgentReplyPreview: (AgentDockSession, NSView) -> Void = { _, _ in }
     var hideAgentReplyPreview: () -> Void = {}
     var openAgentSession: (AgentDockSession) -> Void = { _ in }
+    /// The whole way back to a session, where quick input is around to provide it.
+    var sessionRoute: ((AgentDockSession) -> Void)?
+    func goToAgentSession(_ session: AgentDockSession) {
+        if let sessionRoute { sessionRoute(session) } else { openAgentSession(session) }
+    }
+    var showDockCard: (WorkSource) -> Void = { _ in }
     var sendAgentMessage: (AgentDockSession, String) async -> AgentMessageOutcome = { _, _ in .unavailable }
     var focusAgentComposer: () -> Void = {}
     @Published var workSourceDetails: [WorkSource: String] = [:]
@@ -288,13 +294,33 @@ final class AppState: ObservableObject {
     /// When each client's card was last looked at. Only timestamps are stored, so
     /// a completion stamped once is not stamped again after relaunch.
     @Published private(set) var completionSeenAt: [WorkSource: Date] = [:]
-    /// The newest completion a client explicitly reported and the user has not yet
-    /// looked at. A new run clears it; pauses or silence never count as completion.
+    /// When each session was last gone to through WAW or taken off the way back, by `dockIdentity`.
+    /// A look at a card settles the paw; only this settles the session.
+    @Published private(set) var sessionVisitedAt: [String: Date] = [:]
+    /// The newest completion a client explicitly reported and the user has not yet looked at
+    /// or gone to. Another session of the client still running changes nothing; a new run of
+    /// this one clears it. Pauses or silence never count as completion.
     func unseenCompletion(for source: WorkSource, now: Date = Date()) -> Date? {
-        guard selectedSources.contains(source), agentRunningCount(for: source) == 0,
-              let latest = agentDashboard.sessions.filter({ $0.source == source && $0.event == .finished }).compactMap(\.eventAt).max(),
+        guard selectedSources.contains(source),
+              let latest = agentDashboard.sessions.filter({ session in
+                  guard session.source == source, session.event == .finished, let done = session.eventAt else { return false }
+                  return sessionVisitedAt[session.dockIdentity].map { $0 < done } ?? true
+              }).compactMap(\.eventAt).max(),
               latest > now.addingTimeInterval(-24 * 3600), latest > completionSeenAt[source] ?? .distantPast else { return nil }
         return latest
+    }
+    func isWaitingOnUser(_ session: AgentDockSession) -> Bool {
+        session.event == .input || session.event == .approval
+            || agentInteractions.contains { $0.source == session.source && $0.request.sessionID == session.id }
+    }
+    /// Going to a session that is waiting settles nothing: it leaves when its request is dealt with.
+    func markSessionVisited(_ session: AgentDockSession, at time: Date = Date()) {
+        if !isWaitingOnUser(session) { dismissSessionReturn(session, at: time) }
+    }
+    func dismissSessionReturn(_ session: AgentDockSession, at time: Date = Date()) {
+        sessionVisitedAt = sessionVisitedAt.filter { time.timeIntervalSince($0.value) < 24 * 3600 }
+        sessionVisitedAt[session.dockIdentity] = time
+        defaults.set(sessionVisitedAt.mapValues(\.timeIntervalSince1970), forKey: "quickInput.sessionVisited")
     }
     var latestUnseenCompletion: Date? { WorkSource.allCases.compactMap { unseenCompletion(for: $0) }.max() }
     func markCompletionSeen(_ sources: [WorkSource], at time: Date = Date()) {
@@ -510,6 +536,7 @@ final class AppState: ObservableObject {
             defaults.set(Dictionary(uniqueKeysWithValues: WorkSource.allCases.map { ($0.rawValue, now.timeIntervalSince1970) }),
                          forKey: "mascot.dock.completionSeen")
         }
+        sessionVisitedAt = (defaults.dictionary(forKey: "quickInput.sessionVisited") as? [String: Double] ?? [:]).mapValues(Date.init(timeIntervalSince1970:))
         volume = min(1, max(0, defaults.object(forKey: "volume") as? Double ?? 0.55))
         PlayAudio.shared.masterVolume = Float(volume)
         refreshScreens()
@@ -787,6 +814,11 @@ struct AgentDockSession: Equatable, Identifiable, Sendable {
     /// Read from the client's records rather than followed live; no process is known to own it.
     var historical = false
     var dockIdentity: String { source.rawValue + ":" + id }
+    /// There is a way back to it: it records a route, it is alive somewhere, or it can be resumed.
+    var canOpen: Bool {
+        navigationURL != nil || localSessionLock != nil || localBridgeRoot != nil
+            || running || event == .approval || event == .input || resumeCommand != nil
+    }
     var canSend: Bool { !historical && source == .codex && navigationURL?.scheme == "codex" && navigationURL?.lastPathComponent == id }
 }
 enum AgentMessageOutcome: Equatable {

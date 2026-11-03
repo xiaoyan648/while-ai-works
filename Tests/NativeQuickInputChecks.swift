@@ -50,7 +50,10 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         localSessions()
         otherClients()
         dshOnlyOpens()
+        returnList()
+        returnRoutes()
         try keyboard()
+        returnKeyboard()
         dockHandover()
         if let index = arguments.firstIndex(of: "--snapshot"), index + 1 < arguments.count { snapshots(URL(fileURLWithPath: arguments[index + 1], isDirectory: true)) }
         print("Quick input checks passed")
@@ -765,6 +768,294 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         check(model.notice?.contains("不在列表") == true && model.draft == "还在" && model.target == nil)
     }
 
+    private static func finished(_ id: String, source: WorkSource = .codex, title: String, cwd: String? = "/repo/cineflow", at: Date = Date(), kind: Kind = .codexApp) -> AgentDockSession {
+        var done = session(id, source: source, title: title, cwd: cwd, event: .finished, kind: kind)
+        done.eventAt = at
+        return done
+    }
+
+    /// What the list holds, how it leaves, and that it stays out of the way of writing.
+    static func returnList() {
+        let state = makeState()
+        let now = Date()
+        let question = session("00000000-0000-4000-8000-000000000041", title: "清理迁移脚本", event: .input)
+        let approval = session("00000000-0000-4000-8000-000000000042", source: .claude, title: "分镜批量重做", cwd: "/repo/waw", event: .approval, kind: .claudeApp)
+        let recent = finished("00000000-0000-4000-8000-000000000043", title: "修复充值边界", at: now.addingTimeInterval(-120))
+        let older = finished("00000000-0000-4000-8000-000000000044", source: .hermes, title: "整理发版说明", at: now.addingTimeInterval(-7200), kind: .cli)
+        let stale = finished("00000000-0000-4000-8000-000000000045", title: "昨天的事", at: now.addingTimeInterval(-25 * 3600))
+        var child = finished("00000000-0000-4000-8000-000000000046", title: "子任务", at: now)
+        child.parentSessionID = recent.id
+        let unreachable = finished("00000000-0000-4000-8000-000000000047", title: "没有去路", at: now, kind: .noRoute)
+        let running = session("00000000-0000-4000-8000-000000000048", title: "还在跑", running: true, event: .working)
+        var data = AgentDockData()
+        data.sessions = [older, recent, stale, child, unreachable, running, approval, question]
+        state.agentDashboard = data
+
+        let model = QuickInputModel(state: state, environment: environment())
+        model.prepareForSummon(); spin(0.05)
+        check(model.returnListVisible && model.returnRows.map(\.kind) == [.waiting, .waiting, .finished, .finished], "waiting above finished: \(model.returnRows.map(\.session.title))")
+        check(model.returnRows.prefix(2).map(\.label).compactMap { $0 }.sorted() == ["待回答", "待审批"])
+        check(model.returnRows.suffix(2).map(\.session.title) == ["修复充值边界", "整理发版说明"], "newest finished first, and nothing stale, nested, unreachable or running")
+        check(model.returnRows[2].age(now: now) == "2 分钟前" && model.returnRows[3].age(now: now) == "2 小时前")
+        check(model.returnRows[0].age(now: model.returnRows[0].at.addingTimeInterval(240)) == "4 分钟", "waiting says how long, not how long ago")
+        check(QuickInputCatalog.status(recent).text == "刚完成" && QuickInputCatalog.status(stale).text == "空闲", "the # list says it the same way")
+
+        // Enter reads the row, not the sentence.
+        check(model.selectedReturn?.kind == .waiting && model.primaryVerb == "去处理" && model.secondaryVerb == nil)
+        model.moveReturn(5)
+        check(model.selectedReturn?.session.id == older.id && model.primaryVerb == "回到会话", "it stops at the end")
+        model.moveReturn(-1)
+        check(model.selectedReturn?.session.id == recent.id)
+
+        // Writing takes over, and nothing about it changed.
+        model.textChanged("开", cursor: 1)
+        check(!model.returnListVisible && model.primaryVerb != "回到会话", "the first character closes the list")
+        model.textChanged("", cursor: 0)
+        check(model.returnListVisible && model.selectedReturn?.session.id == recent.id, "and it is back, where it was")
+        model.textChanged("#", cursor: 1)
+        check(model.pickerKind == .place && !model.returnListVisible, "# works as ever")
+        model.textChanged("", cursor: 0)
+
+        // Removing moves on to the next row, and a new completion brings the session back.
+        model.removeSelectedReturn()
+        check(!model.returnRows.contains { $0.session.id == recent.id } && model.selectedReturn?.session.id == older.id, "⌘⌫ moves on")
+        var again = data
+        again.sessions = again.sessions.map { $0.id == recent.id ? finished(recent.id, title: recent.title, at: Date().addingTimeInterval(1)) : $0 }
+        state.agentDashboard = again
+        check(model.returnRows.contains { $0.session.id == recent.id }, "finishing again is news again")
+        state.agentDashboard = data
+
+        // A waiting row can be removed too, until it asks something new.
+        let waitingTitle = model.returnRows[0].session.title
+        model.moveReturn(-5); model.removeSelectedReturn()
+        check(!model.returnRows.contains { $0.session.title == waitingTitle }, "removing a waiting row holds")
+
+        // Tab writes to it: the sentence names the session, and writing to a waiting one only carries it there.
+        let writing = QuickInputModel(state: state, environment: environment())
+        writing.prepareForSummon(); spin(0.05)
+        let chosen = writing.selectedReturn!.session
+        writing.continueWithSelectedReturn()
+        check(writing.targetSession?.id == chosen.id && !writing.returnListVisible, "Tab chooses it")
+        writing.textChanged("补一句", cursor: 3)
+        check(writing.primaryVerb == "带过去" && !writing.canSendNow, "a waiting session is not talked over")
+        writing.textChanged("", cursor: 0)
+        writing.prepareForSummon()
+        check(writing.target == nil || { if case .session = writing.target { return false } else { return true } }(), "nothing written, so the list comes back on the next summon")
+
+        // Capacity, and relaunch keeps what was visited.
+        let capped = makeState()
+        var many = AgentDockData()
+        many.sessions = (0..<5).map { session(String(format: "00000000-0000-4000-8000-0000000001%02d", $0), title: "等 \($0)", event: .approval) }
+            + (0..<6).map { finished(String(format: "00000000-0000-4000-8000-0000000002%02d", $0), title: "完成 \($0)", at: now.addingTimeInterval(-Double($0) * 60)) }
+        capped.agentDashboard = many
+        let full = QuickInputModel(state: capped, environment: environment())
+        full.prepareForSummon(); spin(0.05)
+        check(full.returnRows.filter { $0.kind == .waiting }.count == 3 && full.returnRows.count == 6 && full.returnMore == 5, "3 waiting, 6 in all, the rest counted")
+        let suite = "WhileAIWorks.QuickInputChecks." + UUID().uuidString, defaults = UserDefaults(suiteName: suite)!
+        let first = AppState(defaults: defaults)
+        first.dismissSessionReturn(recent)
+        check(AppState(defaults: defaults).sessionVisitedAt[recent.dockIdentity] != nil, "visits survive relaunch")
+
+        // The paw: another session running no longer hides it, a look settles it but not the list, going settles the session.
+        // A first run counts everything earlier as seen, so these finish after it.
+        let paws = makeState()
+        let soon = Date().addingTimeInterval(5)
+        let done = finished("00000000-0000-4000-8000-000000000050", title: "刚刚完成", at: soon)
+        var both = AgentDockData()
+        both.sessions = [done, running]
+        paws.agentDashboard = both
+        paws.activeSessionCounts[.codex] = 1
+        check(paws.unseenCompletion(for: .codex) == soon, "a completion shows while another session of the client runs")
+        paws.markCompletionSeen([.codex], at: soon.addingTimeInterval(1))
+        check(paws.unseenCompletion(for: .codex, now: soon.addingTimeInterval(2)) == nil, "a look at the card settles the paw")
+        let pawModel = QuickInputModel(state: paws, environment: environment())
+        pawModel.prepareForSummon(); spin(0.05)
+        check(pawModel.returnRows.map(\.session.id) == [done.id], "but the list still has it")
+        let paws2 = makeState()
+        let other = finished("00000000-0000-4000-8000-000000000049", title: "另一个", at: soon.addingTimeInterval(-1))
+        var two = AgentDockData(); two.sessions = [done, other]
+        paws2.agentDashboard = two
+        paws2.markSessionVisited(done, at: soon.addingTimeInterval(1))
+        check(paws2.unseenCompletion(for: .codex) == other.eventAt, "going to one leaves the other's paw")
+        paws2.markSessionVisited(other, at: soon.addingTimeInterval(1))
+        check(paws2.unseenCompletion(for: .codex) == nil, "going to both clears it")
+        let request = makeState()
+        request.agentDashboard = data
+        request.markSessionVisited(question)
+        check(request.sessionVisitedAt.isEmpty, "going to a waiting session settles nothing; dealing with it does")
+    }
+
+    /// Back with the session's own client, whatever is chosen for writing, and never over a live process.
+    static func returnRoutes() {
+        let state = makeState()
+        let now = Date()
+        let desktop = finished("00000000-0000-4000-8000-000000000051", title: "桌面线程", at: now)
+        let ended = finished("00000000-0000-4000-8000-000000000052", title: "结束的 CLI", cwd: "/repo/waw", at: now.addingTimeInterval(-60), kind: .cli)
+        let held = finished("00000000-0000-4000-8000-000000000053", title: "还开着的 CLI", cwd: "/repo/waw", at: now.addingTimeInterval(-120), kind: .cli)
+        var data = AgentDockData(); data.sessions = [desktop, ended, held]
+        state.agentDashboard = data
+        var opened: [AgentDockSession] = [], ran: [QuickInputRun.Request] = [], brought: [pid_t] = [], copied: [String] = []
+        state.openAgentSession = { opened.append($0) }
+        var base = environment(copied: { copied.append($0) }, ran: { ran.append($0) })
+        base.liveSessions = { [held.id: 77] }
+        base.bringOwnerForward = { brought.append($0); return true }
+        let model = QuickInputModel(state: state, environment: base)
+        var dismissed = 0
+        model.onDismiss = { dismissed += 1 }
+        model.prepareForSummon(); spin(0.05)
+        model.togglePicker(.agent)
+        model.pick(model.rows.first { $0.client == .claudeCode }!)
+        model.closePicker()
+        check(model.targetClient == .claudeCode && model.returnListVisible, "writing is set up for another Agent")
+
+        check(model.selectedReturn?.session.id == desktop.id)
+        model.submit()
+        check(dismissed == 1, "the panel leaves at once")
+        eventually({ opened.map(\.id) == [desktop.id] }, "its own route")
+        eventually({ state.sessionVisitedAt[desktop.dockIdentity] != nil }, "gone to")
+        check(!model.returnRows.contains { $0.session.id == desktop.id }, "and off the list")
+
+        model.submit()
+        eventually({ ran.count == 1 }, "an ended session resumes")
+        check(ran[0].directory == "/repo/waw" && !ran[0].background, "in front, where it worked")
+        if case .resume(let client, let id) = ran[0].command { check(client == .codexCLI && id == ended.id, "with its own client, not the chosen one") } else { check(false, "resume") }
+
+        model.submit()
+        eventually({ brought == [77] }, "one a process holds is brought forward")
+        check(ran.count == 1, "and never resumed a second time")
+        check(copied.isEmpty && model.receipt == nil && model.returnRows.isEmpty)
+        check(model.targetClient == .claudeCode, "and nothing about what was being written changed")
+
+        // From the dock: same route, and a draft being written stays.
+        let dock = makeState()
+        var dockData = AgentDockData()
+        let cli = finished("00000000-0000-4000-8000-000000000054", title: "猫条里的 CLI", cwd: "/repo/waw", at: now, kind: .cli)
+        dockData.sessions = [cli]
+        dock.agentDashboard = dockData
+        var dockRuns: [QuickInputRun.Request] = [], dockCopied: [String] = []
+        var dockOpened = 0
+        dock.openAgentSession = { _ in dockOpened += 1 }
+        let dockModel = QuickInputModel(state: dock, environment: environment(copied: { dockCopied.append($0) }, ran: { dockRuns.append($0) }))
+        dockModel.prepareForSummon(); spin(0.05)
+        dockModel.textChanged("没写完", cursor: 3)
+        dock.goToAgentSession(cli)
+        eventually({ dockRuns.count == 1 }, "the dock no longer only copies a command")
+        check(dockCopied.isEmpty && dockOpened == 0 && dockModel.draft == "没写完", "the draft stays")
+        eventually({ dock.sessionVisitedAt[cli.dockIdentity] != nil }, "gone to from the dock counts")
+
+        // Waiting, and nowhere to go: the card can answer it, and the row stays.
+        let lost = makeState()
+        var lostData = AgentDockData()
+        let stuck = session("00000000-0000-4000-8000-000000000055", source: .claude, title: "无处可去", running: true, event: .approval, kind: .noRoute)
+        lostData.sessions = [stuck]
+        lost.agentDashboard = lostData
+        var cards: [WorkSource] = []
+        lost.showDockCard = { cards.append($0) }
+        let lostModel = QuickInputModel(state: lost, environment: environment())
+        lostModel.prepareForSummon(); spin(0.05)
+        check(lostModel.selectedReturn?.session.id == stuck.id && lostModel.primaryVerb == "去处理")
+        lostModel.submit()
+        eventually({ cards == [.claude] }, "the dock's card opens")
+        check(lostModel.receipt?.title == "回到它所在的窗口" && lostModel.receipt?.body.contains("猫条卡片") == true)
+        check(lostModel.returnRows.map(\.session.id) == [stuck.id], "a waiting row leaves when it is dealt with, not when visited")
+        // Dealt with: the request is gone, so is the row.
+        lostData.sessions = [session(stuck.id, source: .claude, title: stuck.title, running: true, event: .working, kind: .noRoute)]
+        lost.agentDashboard = lostData
+        check(lostModel.returnRows.isEmpty && !lostModel.returnListVisible)
+    }
+
+    /// The list with real keys in the real panel, and the size it opens at.
+    static func returnKeyboard() {
+        let state = makeState()
+        let now = Date()
+        let waiting = session("00000000-0000-4000-8000-000000000061", title: "等你", event: .approval)
+        let one = finished("00000000-0000-4000-8000-000000000062", title: "第一个", at: now)
+        let two = finished("00000000-0000-4000-8000-000000000063", title: "第二个", at: now.addingTimeInterval(-60))
+        var data = AgentDockData(); data.sessions = [waiting, one, two]
+        state.agentDashboard = data
+        var opened: [AgentDockSession] = []
+        state.openAgentSession = { opened.append($0) }
+        let controller = QuickInputController(state: state, environment: environment(), tileCenter: { _ in nil }, dockFrame: { nil })
+        let model = controller.model, panel = controller.panel
+        controller.show()
+        check(abs(panel.frame.height - QuickInputView.height(showing: model.returnRows, more: 0)) < 1, "it opens at its final size: \(panel.frame.height)")
+        spin(0.4)
+        check(abs(panel.frame.height - QuickInputView.height(showing: model.returnRows, more: 0)) < 1, "and stays there, so nothing jumps: \(panel.frame.height) for \(QuickInputView.height(showing: model.returnRows, more: 0))")
+        let opening = panel.frame
+        guard let text = textView(in: panel.contentView) else { check(false, "the editor exists"); return }
+        panel.makeKey(); panel.makeFirstResponder(text); spin(0.1)
+
+        check(model.selectedReturn?.session.id == waiting.id, "the first row is ready")
+        key(125, "", to: panel)
+        check(model.selectedReturn?.session.id == one.id, "down")
+        key(126, "", to: panel); key(125, "", to: panel)
+        key(51, "\u{7f}", [.command], to: panel)
+        check(!model.returnRows.contains { $0.session.id == one.id } && model.selectedReturn?.session.id == two.id, "⌘⌫ removes and moves on")
+        key(51, "\u{7f}", to: panel)
+        check(model.returnRows.contains { $0.session.id == two.id }, "plain delete does nothing to the list")
+        spin(0.3)
+        check(abs(panel.frame.maxY - opening.maxY) < 1 && panel.frame.height < opening.height, "the panel closes up from below")
+
+        // Writing closes it, deleting brings it back, and the top edge never moves.
+        text.insertText("写", replacementRange: text.selectedRange()); spin(0.35)
+        check(!model.returnListVisible && panel.frame.height < 150 && abs(panel.frame.maxY - opening.maxY) < 1, "writing closes the list: \(panel.frame.height)")
+        let plain = panel.frame.height
+        text.string = ""; model.textChanged("", cursor: 0); spin(0.35)
+        check(model.returnListVisible && panel.frame.height > plain)
+
+        // Tab chooses, delete lets go.
+        key(48, "\t", to: panel)
+        check(model.targetSession?.id == two.id && model.pickerKind == nil && !model.returnListVisible, "Tab writes to it and opens no list")
+        key(51, "\u{7f}", to: panel)
+        check(model.targetSession == nil && model.returnListVisible, "delete with nothing written lets go of it")
+
+        // Marked text goes to the input method first. It never reaches the draft, but it is already writing.
+        let listed = panel.frame.height
+        text.setMarkedText("jian", selectedRange: NSRange(location: 4, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
+        check(model.draft.isEmpty && model.composing && !model.returnListVisible, "composing closes the list")
+        spin(0.35)
+        check(panel.frame.height < listed && abs(panel.frame.maxY - opening.maxY) < 1, "and the panel closes up: \(panel.frame.height)")
+        key(36, "\r", to: panel)
+        check(opened.isEmpty && controller.isShown, "Return while composing never goes anywhere")
+        // With no input method here to take it, the Return went into the text. Start over.
+        text.unmarkText(); text.string = ""; model.textChanged("", cursor: 0)
+        check(!model.composing && model.returnListVisible)
+        text.setMarkedText("jian", selectedRange: NSRange(location: 4, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
+        check(model.composing)
+        text.setMarkedText("", selectedRange: NSRange(location: 0, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
+        check(!model.composing && model.returnListVisible, "cancelling the candidate brings the list back")
+        text.setMarkedText("jian", selectedRange: NSRange(location: 4, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
+        text.insertText("见", replacementRange: text.markedRange())
+        check(!model.composing && model.draft == "见" && !model.returnListVisible, "committing it writes it")
+        text.string = ""; model.textChanged("", cursor: 0)
+
+        // Esc closes in one press; the next summon starts on the first row at the right size.
+        key(125, "", to: panel)
+        key(53, "\u{1b}", to: panel); spin(0.3)
+        check(!controller.isShown, "Esc closes at once: the list was not asked for")
+        controller.show()
+        check(model.selectedReturn?.session.id == waiting.id, "back on the first row")
+        spin(0.3); panel.makeKey(); panel.makeFirstResponder(text); spin(0.05)
+        key(125, "", to: panel)
+        key(36, "\r", to: panel)
+        spin(0.3)
+        check(!controller.isShown, "Return leaves")
+        eventually({ opened.map(\.id) == [two.id] }, "and goes to the highlighted row")
+        withExtendedLifetime(controller) {}
+
+        // With nothing to come back to the panel is what it always was.
+        let empty = makeState()
+        let plainController = QuickInputController(state: empty, environment: environment(), tileCenter: { _ in nil }, dockFrame: { nil })
+        plainController.show(); spin(0.4)
+        check(!plainController.model.returnListVisible && plainController.panel.frame.height < 150, "unchanged: \(plainController.panel.frame.height)")
+        let settled = plainController.panel.frame.height
+        plainController.dismiss(); spin(0.3)
+        plainController.show()
+        check(abs(plainController.panel.frame.height - settled) < 1, "and it reopens at that size: \(plainController.panel.frame.height) for \(settled)")
+        plainController.dismiss(); spin(0.2)
+        withExtendedLifetime(plainController) {}
+    }
+
     private static func key(_ code: Int, _ characters: String, _ flags: NSEvent.ModifierFlags = [], to window: NSWindow) {
         guard let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags, timestamp: 0, windowNumber: window.windowNumber,
                                            context: nil, characters: characters, charactersIgnoringModifiers: characters, isARepeat: false, keyCode: UInt16(code)) else { return }
@@ -915,9 +1206,11 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         controller.model.pick(session: running)
         textView(in: controller.panel.contentView)?.insertText("补充", replacementRange: NSRange(location: 0, length: 0))
         let landings = state.quickInputPulse.landings
+        // The panel opens on the pointer's screen. With the dock on another one the note simply arrives.
+        let flies = NSScreen.screens.contains { $0.frame.contains(CGPoint(x: controller.panel.frame.midX, y: controller.panel.frame.midY)) && $0.frame.contains(center) }
         controller.model.submit()
         spin(0.2)
-        check(state.quickInputPulse.landings == landings, "the tile reacts when the note arrives, not when it leaves")
+        check(!flies || state.quickInputPulse.landings == landings, "the tile reacts when the note arrives, not when it leaves")
         eventually({ state.quickInputPulse.landings == landings + 1 }, "the flight finishes")
         eventually({ controller.model.receipt?.title == "已插入当前这一步" }, "the receipt reports the result")
         spin(0.4)
@@ -929,6 +1222,19 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         controller.model.dismissReceipt(); spin(0.3)
         withExtendedLifetime(controller) {}
         withExtendedLifetime(dockController) {}
+    }
+
+    /// Asks the views to draw, which needs no Screen Recording, so it has no glass; the layout is what it shows.
+    private static func drawn(_ window: NSWindow, dark: Bool, to url: URL) {
+        guard let view = window.contentView, let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
+        view.cacheDisplay(in: view.bounds, to: rep)
+        let image = NSImage(size: view.bounds.size)
+        image.lockFocus()
+        (dark ? NSColor(white: 0.14, alpha: 1) : NSColor(white: 0.93, alpha: 1)).setFill()
+        view.bounds.fill()
+        rep.draw(in: view.bounds, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+        image.unlockFocus()
+        if let tiff = image.tiffRepresentation { try? NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:])?.write(to: url) }
     }
 
     /// Windows are captured over a bright backdrop window so the layout has something to sit on.
@@ -945,7 +1251,9 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
             data.sessions = [running, session("00000000-0000-4000-8000-000000000005", title: "充值有效期排查"),
                              session("00000000-0000-4000-8000-000000000006", source: .claude, title: "分镜批量重做", kind: .claudeApp),
                              session("00000000-0000-4000-8000-000000000002", title: "订阅校验重试", cwd: "/repo/while-ai-works", kind: .cli),
-                             session("00000000-0000-4000-8000-000000000003", source: .claude, title: "修复会话跳转入口", cwd: "/repo/while-ai-works", event: .approval, kind: .cli)]
+                             session("00000000-0000-4000-8000-000000000003", source: .claude, title: "修复会话跳转入口", cwd: "/repo/while-ai-works", event: .approval, kind: .cli),
+                             finished("00000000-0000-4000-8000-000000000007", title: "快捷输入玻璃材质", cwd: "/repo/while-ai-works", at: Date().addingTimeInterval(-120)),
+                             finished("00000000-0000-4000-8000-000000000008", source: .hermes, title: "整理发版说明", cwd: "/repo/while-ai-works", at: Date().addingTimeInterval(-660), kind: .cli)]
             state.agentDashboard = data
             let controller = QuickInputController(state: state, environment: environment(), tileCenter: { _ in nil }, dockFrame: { nil })
             let name = dark ? "dark" : "light"
@@ -962,6 +1270,13 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
             controller.show(); spin(0.4)
             let model = controller.model
             let editor = textView(in: controller.panel.contentView)
+            capture("return", controller.panel)
+            drawn(controller.panel, dark: dark, to: directory.appendingPathComponent("quick-input-\(name)-return-drawn.png"))
+            editor?.setMarkedText("shi'de", selectedRange: NSRange(location: 6, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
+            spin(0.4)
+            drawn(controller.panel, dark: dark, to: directory.appendingPathComponent("quick-input-\(name)-composing-drawn.png"))
+            editor?.setMarkedText("", selectedRange: NSRange(location: 0, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
+            editor?.unmarkText()
             editor?.insertText("检查一下充值有效期的处理，重点看边界情况", replacementRange: editor?.selectedRange() ?? NSRange())
             capture("first", controller.panel)
             model.togglePicker(.agent)

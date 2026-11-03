@@ -364,11 +364,7 @@ enum QuickInputCatalog {
         default: return nil
         }
     }
-    /// A session Enter can take you to: it records a route, it is alive somewhere, or it can be resumed.
-    static func canOpen(_ session: AgentDockSession) -> Bool {
-        session.navigationURL != nil || session.localSessionLock != nil || session.localBridgeRoot != nil
-            || session.running || isWaiting(session) || session.resumeCommand != nil
-    }
+    static func canOpen(_ session: AgentDockSession) -> Bool { session.canOpen }
     /// A session a message can go straight into: a running or idle Codex desktop thread, or any ended
     /// session a command line opens, which resumes it with the message. A session waiting on the user
     /// takes nothing, and one a process still holds is not resumed, even while idle: two would share it.
@@ -447,10 +443,60 @@ enum QuickInputCatalog {
         return counts
     }
     /// The state of the session, which is all a row needs to say. What the keys do is on the keys.
-    static func status(_ session: AgentDockSession) -> (text: String, tone: QuickInputRow.Tone) {
+    static func status(_ session: AgentDockSession, now: Date = Date()) -> (text: String, tone: QuickInputRow.Tone) {
         if isWaiting(session) { return ("等你处理", .attention) }
         if session.running { return ("运行中", .working) }
+        if session.event == .finished, let done = session.eventAt, now.timeIntervalSince(done) <= returnWindow { return ("刚完成", .plain) }
         return ("空闲", .plain)
+    }
+
+    // MARK: The way back
+
+    /// The same 24 hours the dock counts a finished session as news.
+    static let returnWindow: TimeInterval = 24 * 3600
+    static let returnWaitingLimit = 3, returnLimit = 6
+    /// What is waiting on the person, then what finished and they have not been back to, each in the dock's order.
+    static func returning(_ rows: [AgentDockSessionRow], visited: [String: Date], now: Date = Date()) -> [QuickInputReturnRow] {
+        var waiting: [QuickInputReturnRow] = [], finished: [QuickInputReturnRow] = []
+        for row in rows {
+            var session = row.session
+            session.event = row.event
+            let visit = visited[row.id]
+            switch row.event {
+            case .input, .approval:
+                if let visit, visit >= row.requests.first?.request.at ?? session.eventAt ?? .distantPast { continue }
+                waiting.append(.init(session: session, kind: .waiting, label: row.event == .input ? "待回答" : "待审批", at: row.eventAt))
+            case .finished:
+                guard session.parentSessionID == nil, canOpen(session), let done = session.eventAt,
+                      now.timeIntervalSince(done) <= returnWindow, visit.map({ $0 < done }) ?? true else { continue }
+                finished.append(.init(session: session, kind: .finished, label: nil, at: done))
+            case .working, .recent: continue
+            }
+        }
+        return waiting + finished
+    }
+    /// Waiting never crowds finished out entirely. The rest are under `#`.
+    static func fitted(_ rows: [QuickInputReturnRow]) -> [QuickInputReturnRow] {
+        let waiting = rows.filter { $0.kind == .waiting }.prefix(returnWaitingLimit)
+        return Array(waiting) + rows.filter { $0.kind == .finished }.prefix(returnLimit - waiting.count)
+    }
+}
+
+struct QuickInputReturnRow: Identifiable, Equatable {
+    enum Kind { case waiting, finished }
+    let session: AgentDockSession
+    let kind: Kind
+    /// What it is waiting for. A finished row has its heading to say what it is.
+    let label: String?
+    let at: Date
+    var id: String { session.dockIdentity }
+    var workspace: String? { QuickInputCatalog.path(of: session).map { QuickInputProject(path: $0).name } ?? session.project }
+    /// How long it has been waiting, or how long ago it finished.
+    func age(now: Date = Date()) -> String {
+        let minutes = Int(now.timeIntervalSince(at) / 60)
+        if minutes < 1 { return "刚刚" }
+        let suffix = kind == .finished ? "前" : ""
+        return minutes < 60 ? "\(minutes) 分钟\(suffix)" : "\(minutes / 60) 小时\(suffix)"
     }
 }
 
@@ -517,6 +563,8 @@ final class QuickInputModel: ObservableObject {
     let state: AppState
     private var environment: QuickInputEnvironment
     @Published private(set) var draft = ""
+    /// An input method is holding text that has not reached `draft` yet.
+    @Published private(set) var composing = false
     @Published private(set) var draftRevision = 0
     @Published private(set) var target: QuickInputTarget?
     /// The Agent a chosen session opens with. The session says which conversation; this says with what.
@@ -537,6 +585,7 @@ final class QuickInputModel: ObservableObject {
     @Published private var live: [String: pid_t] = [:]
     @Published private var available: Set<QuickInputClient> = []
     @Published private var records = QuickInputLocalRecords()
+    @Published private var returnSelection: String?
     private var pickerToken: NSRange?
     /// The trigger was put there to make a list searchable, so it leaves with the list. Whether a
     /// space went in front of it, so that goes too.
@@ -562,6 +611,7 @@ final class QuickInputModel: ObservableObject {
         self.state = state; self.environment = environment
         memory = state.quickInputDefaults.data(forKey: "quickInput.memory").flatMap { try? JSONDecoder().decode(QuickInputMemory.self, from: $0) } ?? QuickInputMemory()
         state.$agentDashboard.sink { [weak self] data in self?.watchStart(data) }.store(in: &subscriptions)
+        state.sessionRoute = { [weak self] in self?.goBack(to: $0) }
     }
     func setDirectoryChooser(_ choose: @escaping () -> String?) { environment.chooseDirectory = choose }
 
@@ -668,6 +718,7 @@ final class QuickInputModel: ObservableObject {
     /// What Enter does, written on the button. Without a way to send it carries the text there;
     /// with nothing to hand over it simply opens.
     var primaryVerb: String {
+        if returnListVisible { return selectedReturn?.kind == .waiting ? "去处理" : "回到会话" }
         if pickerVisible { return pickerKind == .place && placePane == .workspaces && !offersNewSession(in: focusedWorkspace) ? "选会话" : "选中" }
         if targetSession == nil, targetClient == nil || project == nil || targetClient?.canStartNew == false { return "下一步" }
         if canSendNow { return "发送" }
@@ -676,6 +727,7 @@ final class QuickInputModel: ObservableObject {
     /// ⌘Enter follows the text there. It is only offered where it differs from Enter, or from a
     /// list, where Enter only chooses.
     var secondaryVerb: String? {
+        if returnListVisible { return nil }
         if pickerVisible {
             if pickerKind == .agent { return project != nil && !rows.isEmpty ? "打开" : nil }
             if selectedPlaceSession != nil { return "打开" }
@@ -695,10 +747,54 @@ final class QuickInputModel: ObservableObject {
         return nil
     }
 
+    // MARK: The way back. On show only while nothing is written, so it never stands in the way of writing.
+
+    private var allReturnRows: [QuickInputReturnRow] {
+        QuickInputCatalog.returning(state.sessionRows(for: selectedSources), visited: state.sessionVisitedAt)
+    }
+    var returnRows: [QuickInputReturnRow] { QuickInputCatalog.fitted(allReturnRows) }
+    var returnMore: Int { allReturnRows.count - returnRows.count }
+    var returnListVisible: Bool {
+        guard draft.isEmpty, !composing, !pickerVisible else { return false }
+        if case .session = target { return false }
+        return !allReturnRows.isEmpty
+    }
+    var selectedReturn: QuickInputReturnRow? {
+        let rows = returnRows
+        return rows.first { $0.id == returnSelection } ?? rows.first
+    }
+    func moveReturn(_ delta: Int) {
+        let rows = returnRows
+        guard let current = rows.firstIndex(where: { $0.id == selectedReturn?.id }) else { return }
+        returnSelection = rows[min(rows.count - 1, max(0, current + delta))].id
+    }
+    func focusReturn(_ row: QuickInputReturnRow) { returnSelection = row.id }
+    func openReturn(_ row: QuickInputReturnRow) {
+        onDismiss()
+        goBack(to: row.session)
+    }
+    /// To keep writing to it. What can be sent to it then follows the rules for any chosen session.
+    func continueWithSelectedReturn() {
+        guard let session = selectedReturn?.session else { return }
+        target = .session(session.dockIdentity); opener = nil; warning = nil
+        if let path = QuickInputCatalog.path(of: session) { project = QuickInputProject(path: path) }
+    }
+    func removeSelectedReturn() {
+        let rows = returnRows
+        guard let current = rows.firstIndex(where: { $0.id == selectedReturn?.id }) else { return }
+        returnSelection = rows.indices.contains(current + 1) ? rows[current + 1].id : current > 0 ? rows[current - 1].id : nil
+        state.dismissSessionReturn(rows[current].session)
+    }
+
     // MARK: Editing
 
     func prepareForSummon() {
-        notice = nil; closePicker()
+        notice = nil; closePicker(); returnSelection = nil
+        // A session chosen with nothing written says nothing worth keeping, and would hide the way back.
+        if case .session = target, draft.isEmpty, warning == nil {
+            target = nil; opener = nil
+            project = memory.lastProject.map(QuickInputProject.init(path:))
+        }
         available = Set(QuickInputClient.allCases.filter(environment.isAvailable))
         let readiness = environment.claudeCodeReadiness, liveSessions = environment.liveSessions, localRecords = environment.localRecords
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -718,6 +814,7 @@ final class QuickInputModel: ObservableObject {
     private func applyRemembered() {
         if let client = remembered(for: project) { target = .client(client) }
     }
+    func composingChanged(_ now: Bool) { if composing != now { composing = now } }
     func textChanged(_ text: String, cursor: Int) {
         draft = text; notice = nil
         syncToken(cursor: cursor)
@@ -838,6 +935,7 @@ final class QuickInputModel: ObservableObject {
     // MARK: Enter and ⌘Enter
 
     func submit(go: Bool = false) {
+        if returnListVisible, let row = selectedReturn { openReturn(row); return }
         if pickerVisible {
             // Entering a list of sessions with no new one on offer is the one step that chooses nothing.
             if pickerKind == .place, placePane == .workspaces, !offersNewSession(in: focusedWorkspace) { enterSessions(); return }
@@ -881,9 +979,9 @@ final class QuickInputModel: ObservableObject {
     /// only way in. Otherwise the order every session is tried in, so none is a dead end: its own route,
     /// the terminal its process runs in, or resuming it. Only a session running somewhere unknown has
     /// nowhere to go. Codex threads take the text directly; everywhere else it waits on the clipboard.
-    private func open(_ session: AgentDockSession, text: String) {
+    private func arrive(at session: AgentDockSession, with chosen: QuickInputClient?, text: String) -> (arrived: Bool, filled: Bool) {
         var arrived = false, filled = false
-        let own = QuickInputCatalog.client(of: session), chosen = targetClient ?? own
+        let own = QuickInputCatalog.client(of: session)
         let free = !session.running && !QuickInputCatalog.isWaiting(session) && live[session.id] == nil
         if free, chosen != own, let chosen, !chosen.runsInTerminal,
            let url = chosen.link(toTerminalSession: session.id, prompt: !text.isEmpty && text.count <= QuickInputClient.promptLimit ? text : nil), environment.open(url) {
@@ -900,6 +998,11 @@ final class QuickInputModel: ObservableObject {
         } else if !session.running, let directory = QuickInputCatalog.path(of: session), environment.directoryExists(directory) {
             arrived = resume(session, with: chosen, directory: directory)
         }
+        if arrived { state.markSessionVisited(session) }
+        return (arrived, filled)
+    }
+    private func open(_ session: AgentDockSession, text: String) {
+        let (arrived, filled) = arrive(at: session, with: targetClient ?? QuickInputCatalog.client(of: session), text: text)
         if !text.isEmpty, !filled { environment.copy(text) }
         finishComposing()
         onDismiss()
@@ -907,6 +1010,23 @@ final class QuickInputModel: ObservableObject {
             receipt = QuickInputReceipt(title: "回到它所在的窗口", body: text.isEmpty ? "这个会话运行在没有跳转入口的地方。" : "这个会话运行在没有跳转入口的地方。内容已复制。", tone: .note)
         } else if !text.isEmpty, !filled {
             receipt = QuickInputReceipt(title: "内容已复制", body: "粘贴后发送。", tone: .note)
+        }
+    }
+    /// Back to a session from the list or the dock: with the client it belongs to, whatever is chosen for
+    /// writing, and leaving what is being written alone. Who holds it is asked again here, because
+    /// that decides whether it may be resumed and the list can be used faster than the last answer came.
+    func goBack(to session: AgentDockSession) {
+        let liveSessions = environment.liveSessions
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let held = liveSessions()
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.live = held
+                guard !self.arrive(at: session, with: QuickInputCatalog.client(of: session), text: "").arrived else { return }
+                let waiting = self.state.isWaitingOnUser(session)
+                if waiting { self.state.showDockCard(session.source) } else { self.state.openAgentSession(session) }
+                self.receipt = QuickInputReceipt(title: "回到它所在的窗口", body: "这个会话运行在没有跳转入口的地方。" + (waiting ? "也可以在猫条卡片里处理。" : ""), tone: .note)
+            }
         }
     }
     private func resume(_ session: AgentDockSession, with client: QuickInputClient?, directory: String) -> Bool {
@@ -1013,7 +1133,7 @@ final class QuickInputModel: ObservableObject {
 
     func perform(_ action: QuickInputReceipt.Action) {
         switch action {
-        case .open(let session): state.openAgentSession(session); receipt = nil
+        case .open(let session): receipt = nil; goBack(to: session)
         case .restore(let text): restore(text); receipt = nil; state.quickInputSummon.send()
         case .activate(let bundle): environment.activate(bundle); receipt = nil
         case .dismiss: receipt = nil

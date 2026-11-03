@@ -17,6 +17,19 @@ final class QuickInputPanel: NSPanel {
 final class QuickInputTextView: NSTextView {
     weak var model: QuickInputModel?
     var onEscape: () -> Void = {}
+    /// Text being composed changes nothing the delegate hears about, but it is already writing.
+    override func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
+        super.setMarkedText(string, selectedRange: selectedRange, replacementRange: replacementRange)
+        model?.composingChanged(hasMarkedText())
+    }
+    override func unmarkText() {
+        super.unmarkText()
+        model?.composingChanged(hasMarkedText())
+    }
+    override func insertText(_ string: Any, replacementRange: NSRange) {
+        super.insertText(string, replacementRange: replacementRange)
+        model?.composingChanged(hasMarkedText())
+    }
     override func keyDown(with event: NSEvent) {
         guard let model, !hasMarkedText() else { super.keyDown(with: event); return }
         let modifiers = event.modifierFlags.intersection([.command, .shift, .control, .option])
@@ -25,10 +38,17 @@ final class QuickInputTextView: NSTextView {
         case 36, 76:
             if modifiers == .shift { insertText("\n", replacementRange: selectedRange()) }
             else { model.submit(go: modifiers == .command) }
+        // Holding delete to clear the text must not run on into what the text was going to.
+        case 51 where modifiers == .command && model.returnListVisible: model.removeSelectedReturn()
+        case 51 where modifiers.isEmpty && model.draft.isEmpty && model.targetSession != nil && !event.isARepeat: model.clearSessionTarget()
         case 53:
             if model.pickerVisible { model.closePicker() } else { onEscape() }
         case 48 where modifiers.isEmpty:
-            if model.pickerVisible { model.pickSelected() } else { model.togglePicker(.agent) }
+            if model.pickerVisible { model.pickSelected() }
+            else if model.returnListVisible { model.continueWithSelectedReturn() }
+            else { model.togglePicker(.agent) }
+        case 125 where model.returnListVisible: model.moveReturn(1)
+        case 126 where model.returnListVisible: model.moveReturn(-1)
         case 125 where model.pickerVisible: model.moveSelection(1)
         case 126 where model.pickerVisible: model.moveSelection(-1)
         case 124 where inPlace && selectedRange().location == (string as NSString).length: model.enterSessions()
@@ -181,7 +201,7 @@ struct QuickInputView: View {
                     .padding(.horizontal, 18).padding(.top, 11)
             }
             ZStack(alignment: .topLeading) {
-                if model.draft.isEmpty {
+                if model.draft.isEmpty, !model.composing {
                     Text("要做什么？  @ 选谁   # 选工作区或会话").font(.system(size: 19)).foregroundStyle(.secondary).allowsHitTesting(false)
                 }
                 QuickInputEditor(model: model, height: $editorHeight, focusRequest: focusRequest, onEscape: onEscape)
@@ -195,7 +215,66 @@ struct QuickInputView: View {
                         .padding(.horizontal, 16).padding(.top, 9).padding(.bottom, 2)
                 }
                 if model.pickerKind == .place { placeList } else { agentList }
+            } else if model.returnListVisible {
+                Rectangle().fill(.separator).frame(height: 0.5)
+                returnList
             }
+        }
+    }
+
+    /// Fixed heights, so the panel can open at its final size rather than opening and then growing.
+    private static let returnRowHeight: CGFloat = 36, returnHeadHeight: CGFloat = 24, returnMoreHeight: CGFloat = 28
+    private static let footerHeight: CGFloat = 54
+    static var emptyHeight: CGFloat { ceil(15 + QuickInputEditor.lineHeight + 13 + footerHeight) }
+    static func height(showing rows: [QuickInputReturnRow], more: Int) -> CGFloat {
+        let heads = (rows.contains { $0.kind == .waiting } ? 1 : 0) + (rows.contains { $0.kind == .finished } ? 1 : 0)
+        let list = 10 + CGFloat(heads) * returnHeadHeight + CGFloat(rows.count) * returnRowHeight + (more > 0 ? returnMoreHeight : 0)
+        return emptyHeight + ceil(0.5 + list)
+    }
+    private var returnList: some View {
+        let rows = model.returnRows, selected = model.selectedReturn?.id
+        let waiting = rows.filter { $0.kind == .waiting }, finished = rows.filter { $0.kind == .finished }
+        return VStack(alignment: .leading, spacing: 0) {
+            if !waiting.isEmpty { returnHead("等你处理"); ForEach(waiting) { returnRow($0, selected: $0.id == selected) } }
+            if !finished.isEmpty { returnHead("刚完成"); ForEach(finished) { returnRow($0, selected: $0.id == selected) } }
+            if model.returnMore > 0 {
+                Text("还有 \(model.returnMore) 条，按 # 查看").font(.system(size: 12)).foregroundStyle(.secondary)
+                    .padding(.horizontal, 10).frame(height: Self.returnMoreHeight)
+            }
+        }
+        .padding(.horizontal, 6).padding(.top, 4).padding(.bottom, 6)
+        .animation(slide, value: selected)
+    }
+    private func returnHead(_ text: String) -> some View {
+        Text(text).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+            .padding(.horizontal, 10).padding(.bottom, 3).frame(height: Self.returnHeadHeight, alignment: .bottom)
+    }
+    private func returnRow(_ row: QuickInputReturnRow, selected: Bool) -> some View {
+        Button { model.openReturn(row) } label: {
+            HStack(spacing: 9) {
+                AgentMark(source: row.session.source, size: 18)
+                Text(row.session.title).font(.system(size: 14, weight: .medium)).lineLimit(1)
+                if let workspace = row.workspace {
+                    Text(workspace).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1).layoutPriority(-1)
+                }
+                Spacer(minLength: 8)
+                if let label = row.label { Text(label).font(.system(size: 12)).foregroundStyle(Theme.attention).lineLimit(1).fixedSize() }
+                Text(row.age()).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1).fixedSize().frame(minWidth: 52, alignment: .trailing)
+            }
+            .padding(.horizontal, 10).frame(height: Self.returnRowHeight).contentShape(Rectangle())
+            .background(highlight(selected, id: "return"))
+        }
+        .buttonStyle(.plain).focusable(false)
+        .help(row.session.title)
+        .accessibilityLabel([row.session.title, row.workspace, row.label ?? "刚完成", row.age()].compactMap { $0 }.joined(separator: "，"))
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .accessibilityIdentifier("quick-input-return-" + row.id)
+        // A pointer resting where the list opens must not steal focus from the keyboard.
+        .onContinuousHover { phase in
+            guard case .active = phase else { return }
+            let location = NSEvent.mouseLocation
+            if let pointer, pointer != location { model.focusReturn(row) }
+            pointer = location
         }
     }
 
@@ -363,7 +442,7 @@ struct QuickInputView: View {
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 1) {
                 sentence
-                if let hint = model.hint, !model.pickerVisible {
+                if let hint = model.hint, !model.pickerVisible, !model.returnListVisible {
                     Text(hint).font(.system(size: 12)).foregroundStyle(model.notice == nil ? Color.secondary : Theme.attention)
                         .lineLimit(2).padding(.horizontal, 3).fixedSize(horizontal: false, vertical: true)
                 }
@@ -395,7 +474,15 @@ struct QuickInputView: View {
     }
 
     @ViewBuilder private var sentence: some View {
-        if model.pickerVisible {
+        if model.returnListVisible {
+            HStack(spacing: 12) {
+                word("↑↓ 移动")
+                word("tab 写给它")
+                word("⌘⌫ 移出")
+                word("esc 收起")
+            }
+            .padding(.horizontal, 3)
+        } else if model.pickerVisible {
             HStack(spacing: 12) {
                 word("↑↓ 移动")
                 if model.pickerKind == .place { word(model.placePane == .sessions ? "← 工作区" : "→ 会话") }
@@ -522,7 +609,9 @@ final class QuickInputController: NSObject {
     private var mouseMonitor: Any?
     private var resignObserver: NSObjectProtocol?
     private var choosingDirectory = false
-    private var height: CGFloat = 76
+    private var height = QuickInputView.emptyHeight
+    /// The height with nothing listed, which is where a panel opens when there is nothing to come back to.
+    private var plainHeight = QuickInputView.emptyHeight
     private(set) var isShown = false
     private var reduceMotion: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
 
@@ -587,6 +676,7 @@ final class QuickInputController: NSObject {
         guard !isShown else { panel.makeKeyAndOrderFront(nil); return }
         isShown = true
         model.prepareForSummon()
+        height = model.returnListVisible ? QuickInputView.height(showing: model.returnRows, more: model.returnMore) : plainHeight
         panel.appearance = state.desktopCompanionAppearance.native
         let size = CGSize(width: 640, height: height)
         let screen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main ?? NSScreen.screens[0]
@@ -622,6 +712,7 @@ final class QuickInputController: NSObject {
 
     /// Opening is a touch slower than closing, and the top edge never moves.
     private func fit(height wanted: CGFloat) {
+        if wanted > 0, !model.returnListVisible, !model.pickerVisible { plainHeight = wanted }
         guard wanted > 0, abs(wanted - height) >= 0.5 else { return }
         let growing = wanted > height
         height = wanted

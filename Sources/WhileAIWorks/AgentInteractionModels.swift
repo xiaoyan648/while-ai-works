@@ -129,18 +129,18 @@ extension AppState {
     }
     func interactions(for source: WorkSource) -> [AgentInteraction] { agentInteractions.filter { $0.source == source } }
     func openInteractionSession(_ request: PermissionRequest) {
-        if let session = agentDashboard.sessions.first(where: { $0.id == request.sessionID }) { openAgentSession(session); return }
+        if let session = agentDashboard.sessions.first(where: { $0.id == request.sessionID }) { goToAgentSession(session); return }
         if request.source == .deepseek {
             Task { @MainActor in
                 let snapshot = await LocalAgentReader().read(sources: [.dsh], previews: false)
-                if let session = snapshot.sessions.first(where: { $0.id == request.sessionID }) { openAgentSession(session) }
+                if let session = snapshot.sessions.first(where: { $0.id == request.sessionID }) { goToAgentSession(session) }
             }
             return
         }
         guard UUID(uuidString: request.sessionID) != nil else { return }
         let source: WorkSource = request.source == .claude ? .claude : .codex
         let url = source == .codex ? URL(string: "codex://threads/" + request.sessionID) : nil
-        openAgentSession(.init(id: request.sessionID, source: source, title: request.project ?? source.clientName,
+        goToAgentSession(.init(id: request.sessionID, source: source, title: request.project ?? source.clientName,
             project: request.project, status: "等待处理", running: true, tokensIn: 0, tokensOut: 0, cacheRead: 0,
             reply: nil, observedAt: request.at, navigationURL: url,
             resumeCommand: (source == .claude ? "claude --resume " : "codex resume ") + request.sessionID))
