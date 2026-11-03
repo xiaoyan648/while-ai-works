@@ -6,6 +6,50 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <channel>
         <title>While AI Works</title>
         <item>
+            <title>0.21.1</title>
+            <pubDate>Tue, 03 Nov 2026 04:29:48 -0500</pubDate>
+            <link>https://github.com/xiaoyan648/while-ai-works/releases/tag/v0.21.1</link>
+            <sparkle:version>46</sparkle:version>
+            <sparkle:shortVersionString>0.21.1</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description sparkle:format="markdown"><![CDATA[# 0.21.1 · 快捷输入带你回会话
+
+0.21.0 的快捷输入负责把任务交出去。交出去之后，Agent 问了问题或者干完了，你还得把鼠标移到屏幕边、打开猫条卡片、再点那个小箭头。这一版把回去的路也收进 `⌥ 空格`。
+
+## 新功能
+
+- **回来的入口**：输入框为空时，面板列出等你处理和 24 小时内刚完成的会话，等你处理排在前面。按 `⌥ 空格` 再按回车，就回到高亮的那条。最多显示 6 条，其中等你处理最多 3 条，其余在 `#` 里查看。
+- **按键**：`↑↓` 移动，`tab` 选中它并留在输入框接着写，`⌘⌫` 把它移出列表，`esc` 收起。打第一个字列表就收起，输入和以前一样。
+- **去过就不再列**：通过快捷输入或猫条去过的完成不再列出；等你处理的会话在请求处理完后离开。直接在客户端里看过的，WAW 不知道，可以用 `⌘⌫` 移出，24 小时后也会自动消失。
+
+## 改进
+
+- 回到会话用会话自己的客户端，每次重新确认进程：还开着就带到它的窗口，不会再恢复一份；没在运行才在默认终端里恢复。等你处理的会话找不到窗口时打开猫条卡片，在那里能回答。
+- 猫条会话行的箭头和待处理请求的「打开会话」走同一条路。以前没有跳转入口的命令行会话只能复制恢复命令，现在也能直接回去。
+- 爪印：同一个 Agent 还有别的会话在运行时，完成也会盖爪印，以前要等全部停下。看一眼卡片爪印就消失，列表里的会话要去过才算。
+- `#` 会话列表新增「刚完成」状态。
+- 中文输入法组词时，输入框的提示文字不再和拼音重叠。
+
+## 使用说明
+
+- 正在运行的会话不列出，猫条已经在看。子任务完成不列，子任务等你处理会列出。
+- 面板不代你回答或审批，回车把你带到客户端处理。
+- 列表只读取这台 Mac 上的记录，不上传。去过的记录只保存时间，24 小时后清理。
+
+## 下载
+
+需要 macOS 14 或更新版本。版本 0.21.1，构建号 46。
+
+- M 系列 Mac：`While-AI-Works-0.21.1-macOS-arm64.dmg`
+- Intel Mac：`While-AI-Works-0.21.1-macOS-x86_64.dmg`
+- ZIP 用于应用内更新，也可手动安装。
+
+当前使用 ad-hoc 签名，尚无 Developer ID 签名或 Apple 公证。Intel 包仅做交叉构建和归档检查，未在 Intel 硬件上验收。
+]]></description>
+            <enclosure url="https://github.com/xiaoyan648/while-ai-works/releases/download/v0.21.1/While-AI-Works-0.21.1-macOS-arm64.zip" length="35324416" type="application/octet-stream" sparkle:edSignature="EYyy2dA//VcPxlTPzYxTJVpW+7sQ24tzHh4sYwxfBW6Iowj6WLBnGk/3KyCRqC6i8x5YIzLuNKhTB6qeXdKbAg=="/>
+        </item>
+        <item>
             <title>0.21.0</title>
             <pubDate>Sun, 01 Nov 2026 21:41:57 -0500</pubDate>
             <link>https://github.com/xiaoyan648/while-ai-works/releases/tag/v0.21.0</link>
@@ -83,43 +127,9 @@ Claude 已登录但猫条尚无读取权限时，在设置的 Claude 接入配�
 ]]></description>
             <enclosure url="https://github.com/xiaoyan648/while-ai-works/releases/download/v0.20.3/While-AI-Works-0.20.3-macOS-arm64.zip" length="34869124" type="application/octet-stream" sparkle:edSignature="duKC+SfUe3n0cywlwCDrNP/vxkEEn1Ntg/I3emU54kaq3idl6+XNdqQx9JE5zqdpqIeWpvVXn0vXlqPf8aeFBA=="/>
         </item>
-        <item>
-            <title>0.20.2</title>
-            <pubDate>Tue, 27 Oct 2026 02:26:36 -0400</pubDate>
-            <link>https://github.com/xiaoyan648/while-ai-works/releases/tag/v0.20.2</link>
-            <sparkle:version>40</sparkle:version>
-            <sparkle:shortVersionString>0.20.2</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <description sparkle:format="markdown"><![CDATA[# 0.20.2 · DSH 原会话跳转与确认提醒
-
-版本 0.20.2，构建号 40。需要 macOS 14 或更新版本。
-
-## 修复
-
-- 本地 DSH 会话支持跳回 Otty / iTerm2 的原终端面板。点击前重新校验会话进程；原会话已退出时，复制保留已知 profile 的恢复命令。
-- 增强监听安装入口优先识别 `dst` 使用的 `dsh-tui` profile，避免误装到独立的 `tui` 或 `web` profile。
-- 计划审阅、限时问题、含详细内容的问题和缺少完整参数的审批也会显示待处理提醒，保留原会话入口。新会话尚未写出日志时仍能收到提醒。
-- 普通确认问题与单次工具审批可在猫条处理。回答或取消后清理提醒，已取消问题不再重新弹回原客户端。
-- 改善工作卡片的辅助功能操作，展开后可直接访问内容。
-
-## 使用说明
-
-使用 `dst` 的用户需为 `dsh-tui` 安装或更新增强监听，并在当前任务完成后重启客户端。安装说明见 [DSH 接入](https://github.com/xiaoyan648/while-ai-works/blob/main/docs/hermes-dsh.md)。计划审阅等原生专属交互仍在原客户端完成。
-
-## 下载
-
-- M 系列 Mac：`While-AI-Works-0.20.2-macOS-arm64.dmg`
-- Intel Mac：`While-AI-Works-0.20.2-macOS-x86_64.dmg`
-- ZIP 用于应用内更新，也可手动安装。
-
-当前使用 ad-hoc 签名，尚无 Developer ID 签名或 Apple 公证。Otty 已做实机验证；iTerm2 完成定位格式检查，Intel 包完成交叉构建和归档检查，未做对应真机验收。
-]]></description>
-            <enclosure url="https://github.com/xiaoyan648/while-ai-works/releases/download/v0.20.2/While-AI-Works-0.20.2-macOS-arm64.zip" length="32015807" type="application/octet-stream" sparkle:edSignature="erokx6zsMFdwYPyIwzcuYwgQShGWl2y/C2Sl3qZI8Mcb3LoFZRRmlR881rSF5gu3N+gKj48uzqqrCskGSMXdAA=="/>
-        </item>
     </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: tH+mJZ13yFfdE3KcX7DQ3NaZ3oZ4xY1HW2AWYyfnNKEvTyubdRxmI+pTv2/5+h8q5y8zffbHaAGWL4+VKKDICw==
-length: 8490
+edSignature: u7hG1bEwv2kt9qqIKEXu9mxNOJ0bAUzoe2m8QqCpdwxD6KyXKGxpqlNfgAY8bSLSBJOoS/sDhWBoFSt86A2iBw==
+length: 9418
 -->
