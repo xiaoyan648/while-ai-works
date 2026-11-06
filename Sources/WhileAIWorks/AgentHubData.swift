@@ -112,8 +112,16 @@ final class AgentHubDataController {
                 await store.refreshAccounts(); await store.refresh(); self.publish()
             }
         }
+        state.navigateLocalAgentSession = { [weak self] session in
+            let outcome = await LocalAgentNavigation.open(session)
+            self?.state.agentMessageStatus[session.id] = outcome.message
+            return outcome
+        }
         state.openAgentSession = { [weak self] session in
             Task { @MainActor [weak self] in
+                if session.source == .dsh {
+                    _ = await self?.state.navigateLocalAgentSession?(session); return
+                }
                 let local = session.localSessionLock != nil || session.localBridgeRoot != nil
                 let url = local ? await LocalAgentProcess.currentNavigationURL(for: session) : session.navigationURL
                 if let url, NSWorkspace.shared.open(url) {

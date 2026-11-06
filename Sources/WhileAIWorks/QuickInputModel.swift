@@ -334,13 +334,8 @@ enum QuickInputLiveness {
     /// Terminals that host sessions in a background service break the chain; the default terminal
     /// is then the best guess at where it is.
     static func bringOwnerForward(of pid: pid_t) -> Bool {
-        var current = pid
-        for _ in 0..<16 where current > 1 {
-            if let app = NSRunningApplication(processIdentifier: current), app.activationPolicy == .regular { return app.activate() }
-            var info = kinfo_proc(), size = MemoryLayout<kinfo_proc>.stride
-            var query = [CTL_KERN, KERN_PROC, KERN_PROC_PID, current]
-            guard sysctl(&query, 4, &info, &size, nil, 0) == 0, size > 0 else { break }
-            current = info.kp_eproc.e_ppid
+        if let owner = LocalAgentProcess.owningApplication(of: pid), let app = NSRunningApplication(processIdentifier: owner) {
+            return app.activate()
         }
         guard let type = UTType(filenameExtension: "command"), let handler = NSWorkspace.shared.urlForApplication(toOpen: type),
               let bundle = Bundle(url: handler)?.bundleIdentifier else { return false }
@@ -1002,6 +997,7 @@ final class QuickInputModel: ObservableObject {
         return (arrived, filled)
     }
     private func open(_ session: AgentDockSession, text: String) {
+        if openLocalSession(session, text: text) { onDismiss(); return }
         let (arrived, filled) = arrive(at: session, with: targetClient ?? QuickInputCatalog.client(of: session), text: text)
         if !text.isEmpty, !filled { environment.copy(text) }
         finishComposing()
@@ -1016,6 +1012,7 @@ final class QuickInputModel: ObservableObject {
     /// writing, and leaving what is being written alone. Who holds it is asked again here, because
     /// that decides whether it may be resumed and the list can be used faster than the last answer came.
     func goBack(to session: AgentDockSession) {
+        if openLocalSession(session, text: nil) { return }
         let liveSessions = environment.liveSessions
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let held = liveSessions()
@@ -1028,6 +1025,30 @@ final class QuickInputModel: ObservableObject {
                 self.receipt = QuickInputReceipt(title: "回到它所在的窗口", body: "这个会话运行在没有跳转入口的地方。" + (waiting ? "也可以在猫条卡片里处理。" : ""), tone: .note)
             }
         }
+    }
+    /// Report the actual asynchronous result; activating an app does not prove the session was visited.
+    private func openLocalSession(_ session: AgentDockSession, text: String?) -> Bool {
+        guard session.source == .dsh, let navigate = state.navigateLocalAgentSession else { return false }
+        let openingDraft = draft, openingTarget = target
+        Task { @MainActor [weak self] in
+            let result = await navigate(session)
+            guard let self else { return }
+            if result == .openedSession { self.state.markSessionVisited(session) }
+            var message = result.message
+            if let text {
+                if !text.isEmpty, result.copiedResume {
+                    message += "；输入内容保留在快捷输入中"
+                } else if result != .unavailable {
+                    if !text.isEmpty { self.environment.copy(text); message += "；输入内容已复制，粘贴后发送" }
+                    if self.draft == openingDraft && self.target == openingTarget { self.finishComposing() }
+                }
+            }
+            if result != .openedSession || text?.isEmpty == false {
+                self.receipt = QuickInputReceipt(title: result == .unavailable ? "暂时无法打开会话" : "会话跳转", body: message,
+                                                tone: result == .unavailable ? .warning : .note)
+            }
+        }
+        return true
     }
     private func resume(_ session: AgentDockSession, with client: QuickInputClient?, directory: String) -> Bool {
         let command: QuickInputRun.Command?

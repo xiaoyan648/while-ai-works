@@ -6,6 +6,27 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <channel>
         <title>While AI Works</title>
         <item>
+            <title>0.21.2</title>
+            <pubDate>Fri, 06 Nov 2026 04:02:12 -0500</pubDate>
+            <link>https://github.com/xiaoyan648/while-ai-works/releases/tag/v0.21.2</link>
+            <sparkle:version>47</sparkle:version>
+            <sparkle:shortVersionString>0.21.2</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description sparkle:format="markdown"><![CDATA[# 0.21.2 · DSH 返回终端
+
+DSH 会话在 Warp 中运行时，猫条和快捷输入现在会读取原会话的跳转地址。
+
+- 优先返回 Otty、iTerm2、Warp 提供的原会话入口。
+- 终端没有提供精确入口时，按进程关系唤起原终端；无法定位时打开默认终端，并提示手动选择窗口或标签页。
+- 会话已退出时，打开默认终端并复制恢复命令。命令保留已知 profile，由用户粘贴执行；仍在运行的会话不会重复恢复。
+- 快捷输入等待跳转结果后再更新“已访问”状态。恢复命令留在剪贴板，待发送草稿保留；跳转期间新写的内容也不会被清空。
+
+需要 macOS 14 或更新版本。
+]]></description>
+            <enclosure url="https://github.com/xiaoyan648/while-ai-works/releases/download/v0.21.2/While-AI-Works-0.21.2-macOS-arm64.zip" length="35336612" type="application/octet-stream" sparkle:edSignature="yKD7Xk3iErO6lD81CLbIeK3vLHQ6TAMyzfIAcf33udJD5t9IQ78Kd+MtA0D2wUVuvKDeToHVxrUswM3dwBM/BA=="/>
+        </item>
+        <item>
             <title>0.21.1</title>
             <pubDate>Tue, 03 Nov 2026 04:29:48 -0500</pubDate>
             <link>https://github.com/xiaoyan648/while-ai-works/releases/tag/v0.21.1</link>
@@ -91,45 +112,9 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
 ]]></description>
             <enclosure url="https://github.com/xiaoyan648/while-ai-works/releases/download/v0.21.0/While-AI-Works-0.21.0-macOS-arm64.zip" length="35282492" type="application/octet-stream" sparkle:edSignature="jC42MlVj4OyAJ4cXUHSDVU1Wk2gOZvli356a/7o+mb3Xu60pZTE66H6q57Kl9n8UTLcSJTnhTKl5G4OiOBT/Cw=="/>
         </item>
-        <item>
-            <title>0.20.3</title>
-            <pubDate>Tue, 27 Oct 2026 04:21:50 -0400</pubDate>
-            <link>https://github.com/xiaoyan648/while-ai-works/releases/tag/v0.20.3</link>
-            <sparkle:version>43</sparkle:version>
-            <sparkle:shortVersionString>0.20.3</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <description sparkle:format="markdown"><![CDATA[# 0.20.3 · 复用 Claude 已有登录
-
-版本 0.20.3，构建号 43。需要 macOS 14 或更新版本。
-
-## 改进
-
-- 查询订阅额度时优先复用 Claude 桌面端当前账户的登录，再尝试 Claude Code 的订阅登录，无需保持命令行客户端运行。
-- 启动猫条、开启关注或调整 Claude 监听只做静默检查，不自动弹出登录或钥匙串授权。
-- 设置和猫条用量页提供手动“复用 Claude 桌面登录”入口。只有用户点击后才申请系统读取授权；没有可复用登录时，可手动登录订阅账户。
-- 区分尚未授权、登录过期、网络查询失败等情况，不再把读取失败统一显示为“已退出登录”。
-- 核对当前账号和组织，避免切换账户后显示旧账户额度；凭据仅用于向 Anthropic 查询，不复制到猫条设置。
-
-## 使用说明
-
-Claude 已登录但猫条尚无读取权限时，在设置的 Claude 接入配置或猫条用量页点击“复用 Claude 桌面登录”，由用户完成 macOS 钥匙串授权。允许后可后台刷新；如果原登录过期，按提示打开 Claude 更新登录状态。
-
-桌面读取兼容当前 Claude 客户端的本地格式，格式变化时会停止读取并尝试 Claude Code。API Key 或中转站认证不等于订阅账户登录；本机会话 Token 统计仍可独立显示。
-
-## 下载
-
-- M 系列 Mac：`While-AI-Works-0.20.3-macOS-arm64.dmg`
-- Intel Mac：`While-AI-Works-0.20.3-macOS-x86_64.dmg`
-- ZIP 用于应用内更新，也可手动安装。
-
-当前使用 ad-hoc 签名，尚无 Developer ID 签名或 Apple 公证。macOS 可能在应用签名变化后要求重新授权读取钥匙串；只有手动操作才会触发。Intel 包仅做交叉构建和归档检查，未做 Intel 真机验收。
-]]></description>
-            <enclosure url="https://github.com/xiaoyan648/while-ai-works/releases/download/v0.20.3/While-AI-Works-0.20.3-macOS-arm64.zip" length="34869124" type="application/octet-stream" sparkle:edSignature="duKC+SfUe3n0cywlwCDrNP/vxkEEn1Ntg/I3emU54kaq3idl6+XNdqQx9JE5zqdpqIeWpvVXn0vXlqPf8aeFBA=="/>
-        </item>
     </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: u7hG1bEwv2kt9qqIKEXu9mxNOJ0bAUzoe2m8QqCpdwxD6KyXKGxpqlNfgAY8bSLSBJOoS/sDhWBoFSt86A2iBw==
-length: 9418
+edSignature: a4KBk2lTfdrLOaOjJOYq8qNbtpr9srQh/MYhbYigu60mjhwK5pXll6p5ImaVknsT/tvCGVHt9Kr74MHpNhehBQ==
+length: 8338
 -->

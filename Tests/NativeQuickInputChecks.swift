@@ -50,6 +50,7 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         localSessions()
         otherClients()
         dshOnlyOpens()
+        dshNavigationResults()
         returnList()
         returnRoutes()
         try keyboard()
@@ -645,6 +646,45 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         check(model.targetClient == .dsh && !model.canSendNow && model.primaryVerb == "打开")
         model.submit()
         check(opened.map(\.id) == [dsh.id] && ran == 0)
+    }
+
+    static func dshNavigationResults() {
+        let state = makeState()
+        var dsh = session("00000000-0000-4000-8000-000000000033", source: .dsh, title: "DSH 返回结果", event: .finished, kind: .noRoute)
+        dsh.eventAt = Date(); dsh.localSessionLock = "/tmp/fixture-dsh-lock"
+        var data = AgentDockData(); data.sessions = [dsh]; state.agentDashboard = data
+        var calls = 0, copied: [String] = [], result = AgentSessionNavigationOutcome.openedTerminal
+        state.navigateLocalAgentSession = { _ in
+            try? await Task.sleep(for: .milliseconds(50))
+            calls += 1
+            return result
+        }
+        let model = QuickInputModel(state: state, environment: environment(copied: { copied.append($0) }))
+        model.prepareForSummon(); spin(0.05)
+        model.goBack(to: dsh)
+        check(state.sessionVisitedAt[dsh.dockIdentity] == nil, "queueing navigation is not a visit")
+        eventually({ calls == 1 && model.receipt != nil }, "generic terminal fallback reports its result")
+        check(model.receipt?.body.contains("标签页") == true && state.sessionVisitedAt[dsh.dockIdentity] == nil)
+        model.dismissReceipt()
+        model.pick(session: dsh)
+        model.textChanged("未发送的草稿", cursor: 6)
+        result = .resumeInDefaultTerminal
+        model.submit()
+        eventually({ calls == 2 && model.receipt != nil }, "recovery reports after opening")
+        check(copied.isEmpty && model.draft == "未发送的草稿", "keep the recovery command on the clipboard and retain the draft")
+        model.dismissReceipt(); result = .unavailable
+        model.submit()
+        eventually({ calls == 3 && model.receipt?.tone == .warning }, "opening failure is visible")
+        check(model.draft == "未发送的草稿" && state.sessionVisitedAt[dsh.dockIdentity] == nil)
+        model.dismissReceipt(); result = .openedSession
+        model.submit()
+        eventually({ calls == 4 && state.sessionVisitedAt[dsh.dockIdentity] != nil }, "mark visited only after the precise route succeeds")
+        check(copied == ["未发送的草稿"] && model.draft.isEmpty)
+        model.pick(session: dsh); model.textChanged("准备跳转", cursor: 4)
+        model.submit()
+        model.textChanged("跳转期间的新草稿", cursor: 8)
+        eventually({ calls == 5 }, "another navigation completes")
+        check(model.draft == "跳转期间的新草稿", "a delayed navigation cannot erase new writing")
     }
 
     static func sessions() {

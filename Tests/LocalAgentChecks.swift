@@ -9,7 +9,12 @@ import CryptoKit
     @MainActor static func main() async throws {
         if CommandLine.arguments.contains("--probe-navigation") {
             let value = await LocalAgentReader().read(sources: [.dsh], previews: false)
-            let rows = value.sessions.map { ["id": $0.id, "url": $0.navigationURL?.absoluteString ?? "", "status": $0.status, "resume": $0.resumeCommand ?? ""] }
+            var rows: [[String: String]] = []
+            for session in value.sessions {
+                let current = await LocalAgentProcess.currentNavigationURL(for: session)
+                rows.append(["id": session.id, "url": session.navigationURL?.absoluteString ?? "",
+                             "current_url": current?.absoluteString ?? "", "status": session.status, "resume": session.resumeCommand ?? ""])
+            }
             print(String(decoding: try JSONSerialization.data(withJSONObject: rows), as: UTF8.self)); return
         }
         if CommandLine.arguments.contains("--probe-dsh-health") {
@@ -94,12 +99,62 @@ import CryptoKit
         precondition(LocalAgentProcess.parseOrigin(procArgs(["node", "--profile", "custom"], ["OTTY_PANE_ID=p_x?command=oops"]))?.url == nil)
         let iterm = LocalAgentProcess.parseOrigin(procArgs(["node"], ["ITERM_SESSION_ID=w0t1p0:fixture", "DSH_TUI_PROFILE=custom"]))!
         precondition(iterm.url?.scheme == "iterm2" && iterm.profile == "custom")
+        let warpID = "0123456789abcdef0123456789abcdef"
+        let warp = LocalAgentProcess.parseOrigin(procArgs(["node", "/modules/@deepseek-harness-tui/dsh-tui/host-entry.js"],
+            ["TERM_PROGRAM=WarpTerminal", "WARP_FOCUS_URL=warp://session/" + warpID, "WARP_TERMINAL_SESSION_UUID=" + warpID]))!
+        precondition(warp.url?.absoluteString == "warp://session/" + warpID && warp.profile == "dsh-tui", "live Warp DSH processes expose a focus URL")
+        precondition(LocalAgentProcess.parseOrigin(procArgs(["node"], ["WARP_FOCUS_URL=warppreview://session/01234567-89AB-CDEF-0123-456789ABCDEF"]))?.url?.absoluteString == "warppreview://session/" + warpID)
+        precondition(LocalAgentProcess.parseOrigin(procArgs(["node"], ["TERM_PROGRAM=WarpTerminal", "WARP_TERMINAL_SESSION_UUID=" + warpID]))?.url?.absoluteString == "warp://session/" + warpID)
+        for invalid in ["warp://action/new_tab?path=/tmp", "https://example.com/", "warp://session/" + warpID + "?command=oops",
+                        "warp://session/" + warpID + "#fragment", "warp://session/" + warpID + "\n", "warp://session/not-an-id"] {
+            precondition(LocalAgentProcess.parseOrigin(procArgs(["node"], ["WARP_FOCUS_URL=" + invalid, "WARP_TERMINAL_SESSION_UUID=" + warpID, "TERM_PROGRAM=WarpTerminal"]))?.url == nil,
+                         "only exact Warp session links may be opened")
+        }
+        precondition(LocalAgentProcess.parseOrigin(procArgs(["node"], ["WARP_TERMINAL_SESSION_UUID=" + warpID]))?.url == nil)
+        precondition(LocalAgentProcess.parseOrigin(procArgs(["node"], ["OTTY_PANE_ID=p_fixture", "WARP_FOCUS_URL=warp://session/" + warpID]))?.url?.scheme == "otty", "existing terminal precedence remains intact")
         precondition(LocalAgentProcess.origin(getpid()) != nil, "actual same-user KERN_PROCARGS2 decoding")
         let owned = LocalAgentProcess.parseLockOwners("p100\nn/a\np200\nn/a\nn/b\np300\nn/c", paths: ["/a", "/b", "/c"], isLive: { $0 != 300 })
         precondition(owned == ["/b": 200], "ambiguous or dead owners never become navigation targets")
         var gone = session; gone.localSessionLock = home.appendingPathComponent("missing.lock").path
         let goneURL = await LocalAgentProcess.currentNavigationURL(for: gone)
         precondition(goneURL == nil, "a stale card must recheck the session lock before jumping")
+        precondition(LocalAgentProcess.owningApplication(of: 40, parent: { [40: 30, 30: 20, 20: 1][$0] }, isApplication: { $0 == 20 }) == 20,
+                     "terminal lookup uses ancestry without a terminal brand list")
+        precondition(LocalAgentProcess.parent(getpid()) == getppid(), "actual same-user parent process lookup")
+        precondition(LocalAgentProcess.owningApplication(of: getpid(), isApplication: { $0 == getppid() }) == getppid(),
+                     "the real process ancestry reaches its owner")
+        precondition(LocalAgentProcess.owningApplication(of: 40, parent: { [40: 30, 30: 40][$0] }, isApplication: { _ in false }) == nil)
+        var actions: [String] = []
+        var navigation = LocalAgentNavigation.Environment()
+        navigation.openURL = { _ in actions.append("link"); return true }
+        navigation.activateOwner = { _ in actions.append("owner"); return true }
+        navigation.openDefaultTerminal = { actions.append("default"); return true }
+        navigation.copy = { _ in actions.append("copy") }
+        let warpURL = URL(string: "warp://session/" + warpID)!
+        var outcome = await LocalAgentNavigation.route(owner: 40, url: warpURL, resume: "resume", environment: navigation)
+        precondition(outcome == .openedSession && actions == ["link"])
+        actions = []; navigation.openURL = { _ in actions.append("link"); return false }
+        outcome = await LocalAgentNavigation.route(owner: 40, url: warpURL, resume: "resume", environment: navigation)
+        precondition(outcome == .openedTerminal && actions == ["link", "owner"])
+        actions = []
+        outcome = await LocalAgentNavigation.route(owner: 40, url: nil, resume: "resume", environment: navigation)
+        precondition(outcome == .openedTerminal && actions == ["owner"], "unknown terminals use the generic route")
+        actions = []; navigation.activateOwner = { _ in actions.append("owner"); return false }
+        outcome = await LocalAgentNavigation.route(owner: 40, url: nil, resume: "resume", environment: navigation)
+        precondition(outcome == .openedDefaultTerminal && actions == ["owner", "default"], "live sessions are never offered a duplicate resume")
+        actions = []
+        gone = .init(id: session.id, source: .dsh, title: session.title, project: session.project, status: session.status,
+                     running: false, tokensIn: 0, tokensOut: 0, cacheRead: 0, reply: nil, observedAt: now,
+                     navigationURL: warpURL, resumeCommand: session.resumeCommand,
+                     localSessionLock: home.appendingPathComponent("missing.lock").path)
+        outcome = await LocalAgentNavigation.open(gone, environment: navigation)
+        precondition(outcome == .resumeInDefaultTerminal && actions == ["copy", "default"], "expired sessions ignore cached links and offer manual recovery")
+        actions = []; navigation.openDefaultTerminal = { actions.append("default"); return false }
+        outcome = await LocalAgentNavigation.open(gone, environment: navigation)
+        precondition(outcome == .copiedResume && actions == ["copy", "default"])
+        actions = []
+        outcome = await LocalAgentNavigation.route(owner: 40, url: nil, resume: "resume", environment: navigation)
+        precondition(outcome == .unavailable && actions == ["owner", "default"])
         let bridgeFolder = root.appendingPathComponent("while-ai-works")
         try FileManager.default.createDirectory(at: bridgeFolder, withIntermediateDirectories: true)
         let rawID = "new-without-transcript"

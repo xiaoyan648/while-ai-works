@@ -208,6 +208,7 @@ final class AppState: ObservableObject {
     var showAgentReplyPreview: (AgentDockSession, NSView) -> Void = { _, _ in }
     var hideAgentReplyPreview: () -> Void = {}
     var openAgentSession: (AgentDockSession) -> Void = { _ in }
+    var navigateLocalAgentSession: ((AgentDockSession) async -> AgentSessionNavigationOutcome)?
     /// The whole way back to a session, where quick input is around to provide it.
     var sessionRoute: ((AgentDockSession) -> Void)?
     func goToAgentSession(_ session: AgentDockSession) {
@@ -821,6 +822,22 @@ struct AgentDockSession: Equatable, Identifiable, Sendable {
     }
     var canSend: Bool { !historical && source == .codex && navigationURL?.scheme == "codex" && navigationURL?.lastPathComponent == id }
 }
+enum AgentSessionNavigationOutcome: Equatable {
+    case openedSession, openedTerminal, openedDefaultTerminal, resumeInDefaultTerminal, copiedResume, unavailable
+
+    var message: String {
+        switch self {
+        case .openedSession: return "已打开原会话"
+        case .openedTerminal: return "已切到原终端，请选择会话所在的标签页"
+        case .openedDefaultTerminal: return "已打开默认终端；原会话仍在运行，请手动切到它所在的窗口或标签页"
+        case .resumeInDefaultTerminal: return "已打开默认终端，恢复命令已复制；粘贴后继续原会话"
+        case .copiedResume: return "终端未能打开，已复制恢复命令"
+        case .unavailable: return "无法打开会话所在的终端"
+        }
+    }
+    var copiedResume: Bool { self == .resumeInDefaultTerminal || self == .copiedResume }
+}
+
 enum AgentMessageOutcome: Equatable {
     case accepted, steered, unavailable, failed(String), uncertain
     var title: String {

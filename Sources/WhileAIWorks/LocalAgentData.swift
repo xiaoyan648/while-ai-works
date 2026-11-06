@@ -5,6 +5,7 @@ import Darwin
 import SQLite3
 import AgentHUDCore
 import AgentHUDSupport
+import UniformTypeIdentifiers
 
 /// Local adapters have their own task: a subscription refresh cannot delay their state.
 @MainActor final class LocalAgentDataController {
@@ -215,7 +216,8 @@ enum LocalAgentProcess {
         var args: [String] = []
         for _ in 0..<argc { guard let arg = string() else { return nil }; args.append(arg) }
         var values: [String: String] = [:]
-        let allowed: Set<String> = ["OTTY_PANE_ID", "ITERM_SESSION_ID", "DSH_TUI_PROFILE"]
+        let allowed: Set<String> = ["OTTY_PANE_ID", "ITERM_SESSION_ID", "DSH_TUI_PROFILE",
+                                    "WARP_FOCUS_URL", "WARP_TERMINAL_SESSION_UUID", "TERM_PROGRAM"]
         while let entry = string(), !entry.isEmpty {
             guard let split = entry.firstIndex(of: "=") else { continue }
             let key = String(entry[..<split])
@@ -230,18 +232,103 @@ enum LocalAgentProcess {
         } else if let session = values["ITERM_SESSION_ID"], !session.isEmpty, session.utf8.count <= 256 {
             var components = URLComponents(); components.scheme = "iterm2"; components.path = "reveal"
             components.queryItems = [.init(name: "sessionid", value: session)]; url = components.url
+        } else {
+            url = warpNavigationURL(values)
         }
         return Origin(url: url, profile: profile)
     }
+    /// Accept only session focus links, never Warp actions that could open other surfaces.
+    static func warpNavigationURL(_ values: [String: String]) -> URL? {
+        func sessionID(_ value: String) -> String? {
+            guard value.range(of: #"\A(?:[A-Fa-f0-9]{32}|[A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{12})\z"#,
+                              options: .regularExpression) != nil else { return nil }
+            return value.replacingOccurrences(of: "-", with: "").lowercased()
+        }
+        if let focus = values["WARP_FOCUS_URL"] {
+            for scheme in ["warp", "warppreview"] {
+                let prefix = scheme + "://session/"
+                if focus.hasPrefix(prefix), let id = sessionID(String(focus.dropFirst(prefix.count))) {
+                    return URL(string: prefix + id)
+                }
+            }
+            // Do not guess a different Warp edition when an explicit link is malformed.
+            return nil
+        }
+        if values["TERM_PROGRAM"] == "WarpTerminal", let raw = values["WARP_TERMINAL_SESSION_UUID"], let id = sessionID(raw) {
+            return URL(string: "warp://session/" + id)
+        }
+        return nil
+    }
     static func currentNavigationURL(for session: AgentDockSession) async -> URL? {
+        guard let pid = await currentOwner(for: session) else { return nil }
+        return origin(pid)?.url
+    }
+    static func currentOwner(for session: AgentDockSession) async -> Int32? {
         if let lock = session.localSessionLock {
-            guard let pid = await lockOwners([lock])[lock] else { return nil }
-            return origin(pid)?.url
+            return await lockOwners([lock])[lock]
         }
         if let root = session.localBridgeRoot, session.id.hasPrefix("deepseek:"),
            let hook = LocalAgentBridgeRecord.read(source: .dsh, rawID: String(session.id.dropFirst(9)), root: URL(fileURLWithPath: root), now: Date()),
-           hook.live, hook.waiting, let pid = hook.raw["pid"] as? Int32 { return origin(pid)?.url }
+           hook.live, hook.waiting, let pid = hook.raw["pid"] as? Int32 { return pid }
         return nil
+    }
+    static func parent(_ pid: Int32) -> Int32? {
+        var info = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+        guard pid > 1, proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size, info.pbi_uid == getuid() else { return nil }
+        return Int32(info.pbi_ppid)
+    }
+    static func owningApplication(of pid: Int32, parent: (Int32) -> Int32? = parent,
+                                  isApplication: (Int32) -> Bool = { NSRunningApplication(processIdentifier: $0)?.activationPolicy == .regular }) -> Int32? {
+        var current = pid, seen = Set<Int32>()
+        for _ in 0..<32 where current > 1 && seen.insert(current).inserted {
+            if isApplication(current) { return current }
+            guard let next = parent(current) else { return nil }
+            current = next
+        }
+        return nil
+    }
+}
+
+/// Precise links first; the process's host application and the default terminal are generic fallbacks.
+@MainActor enum LocalAgentNavigation {
+    struct Environment {
+        var openURL: (URL) -> Bool = { NSWorkspace.shared.open($0) }
+        var activateOwner: (Int32) -> Bool = { pid in
+            guard let owner = LocalAgentProcess.owningApplication(of: pid) else { return false }
+            return NSRunningApplication(processIdentifier: owner)?.activate() ?? false
+        }
+        var openDefaultTerminal: () async -> Bool = {
+            guard let app = await defaultTerminalURL() else { return false }
+            do {
+                _ = try await NSWorkspace.shared.openApplication(at: app, configuration: .init())
+                return true
+            } catch { return false }
+        }
+        var copy: (String) -> Void = { text in
+            NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string)
+        }
+    }
+    static func defaultTerminalURL() -> URL? {
+        UTType(filenameExtension: "command").flatMap { NSWorkspace.shared.urlForApplication(toOpen: $0) }
+            ?? NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Terminal")
+    }
+    static func open(_ session: AgentDockSession, environment: Environment = .init()) async -> AgentSessionNavigationOutcome {
+        let owner = await LocalAgentProcess.currentOwner(for: session)
+        // Cached URLs can outlive the terminal process. Only use a freshly verified owner.
+        return await route(owner: owner, url: owner.flatMap { LocalAgentProcess.origin($0)?.url },
+                           resume: session.resumeCommand, environment: environment)
+    }
+    static func route(owner: Int32?, url: URL?, resume: String?, environment: Environment) async -> AgentSessionNavigationOutcome {
+        if let owner {
+            if let url, environment.openURL(url) { return .openedSession }
+            if environment.activateOwner(owner) { return .openedTerminal }
+            // A live session must not be resumed a second time in another terminal.
+            return await environment.openDefaultTerminal() ? .openedDefaultTerminal : .unavailable
+        }
+        guard let resume else { return .unavailable }
+        environment.copy(resume)
+        return await environment.openDefaultTerminal() ? .resumeInDefaultTerminal : .copiedResume
     }
 }
 
