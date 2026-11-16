@@ -114,7 +114,8 @@ enum QuickInputToken {
             guard let scalar = Unicode.Scalar(unit), !CharacterSet.whitespacesAndNewlines.contains(scalar) else { return nil }
             if scalar == "@" || scalar == "#" {
                 if start > 1, let before = Unicode.Scalar(characters.character(at: start - 2)),
-                   before.isASCII, CharacterSet.alphanumerics.contains(before) { return nil }
+                   before.isASCII,
+                   (CharacterSet.alphanumerics.contains(before) || before == "/" || before == "\\") { return nil }
                 let range = NSRange(location: start - 1, length: cursor - start + 1)
                 return Match(trigger: Character(scalar), query: characters.substring(with: NSRange(location: start, length: cursor - start)), range: range)
             }

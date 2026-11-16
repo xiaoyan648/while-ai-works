@@ -40,7 +40,12 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         _ = NSApplication.shared
         NSApp.setActivationPolicy(.accessory)
         let arguments = ProcessInfo.processInfo.arguments
+        if let index = arguments.firstIndex(of: "--snapshots-only"), index + 1 < arguments.count {
+            snapshots(URL(fileURLWithPath: arguments[index + 1], isDirectory: true))
+            return
+        }
         tokens()
+        pathDrafts()
         links()
         scripts()
         catalog()
@@ -90,9 +95,34 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
         check(match("看一下 #cine")?.trigger == "#" && match("看一下 #cine")?.query == "cine")
         check(match("检查一下@cod")?.query == "cod", "Chinese has no spaces, so a token may follow it directly")
         check(match("me@example.com") == nil && match("issue#12") == nil, "addresses and references are plain text")
+        for path in ["/tmp/#cine", "/tmp/@cod", "./#cine", "../@cod", "C:\\tmp\\#cine", "C:\\tmp\\@cod"] {
+            check(match("inspect " + path) == nil, "path fragments are plain text: \(path)")
+        }
         check(match("@codex 检查") == nil && match("普通文本") == nil)
         check(match("@cod")?.range == NSRange(location: 0, length: 4))
         check(QuickInputToken.match(in: "@codex 检查", cursor: 3)?.query == "co", "the token is read up to the cursor")
+    }
+
+    static func pathDrafts() {
+        let state = makeState()
+        let target = session("00000000-0000-4000-8000-000000000001")
+        var data = AgentDockData()
+        data.sessions = [target]
+        state.agentDashboard = data
+        var sent: [String] = []
+        state.sendAgentMessage = { _, text in sent.append(text); return .accepted }
+        let model = QuickInputModel(state: state, environment: environment())
+        model.prepareForSummon()
+        for prompt in ["inspect /tmp/#cine", "inspect /tmp/@cod"] {
+            model.pick(session: target)
+            model.textChanged(prompt, cursor: (prompt as NSString).length)
+            check(!model.pickerVisible && model.draft == prompt, "a path does not open a target picker")
+            let previousCount = sent.count
+            model.submit()
+            eventually({ sent.count == previousCount + 1 }, "Enter sends the path without an extra selection")
+            check(sent.last == prompt, "the full path reaches the existing session")
+            model.dismissReceipt()
+        }
     }
 
     static func links() {
@@ -1337,6 +1367,9 @@ private func eventually(_ condition: () -> Bool, _ message: String, line: UInt =
             editor?.string = ""
             editor?.insertText("顺便把退款路径也看一下", replacementRange: NSRange(location: 0, length: 0))
             capture("running", controller.panel)
+            editor?.string = ""
+            editor?.insertText("inspect /tmp/#cine", replacementRange: NSRange(location: 0, length: 0))
+            capture("path", controller.panel)
             controller.dismiss(); spin(0.3)
             backdrop.orderOut(nil)
             withExtendedLifetime(controller) {}
