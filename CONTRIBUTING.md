@@ -2,6 +2,12 @@
 
 先按 [README](README.md#源码与构建) 构建，再运行下方检查。提交改动时请描述可复现的问题、改动行为和实际验证范围；不要提交客户端私人日志、对话、凭据或生成服务临时下载地址。
 
+## 反馈与需求
+
+通过 [Issue](https://github.com/xiaoyan648/while-ai-works/issues/new/choose) 选择「故障反馈」或「功能建议」。故障请说明版本、复现步骤及期望与实际结果；建议请说明使用场景、现有办法和期望的变化。
+
+维护者按 [需求整理与持续迭代](docs/product-iteration.md) 合并重复反馈、评估价值、记录验收条件和交付结果。每日整理通过 DSH 原生自动化任务触发，配置方式和运行条件见该文档。
+
 ## 构建依赖
 
 需要 macOS 14+、Apple Command Line Tools（Swift 6.1+）和 Python 3。第三方依赖包括 [Rive](https://github.com/rive-app/rive-ios) 运行时（MIT）、[Sparkle 2.10.0](https://github.com/sparkle-project/Sparkle) 更新框架（MIT 及其第三方声明）和固定版本的 [Agent HUD Core](Vendor/AgentHUDOpen/README.md)（Apache-2.0）。Rive 与 Sparkle 首次构建时下载官方发布包并校验 SHA-256；Agent HUD Core 源码随仓库提供，用于 Codex / Claude 用量及会话接入。
